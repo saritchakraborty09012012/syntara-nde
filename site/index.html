@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#020409" />
+    <title>Syntara — Universal Local AI Platform | NDe</title>
+    <meta
+      name="description"
+      content="Syntara is an open-source local-AI platform by NDe (NoirDemons) for model discovery, hardware-aware execution, Chat, Agents and developer workflows. Your AI. Your machine. Your control."
+    />
+    <meta
+      name="keywords"
+      content="NDe, nde, NDE, nDE, NdE, NoDe, node, NoirDemons, Syntara, local AI, local AI platform, open source AI, run models locally, GGUF, AI agents, private AI, no cloud AI"
+    />
+    <meta name="author" content="NDe (NoirDemons)" />
+    <link rel="canonical" href="https://noirdemons.github.io/Syntara/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Syntara by NDe" />
+    <meta property="og:title" content="Syntara — Universal Local AI Platform | NDe" />
+    <meta
+      property="og:description"
+      content="Open-source local AI by NDe (NoirDemons). Download, install and run models on your own machine — no account, no cloud."
+    />
+    <meta property="og:image" content="syntara-suit.png" />
+    <meta property="og:url" content="https://noirdemons.github.io/Syntara/" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Syntara — Universal Local AI Platform | NDe" />
+    <meta
+      name="twitter:description"
+      content="Open-source local AI by NDe (NoirDemons). Download, install and run models on your own machine — no account, no cloud."
+    />
+    <meta name="twitter:image" content="syntara-suit.png" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "name": "NDe",
+            "alternateName": [
+              "NoirDemons",
+              "nde",
+              "NDE",
+              "nDE",
+              "NdE",
+              "NoDe",
+              "node",
+              "NODE",
+              "NoDE",
+              "NOdE"
+            ],
+            "url": "https://github.com/NoirDemons"
+          },
+          {
+            "@type": "WebSite",
+            "name": "Syntara by NDe",
+            "alternateName": ["Syntara", "NDe", "NoirDemons"],
+            "url": "https://noirdemons.github.io/Syntara/",
+            "publisher": { "@id": "https://github.com/NoirDemons" }
+          }
+        ]
+      }
+    </script>
+    <link rel="icon" type="image/png" href="syntara-logo.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Chakra+Petch:wght@400;500;600;700&family=Share+Tech+Mono&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      // Apply saved theme before first paint (default: dark).
+      (function () {
+        try {
+          var t = localStorage.getItem("syntara-theme");
+          document.documentElement.dataset.theme = t === "light" ? "light" : "dark";
+        } catch (e) {
+          document.documentElement.dataset.theme = "dark";
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

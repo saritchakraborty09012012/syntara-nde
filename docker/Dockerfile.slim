@@ -1,0 +1,80 @@
+# syntara — CPU inference image (multi-stage: build then a slim runtime)
+#
+# The engine is portable C with a Python launcher/gateway. This image ships
+# ONLY the inference path (chat/serve/run/info/plan/doctor) — the ~372 GB
+# model is mounted, never baked in, and the converter (which needs torch) is
+# deliberately out of scope; convert from a source checkout instead.
+#
+#   docker build -t syntara -f docker/Dockerfile.slim .
+#   docker run --rm -v /nvme/glm52_i4:/model syntara info
+#   docker run --rm -it -v /nvme/glm52_i4:/model syntara chat --ram 24
+#   docker run --rm -p 5000:5000 -v /nvme/glm52_i4:/model syntara \
+#       serve --host 0.0.0.0 --model-id glm-5.2
+#
+# --------------------------------------------------------------------------
+# Stage 1: build the engine. ARCH is x86-64-v3 (portable AVX2) via `make
+# portable`'s target, NOT native — a native build bakes in the builder CPU's
+# ISA and SIGILLs on a different host. Override ARCH at build time to pin one.
+FROM debian:stable-slim AS build
+ARG ARCH=x86-64-v3
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends build-essential make && \
+    rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY c/ ./c/
+RUN make -C c syntara ARCH=${ARCH}
+
+# --------------------------------------------------------------------------
+# Stage 2: runtime. openai_server.py and the launcher use only the Python
+# standard library, so no pip install — just python3 + the built binary and
+# its support files. libgomp1 provides the OpenMP runtime the engine links.
+FROM debian:stable-slim
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3 libgomp1 && \
+    rm -rf /var/lib/apt/lists/* && \
+    useradd -m -u 1000 syntara
+WORKDIR /app
+
+# The engine binary plus the launcher and the files it resolves at runtime
+# (version.py, the gateway, resource planner, doctor, tokenizer headers, tools).
+# The engine artifact is per-platform (c/Makefile ENGINE_REAL): this image is
+# Linux, so the build produced `glm` -- the pre-#391 engine name POSIX uses
+# because the extensionless `syntara` path is the launcher itself.
+# SYNTARA_ENGINE=/app/glm names the engine explicitly, so the resolver's own
+# glm-sibling fallback is not even needed.
+COPY --from=build /src/c/glm              ./glm
+COPY c/syntara c/version.py c/openai_server.py c/v4_dsml.py c/v41_dsml.py c/family_registry.py c/resource_plan.py c/doctor.py c/autotune.py ./
+COPY c/tools/ ./tools/
+
+# ENTRYPOINT runs /app/syntara with python3, so that file must be the
+# extensionless Python launcher, never the compiled engine -- and /app/glm must
+# be the compiled engine ELF, never Python text. Assert both at build time: a
+# tree whose c/syntara was clobbered by `make syntara` previously failed only
+# at container start with an obscure command-not-found/SyntaxError, and a
+# wrong-named engine failed as "engine is not built" with the binary present.
+RUN python3 - <<'PY'
+import ast
+launcher = open("/app/syntara", "rb").read()
+engine = open("/app/glm", "rb").read()
+if launcher.startswith(b"\x7fELF"):
+    raise SystemExit("FAIL: /app/syntara is a compiled ELF engine artifact, "
+                     "not the Python launcher (c/syntara was clobbered by make)")
+ast.parse(launcher.decode("utf-8"))
+if not engine.startswith(b"\x7fELF"):
+    raise SystemExit("FAIL: /app/glm is not the compiled engine ELF "
+                     "(make -C c syntara built to the wrong artifact)")
+print("ok: /app/syntara is the Python launcher, /app/glm is the engine")
+PY
+
+ENV SYNTARA_MODEL=/model \
+    SYNTARA_ENGINE=/app/glm \
+    SYNTARA_DOCKER_GLM_ONLY=1 \
+    PYTHONUNBUFFERED=1
+# A bind-mounted model lands here; declaring the volume documents the contract.
+VOLUME ["/model"]
+# `syntara serve` default port.
+EXPOSE 5000
+
+USER syntara
+ENTRYPOINT ["python3", "/app/syntara"]
+CMD ["info"]

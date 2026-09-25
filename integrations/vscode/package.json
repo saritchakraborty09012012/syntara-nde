@@ -1,0 +1,25 @@
+{
+  "name": "syntara-vscode",
+  "displayName": "Syntara Local AI",
+  "description": "Use models installed on your own computer through Syntara.",
+  "version": "0.1.0",
+  "publisher": "NoirDemons",
+  "engines": { "vscode": "^1.90.0" },
+  "activationEvents": ["onStartupFinished"],
+  "main": "extension.js",
+  "contributes": {
+    "commands": [
+      { "command": "syntara.openChat", "title": "Syntara: Open Chat" },
+      { "command": "syntara.sendSelection", "title": "Syntara: Send Selection" },
+      { "command": "syntara.explainSelection", "title": "Syntara: Explain Selection" }
+    ],
+    "configuration": {
+      "title": "Syntara",
+      "properties": {
+        "syntara.baseUrl": { "type": "string", "default": "http://127.0.0.1:8000/v1" },
+        "syntara.model": { "type": "string", "default": "" },
+        "syntara.webUrl": { "type": "string", "default": "http://localhost:5173", "description": "Base URL of the Syntara web dashboard." }
+      }
+    }
+  }
+}

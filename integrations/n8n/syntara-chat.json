@@ -1,0 +1,20 @@
+{
+  "name": "Syntara Local Chat",
+  "nodes": [
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8000/v1/chat/completions",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: ($json.model || 'qwen'), messages: [{ role: 'user', content: $json.prompt }] }) }}",
+        "options": {}
+      },
+      "name": "Syntara",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    }
+  ],
+  "connections": {}
+}
