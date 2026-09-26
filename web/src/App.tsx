@@ -25,6 +25,7 @@ import {
   MessageSquare,
   Moon,
   Package,
+  PanelLeft,
   Pause,
   Pencil,
   Play,
@@ -282,7 +283,12 @@ export default function App() {
         const active = document.activeElement
         if (active && /INPUT|TEXTAREA|SELECT/.test(active.tagName) && active !== queryRef.current) return
         event.preventDefault()
-        queryRef.current?.focus()
+        if (state.settings.historyCollapsed) {
+          updateSettings({ historyCollapsed: false })
+          window.requestAnimationFrame(() => queryRef.current?.focus())
+        } else {
+          queryRef.current?.focus()
+        }
         return
       }
       if (event.key === "Escape") {
@@ -293,7 +299,7 @@ export default function App() {
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [confirmReset, selectedMemory, setupOpen])
+  }, [confirmReset, selectedMemory, setupOpen, state.settings.historyCollapsed])
 
   useEffect(() => {
     return () => abortRef.current?.abort()
@@ -753,14 +759,14 @@ export default function App() {
   const runtimeStatus = connected ? "Running locally" : "Not connected"
 
   return (
-    <div className="syntara-shell">
+    <div className={cn("syntara-shell", state.settings.navCollapsed && "nav-collapsed")}>
       <aside className="syntara-sidebar">
         <div className="brand-lockup">
           <img src="/syntara-logo.png" alt="Syntara" className="brand-mark" />
           <div><div className="brand-name">Syntara</div><div className="brand-by">By NDe</div><div className="brand-full">NoirDemons</div></div>
         </div>
 
-        <button className="new-chat" onClick={startConversation}><Plus size={16} /> New chat</button>
+        <button className="new-chat" onClick={startConversation}><Plus size={16} /> <span>New chat</span></button>
         <div className="nav-section">
           <div className="nav-label">Workspace</div>
           {NAV.map(({ id, label, icon: Icon }) => (
@@ -787,9 +793,14 @@ export default function App() {
 
       <main className="syntara-main">
         <header className="topbar">
-          <div>
-            <span className="eyebrow">{NAV.find((item) => item.id === view)?.label}</span>
-            <div className="runtime-inline"><span className={cn("status-light", connected && "on")} /> {selectedModel || "No model selected"}</div>
+          <div className="topbar-left">
+            <button className="icon-btn" onClick={() => updateSettings({ navCollapsed: !state.settings.navCollapsed })} title={state.settings.navCollapsed ? "Expand sidebar" : "Collapse sidebar"} aria-label={state.settings.navCollapsed ? "Expand sidebar" : "Collapse sidebar"} aria-expanded={!state.settings.navCollapsed}>
+              <PanelLeft size={17} />
+            </button>
+            <div>
+              <span className="eyebrow">{NAV.find((item) => item.id === view)?.label}</span>
+              <div className="runtime-inline"><span className={cn("status-light", connected && "on")} /> {selectedModel || "No model selected"}</div>
+            </div>
           </div>
           <div className="topbar-actions">
             <button className="ghost-btn" onClick={connect} disabled={connecting}><RefreshCw className={connecting ? "spin" : ""} size={15} /> {connecting ? "Connecting" : "Connect runtime"}</button>
@@ -800,16 +811,21 @@ export default function App() {
         {runtimeError && <div className="error-strip"><span><CircleHelp size={15} /> {runtimeError}</span><button onClick={() => setRuntimeError("")}><X size={14} /></button></div>}
 
         {view === "chat" && (
-          <section className="view chat-view">
+          <section className={cn("view chat-view", state.settings.historyCollapsed && "history-collapsed")}>
             <div className="chat-toolbar">
-              <div className="model-selector">
+              <div className="toolbar-left">
+                <button className="icon-btn" onClick={() => updateSettings({ historyCollapsed: !state.settings.historyCollapsed })} title={state.settings.historyCollapsed ? "Show conversation history" : "Hide conversation history"} aria-label={state.settings.historyCollapsed ? "Show conversation history" : "Hide conversation history"} aria-expanded={!state.settings.historyCollapsed}>
+                  <PanelLeft size={16} />
+                </button>
+                <div className="model-selector">
                 <Package size={15} />
                 <select value={effectiveModel} onChange={(event) => { updateSettings({ model: event.target.value }); if (activeConversation) saveConversation({ ...activeConversation, model: event.target.value }) }}>
                   <option value="">Select a model</option>
                   {models.map((item) => <option key={item} value={item}>{item}</option>)}
                   {state.models.filter((item) => item.status === "installed").map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
                 </select>
-                <ChevronDown size={14} />
+                  <ChevronDown size={14} />
+                </div>
               </div>
               <div className="chat-tools">
                 <button className={cn("tool-pill", thinking && "selected")} onClick={() => setThinking((value) => !value)}><Sparkles size={14} /> Reasoning</button>

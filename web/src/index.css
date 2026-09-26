@@ -442,3 +442,34 @@ button, input, textarea, select { font-family: inherit; }
 :root[data-theme="light"] .health-json,
 :root[data-theme="light"] .dev-card pre { background: #0b1520; color: #c6e2ef; }
 :root[data-theme="light"] ::selection { background: rgba(0,140,190,.28); color: #0a1626; }
+
+/* Collapsible chrome + native select popups that match the active theme. */
+select option { background-color: var(--bg-soft); color: var(--text); }
+
+.syntara-shell { transition: grid-template-columns .28s var(--ease); }
+.chat-view { transition: grid-template-columns .28s var(--ease); }
+.chat-toolbar { flex-wrap: wrap; row-gap: 10px; }
+.topbar-left { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.topbar-left > div { min-width: 0; }
+.toolbar-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+
+/* Workspace rail (desktop): brand text collapses, the logo always stays. */
+@media (min-width: 761px) {
+  .syntara-shell.nav-collapsed { grid-template-columns: 92px minmax(0, 1fr); }
+  .nav-collapsed .syntara-sidebar:after { display: none; }
+  .nav-collapsed .brand-lockup { justify-content: center; padding-left: 0; padding-right: 0; }
+  .nav-collapsed .brand-lockup > div { display: none; }
+  .nav-collapsed .new-chat span,
+  .nav-collapsed .nav-item span,
+  .nav-collapsed .runtime-chip div,
+  .nav-collapsed .sidebar-mini-actions { display: none; }
+  .nav-collapsed .new-chat { padding: 10px; justify-content: center; }
+  .nav-collapsed .nav-item { justify-content: center; }
+  .nav-collapsed .nav-label { display: none; }
+  .nav-collapsed .runtime-chip { justify-content: center; }
+
+  /* Conversation history panel toggle. */
+  .chat-view.history-collapsed { grid-template-columns: minmax(0, 1fr); }
+  .history-collapsed .conversation-list { display: none; }
+  .history-collapsed .composer-area { grid-column: 1; }
+}

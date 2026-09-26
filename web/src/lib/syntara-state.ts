@@ -99,6 +99,10 @@ export interface AppSettings {
   reducedMotion: boolean
   memoryEnabled: boolean
   selectedProjectId: string | null
+  /* UI chrome: workspace rail collapsed (logo stays visible) and
+     conversation-history panel collapsed. Persisted like other settings. */
+  navCollapsed: boolean
+  historyCollapsed: boolean
 }
 
 export interface SyntaraState {
@@ -239,6 +243,8 @@ export function defaultState(): SyntaraState {
       reducedMotion: false,
       memoryEnabled: true,
       selectedProjectId: null,
+      navCollapsed: false,
+      historyCollapsed: false,
     },
   }
 }

@@ -59,10 +59,10 @@ export function Nav() {
           ))}
         </nav>
 
-        <div className="ml-auto flex items-center gap-3 lg:ml-0">
+        <div className="ml-auto flex items-center gap-2 lg:ml-0">
           <button
             type="button"
-            className="hud-btn hud-btn-ghost cut-sm !px-3"
+            className="hud-btn hud-btn-ghost cut-sm !px-2.5"
             onClick={() => setTheme((t) => (t === "dark" ? "light" : "dark"))}
             title={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
             aria-label={theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}
@@ -70,14 +70,17 @@ export function Nav() {
             {theme === "dark" ? "☾" : "☀"}
           </button>
           <a
-            className="hud-btn hud-btn-ghost cut-sm hidden sm:inline-flex"
+            className="hud-btn hud-btn-ghost cut-sm hidden !px-3 sm:inline-flex"
             href="https://github.com/NoirDemons/Syntara"
             target="_blank"
             rel="noreferrer"
           >
             GitHub
           </a>
-          <a className="hud-btn hud-btn-primary cut-sm" href="#download">
+          <a className="hud-btn hud-btn-ghost cut-sm !px-3" href="app/">
+            Try Online <span aria-hidden="true">↗</span>
+          </a>
+          <a className="hud-btn hud-btn-primary cut-sm !px-3" href="#download">
             Download
           </a>
         </div>

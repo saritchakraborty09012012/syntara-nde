@@ -6,6 +6,7 @@ import { defineConfig } from "vite"
 const host = process.env.TAURI_DEV_HOST
 
 export default defineConfig({
+  base: "./",
   plugins: [react(), tailwindcss()],
   resolve: { alias: { "@": path.resolve(__dirname, "./src") } },
   clearScreen: false,
