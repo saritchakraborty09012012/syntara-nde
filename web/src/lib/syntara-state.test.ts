@@ -12,6 +12,36 @@ function memoryStorage(initial = "") {
   } as unknown as Storage
 }
 
+describe("seed model catalogue", () => {
+  it("refreshes stored seed families, adds new ones and keeps imports", () => {
+    const stored = JSON.stringify({
+      schema: 1,
+      models: [
+        {
+          id: "qwen-local", name: "Qwen family", provider: "Qwen", architecture: "Dense / MoE variants",
+          parameters: "Various", formats: [], quantizations: [], capabilities: [], context: "",
+          sourceUrl: "", recommendedRam: "8 GB", recommendedVram: "", disk: "",
+          status: "installed", localPath: "/models/qwen.gguf", installedAt: 123,
+        },
+        {
+          id: "imported-local", name: "My import", provider: "local", architecture: "dense",
+          parameters: "7B", formats: ["GGUF"], quantizations: ["Q4"], capabilities: ["text"],
+          context: "8k", sourceUrl: "local://import", recommendedRam: "8 GB",
+          recommendedVram: "", disk: "5 GB", status: "installed", localPath: "/x.gguf",
+        },
+      ],
+    })
+    const state = loadState(memoryStorage(stored))
+    expect(state.models.length).toBeGreaterThanOrEqual(23)
+    const qwen = state.models.find((model) => model.id === "qwen-local")
+    expect(qwen?.name).toBe("Qwen families and variants")
+    expect(qwen?.status).toBe("installed")
+    expect(qwen?.localPath).toBe("/models/qwen.gguf")
+    expect(state.models.find((model) => model.id === "phi-local")).toBeTruthy()
+    expect(state.models.find((model) => model.id === "imported-local")?.name).toBe("My import")
+  })
+})
+
 describe("sidebar collapse preferences", () => {
   it("defaults both sidebars to expanded", () => {
     const state = defaultState()

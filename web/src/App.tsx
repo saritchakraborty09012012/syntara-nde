@@ -90,6 +90,15 @@ const NAV: Array<{ id: View; label: string; icon: typeof MessageSquare }> = [
   { id: "settings", label: "Settings", icon: Settings2 },
 ]
 
+/* Every workspace view is an addressable page (#models, #downloads, …) so
+   deep links, refresh and browser back/forward work. Hash routing keeps the
+   links valid wherever the app is served (site /app/ subdir, Vercel, local
+   preview) without server rewrites. */
+function viewFromHash(): View {
+  const raw = window.location.hash.replace(/^#\/?/, "") as View
+  return NAV.some((item) => item.id === raw) ? raw : "chat"
+}
+
 const defaultAgent = {
   name: "Local Coding Agent",
   systemPrompt: "You are a careful local coding agent. Explain actions, request approval for risky operations, and keep changes inside the user workspace.",
@@ -160,7 +169,20 @@ function usePersistentState() {
 
 export default function App() {
   const [state, setState] = usePersistentState()
-  const [view, setView] = useState<View>("chat")
+  const [view, setViewState] = useState<View>(() => viewFromHash())
+  const setView = (next: View) => {
+    setViewState(next)
+    if (window.location.hash.replace(/^#\/?/, "") !== next) window.location.hash = next
+  }
+  useEffect(() => {
+    const sync = () => setViewState(viewFromHash())
+    window.addEventListener("hashchange", sync)
+    return () => window.removeEventListener("hashchange", sync)
+  }, [])
+  useEffect(() => {
+    const label = NAV.find((item) => item.id === view)?.label
+    document.title = label && view !== "chat" ? `${label} · Syntara` : "Syntara"
+  }, [view])
   const [apiKey, setApiKey] = useState("")
   const [connected, setConnected] = useState(false)
   const [connecting, setConnecting] = useState(false)

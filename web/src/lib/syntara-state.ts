@@ -262,6 +262,23 @@ const seedModels: ModelMeta[] = [
   emptyFamily("other-open-weight-local", "Other open-weight families", "Open-source community", "https://huggingface.co/models"),
 ]
 
+/* Seed changes must reach installations that already have stored state.
+   Stored models keep their runtime facts (installed/detached status, local
+   path, install time); the seed supplies current catalogue metadata, so
+   renamed families and newly added families appear after an update. Models
+   the user imported are not seeds and are kept verbatim. */
+function mergeSeedModels(stored: ModelMeta[]): ModelMeta[] {
+  if (!stored.length) return seedModels
+  const byId = new Map(stored.map((model) => [model.id, model]))
+  const merged = seedModels.map((seed) => {
+    const prior = byId.get(seed.id)
+    if (!prior) return seed
+    byId.delete(seed.id)
+    return { ...seed, status: prior.status, localPath: prior.localPath, installedAt: prior.installedAt }
+  })
+  return [...merged, ...byId.values()]
+}
+
 export function defaultState(): SyntaraState {
   return {
     schema: 1,
@@ -297,7 +314,7 @@ export function loadState(storage: Storage = localStorage): SyntaraState {
       ...base,
       ...parsed,
       settings: { ...base.settings, ...(parsed.settings || {}) },
-      models: parsed.models?.length ? parsed.models as ModelMeta[] : base.models,
+      models: mergeSeedModels(parsed.models || []),
       conversations: parsed.conversations || [],
       memories: parsed.memories || [],
       projects: parsed.projects || [],
