@@ -50,6 +50,8 @@ import { createStreamedDownload, supportsSavePicker, type DownloadControl } from
 import { detectHardware, recommendationLabel, scoreModel } from "@/lib/model-hub"
 import { activeRequests, supportsCacheSlots } from "@/lib/runtime"
 import { Markdown } from "@/components/Markdown"
+import { ModelFamilyPage } from "@/components/ModelFamilyPage"
+import { modelCatalog } from "@/lib/model-catalog"
 import {
   clearState,
   createId,
@@ -91,12 +93,14 @@ const NAV: Array<{ id: View; label: string; icon: typeof MessageSquare }> = [
 ]
 
 /* Every workspace view is an addressable page (#models, #downloads, …) so
-   deep links, refresh and browser back/forward work. Hash routing keeps the
-   links valid wherever the app is served (site /app/ subdir, Vercel, local
-   preview) without server rewrites. */
-function viewFromHash(): View {
-  const raw = window.location.hash.replace(/^#\/?/, "") as View
-  return NAV.some((item) => item.id === raw) ? raw : "chat"
+   deep links, refresh and browser back/forward work. Each model family is
+   its own page too (#models/qwen-local). Hash routing keeps the links valid
+   wherever the app is served (site /app/ subdir, Vercel, local preview)
+   without server rewrites. */
+function routeFromHash(): { view: View; family: string | null } {
+  const [head, ...rest] = window.location.hash.replace(/^#\/?/, "").split("/")
+  const view = NAV.some((item) => item.id === head) ? (head as View) : "chat"
+  return { view, family: view === "models" && rest.length ? decodeURIComponent(rest.join("/")) : null }
 }
 
 const defaultAgent = {
@@ -169,20 +173,29 @@ function usePersistentState() {
 
 export default function App() {
   const [state, setState] = usePersistentState()
-  const [view, setViewState] = useState<View>(() => viewFromHash())
-  const setView = (next: View) => {
-    setViewState(next)
-    if (window.location.hash.replace(/^#\/?/, "") !== next) window.location.hash = next
+  const [route, setRoute] = useState(() => routeFromHash())
+  const view = route.view
+  const navigate = (target: View, family: string | null = null) => {
+    const hash = family ? `${target}/${family}` : target
+    setRoute({ view: target, family })
+    if (window.location.hash.replace(/^#\/?/, "") !== hash) window.location.hash = hash
   }
+  const setView = (next: View) => navigate(next)
+  const openFamily = (id: string) => navigate("models", id)
   useEffect(() => {
-    const sync = () => setViewState(viewFromHash())
+    const sync = () => setRoute(routeFromHash())
     window.addEventListener("hashchange", sync)
     return () => window.removeEventListener("hashchange", sync)
   }, [])
   useEffect(() => {
-    const label = NAV.find((item) => item.id === view)?.label
-    document.title = label && view !== "chat" ? `${label} · Syntara` : "Syntara"
-  }, [view])
+    if (route.view === "models" && route.family) {
+      const family = state.models.find((item) => item.id === route.family)
+      document.title = family ? `${family.name} · Syntara` : "Model family · Syntara"
+      return
+    }
+    const label = NAV.find((item) => item.id === route.view)?.label
+    document.title = label && route.view !== "chat" ? `${label} · Syntara` : "Syntara"
+  }, [route, state.models])
   const [apiKey, setApiKey] = useState("")
   const [connected, setConnected] = useState(false)
   const [connecting, setConnecting] = useState(false)
@@ -660,14 +673,16 @@ export default function App() {
     setState((currentState) => ({ ...currentState, downloads: currentState.downloads.filter((item) => item.id !== id) }))
   }
 
-  const startDownload = async (model: ModelMeta) => {
-    const url = model.downloadUrl || model.sourceUrl
+  /* Every download funnels through here: callers pass a URL they read from
+     catalog data, so no view ever has to render a direct download link. The
+     filename comes from the URL itself (model.safetensors, shard names, …). */
+  const startUrlDownload = async (modelId: string, name: string, url: string) => {
     if (!url) return
     const id = createId("dl")
-    const filename = `${(model.id || "model").replace(/[^\w.-]+/g, "_")}.bin`
+    const filename = decodeURIComponent((url.split("/").pop() || "model.bin").split("?")[0]) || "model.bin"
     setState((current) => ({
       ...current,
-      downloads: [{ id, modelId: model.id, name: model.name, url, state: "downloading" as const, progress: 0, receivedBytes: 0, createdAt: Date.now(), updatedAt: Date.now() }, ...current.downloads],
+      downloads: [{ id, modelId, name, url, state: "downloading" as const, progress: 0, receivedBytes: 0, createdAt: Date.now(), updatedAt: Date.now() }, ...current.downloads],
     }))
     try {
       let lastSampleAt = Date.now()
@@ -704,6 +719,8 @@ export default function App() {
       patchDownload(id, { state: "error", error: error instanceof Error ? error.message : "Could not start the download." })
     }
   }
+
+  const startDownload = (model: ModelMeta) => startUrlDownload(model.id, model.name, model.downloadUrl || model.sourceUrl)
 
   const pauseDownload = (id: string) => downloadControls.current.get(id)?.pause()
   const resumeDownload = (id: string) => downloadControls.current.get(id)?.resume()
@@ -938,7 +955,8 @@ export default function App() {
           <div className="card-grid">{(state.agents.length ? state.agents : [{ id: "seed", ...defaultAgent, createdAt: Date.now(), updatedAt: Date.now() }]).map((agent) => <div className="feature-card" key={agent.id}><div className="feature-icon"><Bot size={18} /></div><strong>{agent.name}</strong><p>{agent.systemPrompt}</p><div className="chip-row">{agent.tools.map((tool) => <span key={tool}>{tool}</span>)}</div></div>)}</div>
         </section>}
 
-        {view === "models" && <section className={cn("view scroll-view", dragging && "drop-zone-active")} onDragOver={(e) => { e.preventDefault(); setDragging(true) }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); installImportedModel(event.dataTransfer.files) }}><div className="section-head"><div><span className="section-kicker">MODEL HUB</span><h2>Discover, import, install, manage.</h2><p>Formats, architectures, backends and hardware are evaluated independently.</p></div><div className="head-actions"><button className="ghost-btn" onClick={() => modelImportRef.current?.click()}><Upload size={15} /> Import local model</button><input ref={modelImportRef} hidden type="file" onChange={(event) => installImportedModel(event.target.files)} /></div></div><div className="search-row"><div className="search-box"><Search size={15} /><input value={modelSearch} onChange={(e) => setModelSearch(e.target.value)} placeholder="Search models, providers, capabilities…" /></div><div className="hardware-pill"><Cpu size={14} /> {hardware.cpu} · {hardware.ramGb ? `${hardware.ramGb} GB RAM` : "hardware scan"}</div></div><div className="model-grid">{filteredModels.map((model) => { const score = scoreModel(model, hardware); return <article key={model.id} className="model-card"><div className="model-card-top"><div className="model-icon"><Package size={18} /></div><div><div className="model-title">{model.name}</div><div className="model-provider">{model.provider} · {model.architecture}</div></div><span className={cn("compat-pill", score >= 75 ? "good" : score >= 55 ? "mid" : "heavy")}>{recommendationLabel(score)}</span></div><div className="model-specs"><span><MemoryStick size={13} /> {model.recommendedRam}</span><span><HardDrive size={13} /> {model.disk}</span><span><Zap size={13} /> {model.parameters}</span><span><Database size={13} /> Context: {model.context}</span></div><div className="chip-row">{model.quantizations.map((tag) => <span key={tag} className="quant-tag">{tag}</span>)}{model.formats.map((tag) => <span key={tag}>{tag}</span>)}{model.capabilities.slice(0, 4).map((tag) => <span key={tag}>{tag.replace("*", "")}</span>)}</div><div className="model-footer"><a href={model.sourceUrl} target="_blank" rel="noreferrer"><Link2 size={13} /> Source</a><div className="row-actions">{model.status === "installed" && <><span className="installed-label"><Check size={13} /> Installed</span><button className="icon-btn" title="Detach model" onClick={() => detachModel(model.id)}><Link2 size={13} /></button><button className="icon-btn danger" title="Delete model metadata" onClick={() => deleteModel(model.id)}><Trash2 size={13} /></button></>}{model.status === "detached" && <button className="ghost-btn small" onClick={() => setState((current) => ({ ...current, models: current.models.map((item) => item.id === model.id ? { ...item, status: "available" } : item) }))}>Attach</button>}{model.status === "available" && <button className="primary-btn small" onClick={() => void startDownload(model)}><Download size={13} /> Install</button>}</div></div></article> })}</div></section>}
+        {view === "models" && route.family && <ModelFamilyPage family={state.models.find((item) => item.id === route.family)} familyId={route.family} onBack={() => setView("models")} onDownload={(file) => void startUrlDownload(file.repo, file.name, file.url)} />}
+        {view === "models" && !route.family && <section className={cn("view scroll-view", dragging && "drop-zone-active")} onDragOver={(e) => { e.preventDefault(); setDragging(true) }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); installImportedModel(event.dataTransfer.files) }}><div className="section-head"><div><span className="section-kicker">MODEL HUB</span><h2>Discover, import, install, manage.</h2><p>Formats, architectures, backends and hardware are evaluated independently.</p></div><div className="head-actions"><button className="ghost-btn" onClick={() => modelImportRef.current?.click()}><Upload size={15} /> Import local model</button><input ref={modelImportRef} hidden type="file" onChange={(event) => installImportedModel(event.target.files)} /></div></div><div className="search-row"><div className="search-box"><Search size={15} /><input value={modelSearch} onChange={(e) => setModelSearch(e.target.value)} placeholder="Search models, providers, capabilities…" /></div><div className="hardware-pill"><Cpu size={14} /> {hardware.cpu} · {hardware.ramGb ? `${hardware.ramGb} GB RAM` : "hardware scan"}</div></div><div className="model-grid">{filteredModels.map((model) => { const score = scoreModel(model, hardware); const catalogCount = modelCatalog[model.id]?.length ?? 0; return <article key={model.id} className="model-card"><div className="model-card-top"><div className="model-icon"><Package size={18} /></div><div><div className="model-title">{model.name}</div><div className="model-provider">{model.provider} · {model.architecture}</div></div><span className={cn("compat-pill", score >= 75 ? "good" : score >= 55 ? "mid" : "heavy")}>{recommendationLabel(score)}</span></div><div className="model-specs"><span><MemoryStick size={13} /> {model.recommendedRam}</span><span><HardDrive size={13} /> {model.disk}</span><span><Zap size={13} /> {model.parameters}</span><span><Database size={13} /> Context: {model.context}</span></div><div className="chip-row">{model.quantizations.map((tag) => <span key={tag} className="quant-tag">{tag}</span>)}{model.formats.map((tag) => <span key={tag}>{tag}</span>)}{model.capabilities.slice(0, 4).map((tag) => <span key={tag}>{tag.replace("*", "")}</span>)}</div><div className="model-footer"><a href={model.sourceUrl} target="_blank" rel="noreferrer"><Link2 size={13} /> Source</a>{catalogCount > 0 && <span className="model-count">{catalogCount} checkpoints</span>}<div className="row-actions">{model.status === "installed" && <><span className="installed-label"><Check size={13} /> Installed</span><button className="icon-btn" title="Detach model" onClick={() => detachModel(model.id)}><Link2 size={13} /></button><button className="icon-btn danger" title="Delete model metadata" onClick={() => deleteModel(model.id)}><Trash2 size={13} /></button></>}{model.status === "detached" && <button className="ghost-btn small" onClick={() => setState((current) => ({ ...current, models: current.models.map((item) => item.id === model.id ? { ...item, status: "available" } : item) }))}>Attach</button>}{model.status === "available" && !catalogCount && <button className="primary-btn small" onClick={() => void startDownload(model)}><Download size={13} /> Install</button>}{catalogCount > 0 && <button className="primary-btn small" onClick={() => openFamily(model.id)}><Boxes size={13} /> Browse models</button>}</div></div></article> })}</div></section>}
 
         {view === "downloads" && <section className="view scroll-view"><div className="section-head"><div><span className="section-kicker">DOWNLOADS</span><h2>Model installation without friction.</h2><p>Files stream to a location you choose, with progress, pause, resume and cancel. {supportsSavePicker() ? "Direct-to-disk streaming is active in this browser." : "This browser buffers in memory; Chromium-based browsers can stream straight to disk."}</p></div></div><div className="download-list">{state.downloads.length ? state.downloads.map((task) => <div className="download-row" key={task.id}><div className="download-icon"><Download size={16} /></div><div className="download-main"><strong>{task.name}</strong><span>{task.url}</span><div className="progress-track"><span style={{ width: `${Math.min(100, task.progress)}%` }} /></div></div><div className="download-status"><span className={cn("download-state", task.state)}>{task.state}{task.state === "complete" ? " ✓" : ""}</span><span>{task.totalBytes ? `${formatBytes(task.receivedBytes)} / ${formatBytes(task.totalBytes)}` : task.receivedBytes ? formatBytes(task.receivedBytes) : ""}</span>{task.state === "downloading" && task.speedBps ? <span className="download-meta">{formatBytes(task.speedBps)}/s{task.etaMs ? ` · ${formatEta(task.etaMs)} left` : ""}</span> : null}{task.error ? <span className="download-error">{task.error}</span> : null}</div><div className="row-actions">{task.state === "downloading" ? <button className="icon-btn" onClick={() => pauseDownload(task.id)} title="Pause download"><Pause size={14} /></button> : null}{task.state === "paused" ? <button className="icon-btn" onClick={() => resumeDownload(task.id)} title="Resume download"><Play size={14} /></button> : null}{(task.state === "downloading" || task.state === "paused") ? <button className="icon-btn" onClick={() => cancelDownload(task.id)} title="Cancel download"><X size={14} /></button> : null}<button className="icon-btn danger" onClick={() => dropDownload(task.id)} title="Remove from list"><Trash2 size={14} /></button></div></div>) : <div className="empty-state-card"><Download size={22} /><strong>No downloads yet</strong><p>Install a model from Model Hub to populate the queue.</p></div>}</div></section>}
 
