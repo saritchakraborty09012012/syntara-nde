@@ -160,3 +160,7 @@ c/qwen38_tiny_fp8/
 site/node_modules/
 site/dist/
 site/*.tsbuildinfo
+
+# Vercel local config (vercel.json is committed; the local .vercel/ project
+# pointer is machine-specific)
+.vercel/

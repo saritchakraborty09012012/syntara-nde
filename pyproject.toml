@@ -10,7 +10,7 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
 authors = [
-    {name = "NoirDemons"},
+    {name = "NDe"},
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -42,8 +42,8 @@ bench = [
 syntara = "syntara.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/NoirDemons/Syntara"
-Issues = "https://github.com/NoirDemons/Syntara/issues"
+Homepage = "https://github.com/saritchakraborty09012012/syntara-nde"
+Issues = "https://github.com/saritchakraborty09012012/syntara-nde/issues"
 
 [tool.setuptools.dynamic]
 version = {attr = "syntara._version.__version__"}

@@ -1,7 +1,7 @@
 export type Platform = "windows" | "macos" | "linux"
 
-export const RELEASE_API = "https://api.github.com/repos/NoirDemons/Syntara/releases/latest"
-export const RELEASES_PAGE = "https://github.com/NoirDemons/Syntara/releases"
+export const RELEASE_API = "https://api.github.com/repos/saritchakraborty09012012/syntara-nde/releases/latest"
+export const RELEASES_PAGE = "https://github.com/saritchakraborty09012012/syntara-nde/releases"
 
 export const ARCH_LABEL: Record<Platform, string> = {
   windows: "Portable x86_64",

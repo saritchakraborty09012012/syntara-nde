@@ -73,7 +73,7 @@ export function Developers() {
       <div className="mt-8 flex flex-wrap gap-3">
         <a
           className="hud-btn hud-btn-ghost cut-sm"
-          href="https://github.com/NoirDemons/Syntara/tree/main/docs"
+          href="https://github.com/saritchakraborty09012012/syntara-nde/tree/main/docs"
           target="_blank"
           rel="noreferrer"
         >
@@ -81,7 +81,7 @@ export function Developers() {
         </a>
         <a
           className="hud-btn hud-btn-ghost cut-sm"
-          href="https://github.com/NoirDemons/Syntara/tree/main/docs/sdk-cli.md"
+          href="https://github.com/saritchakraborty09012012/syntara-nde/tree/main/docs/sdk-cli.md"
           target="_blank"
           rel="noreferrer"
         >

@@ -45,9 +45,6 @@ export function Nav() {
             <span className="mt-1 block font-mono text-[9px] tracking-[0.3em] text-muted uppercase">
               By NDe
             </span>
-            <span className="mt-0.5 block font-mono text-[8px] tracking-[0.24em] text-muted/70 uppercase">
-              NoirDemons
-            </span>
           </span>
         </a>
 
@@ -71,7 +68,7 @@ export function Nav() {
           </button>
           <a
             className="hud-btn hud-btn-ghost cut-sm hidden !px-3 sm:inline-flex"
-            href="https://github.com/NoirDemons/Syntara"
+            href="https://github.com/saritchakraborty09012012/syntara-nde"
             target="_blank"
             rel="noreferrer"
           >

@@ -29,7 +29,7 @@ CPU-only by default.
 
 > **Shortcut — skip sections 1 and 2 entirely.** Prebuilt archives are published
 > for **Linux, macOS and Windows** on the
-> [Releases page](https://github.com/NoirDemons/Syntara/releases): unpack one,
+> [Releases page](https://github.com/saritchakraborty09012012/syntara-nde/releases): unpack one,
 > install [Python 3](https://www.python.org/downloads/), and jump straight to
 > [step 3](#3-get-the-model). The engine ships ready to run and the `syntara`
 > launcher finds it next to itself — no compiler, no renaming, no configuration.
@@ -72,7 +72,7 @@ You have two options.
 
 **Option A — download a prebuilt binary (no compiler needed).**
 Grab `syntara-<version>-windows-x86_64.zip` from the
-[Releases page](https://github.com/NoirDemons/Syntara/releases) and unzip it.
+[Releases page](https://github.com/saritchakraborty09012012/syntara-nde/releases) and unzip it.
 Inside you'll find:
 
 | File | What it is |
@@ -117,7 +117,7 @@ brew install libomp git python  # OpenMP for multithreading
 ## 2. Get the code and build the engine
 
 ```bash
-git clone https://github.com/NoirDemons/Syntara.git
+git clone https://github.com/saritchakraborty09012012/syntara-nde.git
 cd syntara/c
 ./setup.sh
 ```
@@ -156,10 +156,10 @@ head, so speculative decoding stays off:
 Group scales matter: the older per-row int4 containers
 (`mateogrgic/…-int4-with-int8-mtp`, `jlnsrk/…`) measure ~9pp worse on quality
 benchmarks and are the root cause of the think-mode loops and never-terminating
-generations in [#455](https://github.com/NoirDemons/Syntara/issues/455) — the
+generations in [#455](https://github.com/saritchakraborty09012012/syntara-nde/issues/455) — the
 gs64 container cured every failing case in that report. (The int8 MTP head is
 also required: plain int4 heads disable speculative decoding, see
-[#8](https://github.com/NoirDemons/Syntara/issues/8).)
+[#8](https://github.com/saritchakraborty09012012/syntara-nde/issues/8).)
 
 Download it into a folder on a fast disk, e.g. `/nvme/glm52_i4` (Linux/macOS) or
 `D:\glm52_i4` (Windows). It is about **372 GB**, so make sure you have the space.

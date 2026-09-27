@@ -3,7 +3,7 @@
   "displayName": "Syntara Local AI",
   "description": "Use models installed on your own computer through Syntara.",
   "version": "0.1.0",
-  "publisher": "NoirDemons",
+  "publisher": "syntara-nde",
   "engines": { "vscode": "^1.90.0" },
   "activationEvents": ["onStartupFinished"],
   "main": "extension.js",

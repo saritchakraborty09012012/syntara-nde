@@ -4,7 +4,7 @@ This distribution is a substantial derivative work built from the attached upstr
 
 Syntara-specific changes include:
 
-- New Syntara/NoirDemons product identity and desktop configuration.
+- New Syntara/NDe:NoirDemons product identity and desktop configuration.
 - Cross-platform Syntara application shell and redesigned UI.
 - Model Hub / model management state model.
 - Local persistent memory controls.

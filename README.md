@@ -2,7 +2,7 @@
 
 ![Syntara](assets/syntara-logo.png)
 
-**Syntara is a universal, open-source local-AI platform by NDe (NoirDemons).**
+**Syntara: The Universal Local AI Runtime by NDe: NoirDemons.**
 
 Syntara brings model discovery, import, compatibility analysis, hardware-aware execution, local Chat, Agent workflows, persistent memory, backups, developer APIs and cross-platform desktop UX into one zero-auth product.
 

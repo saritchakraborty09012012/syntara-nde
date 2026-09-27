@@ -14,11 +14,11 @@ const LINKS: Array<{ label: string; href: string }> = [
 ]
 
 const OFFSITE: Array<{ label: string; href: string }> = [
-  { label: "GitHub", href: "https://github.com/NoirDemons/Syntara" },
-  { label: "Releases", href: "https://github.com/NoirDemons/Syntara/releases" },
-  { label: "Docs", href: "https://github.com/NoirDemons/Syntara/tree/main/docs" },
-  { label: "Issues", href: "https://github.com/NoirDemons/Syntara/issues" },
-  { label: "Contributing", href: "https://github.com/NoirDemons/Syntara/blob/main/CONTRIBUTING.md" },
+  { label: "GitHub", href: "https://github.com/saritchakraborty09012012/syntara-nde" },
+  { label: "Releases", href: "https://github.com/saritchakraborty09012012/syntara-nde/releases" },
+  { label: "Docs", href: "https://github.com/saritchakraborty09012012/syntara-nde/tree/main/docs" },
+  { label: "Issues", href: "https://github.com/saritchakraborty09012012/syntara-nde/issues" },
+  { label: "Contributing", href: "https://github.com/saritchakraborty09012012/syntara-nde/blob/main/CONTRIBUTING.md" },
 ]
 
 export function Footer() {
@@ -75,16 +75,13 @@ export function Footer() {
             Built by{" "}
             <a
               className="text-cyan hover:text-ink"
-              href="https://github.com/NoirDemons"
+              href="https://github.com/saritchakraborty09012012"
               target="_blank"
               rel="noreferrer"
-              title="NoirDemons (NDe)"
+              title="NDe"
             >
               NDe
             </a>
-            <span className="block text-[9px] tracking-[0.2em] text-muted/70">
-              NoirDemons
-            </span>
           </span>
         </Container>
       </div>

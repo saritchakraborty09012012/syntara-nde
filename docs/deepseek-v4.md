@@ -15,7 +15,7 @@ across kernels and cache states is spelled out in [Validation](#validation).
 ## Windows release (recommended)
 
 Windows users do not need to build or copy an engine manually. Download and
-unpack the [latest Windows release](https://github.com/NoirDemons/Syntara/releases/latest),
+unpack the [latest Windows release](https://github.com/saritchakraborty09012012/syntara-nde/releases/latest),
 then start Syntara through the release launcher:
 
 ```powershell

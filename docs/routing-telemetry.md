@@ -2,7 +2,7 @@
 
 *The canonical reference for `.syntara_usage` and `ROUTE_TRACE=`, and for `route_trace.h`,
 the header both are implemented in. Background and design discussion in
-[#700](https://github.com/NoirDemons/Syntara/issues/700).*
+[#700](https://github.com/saritchakraborty09012012/syntara-nde/issues/700).*
 
 ## Why one header
 

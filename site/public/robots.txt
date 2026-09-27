@@ -1,8 +1,8 @@
-# Syntara — by NDe (NoirDemons). https://github.com/NoirDemons/Syntara
+# Syntara — by NDe (NoirDemons). https://github.com/saritchakraborty09012012/syntara-nde
 User-agent: *
 Allow: /
 
 # NDe · nde · NDE · NoDe — public short name of NoirDemons.
 Disallow: /assets/
 
-Sitemap: https://noirdemons.github.io/Syntara/sitemap.xml
+Sitemap: https://syntara-nde.vercel.app/sitemap.xml

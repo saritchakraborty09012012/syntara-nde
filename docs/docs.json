@@ -52,11 +52,11 @@
     "links": [
       {
         "label": "Website",
-        "href": "https://noirdemons.github.io/Syntara"
+        "href": "https://syntara-nde.vercel.app"
       },
       {
         "label": "GitHub",
-        "href": "https://github.com/NoirDemons/Syntara",
+        "href": "https://github.com/saritchakraborty09012012/syntara-nde",
         "icon": "github"
       }
     ],
@@ -68,7 +68,7 @@
   },
   "footer": {
     "socials": {
-      "github": "https://github.com/NoirDemons/Syntara"
+      "github": "https://github.com/saritchakraborty09012012/syntara-nde"
     }
   }
 }

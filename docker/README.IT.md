@@ -9,23 +9,23 @@ Una guida semplice per eseguire **Syntara**, un motore di inferenza locale basat
 
 ## 📋 Sommario
 
-- [Cosa è Syntara?](https://github.com/NoirDemons/Syntara/blob/main/docker/README.IT.md#cosa-%C3%A8-syntarabr%C3%AC)
-- [Cosa serve](https://github.com/NoirDemons/Syntara/blob/main/docker/README.IT.md#cosa-serve)
-    - [Hardware](https://github.com/NoirDemons/Syntara/blob/main/docker/README.IT.md#hardware)
-    - [Software](https://github.com/NoirDemons/Syntara/blob/main/docker/README.IT.md#software)
-- [Come iniziare](https://github.com/NoirDemons/Syntara/blob/main/docker/README.IT.md#come-iniziare)
-    - [Passo 1: Scarica il modello](https://github.com/NoirDemons/Syntara/blob/main/docker/README.IT.md#passo-1-scarica-il-modello)
-    - [Passo 2: Scarica il Dockerfile di Syntara](https://github.com/NoirDemons/Syntara/blob/main/docker/README.IT.md#passo-2-scarica-il-dockerfile-di-syntarabr%C3%AC)
-    - [Passo 3: Compila l'immagine Docker](https://github.com/NoirDemons/Syntara/blob/main/docker/README.IT.md#passo-3-compila-limmagine-docker)
-    - [Passo 4: Avvia Syntara](https://github.com/NoirDemons/Syntara/blob/main/docker/README.IT.md#passo-4-avvia-syntarabr%C3%AC)
-    - [Cosa significa quel comando?](https://github.com/NoirDemons/Syntara/blob/main/docker/README.IT.md#cosa-significa-quel-comando)
-    - [Usare Syntara](https://github.com/NoirDemons/Syntara/blob/main/docker/README.IT.md#usare-syntarabr%C3%AC)
-- [Entrare nel container](https://github.com/NoirDemons/Syntara/blob/main/docker/README.IT.md#entrare-nel-container)
-- [Risoluzione dei problemi](https://github.com/NoirDemons/Syntara/blob/main/docker/README.IT.md#risoluzione-dei-problemi)
-- [Note tecniche](https://github.com/NoirDemons/Syntara/blob/main/docker/README.IT.md#note-tecniche)
-- [Domande frequenti](https://github.com/NoirDemons/Syntara/blob/main/docker/README.IT.md#domande-frequenti)
-- [Supporto e contributi](https://github.com/NoirDemons/Syntara/blob/main/docker/README.IT.md#supporto-e-contributi)
-- [Testing on a low resource PC](https://github.com/NoirDemons/Syntara/blob/main/docker/README.IT.md#test-su-un-pc-con-poche-risorse)
+- [Cosa è Syntara?](https://github.com/saritchakraborty09012012/syntara-nde/blob/main/docker/README.IT.md#cosa-%C3%A8-syntarabr%C3%AC)
+- [Cosa serve](https://github.com/saritchakraborty09012012/syntara-nde/blob/main/docker/README.IT.md#cosa-serve)
+    - [Hardware](https://github.com/saritchakraborty09012012/syntara-nde/blob/main/docker/README.IT.md#hardware)
+    - [Software](https://github.com/saritchakraborty09012012/syntara-nde/blob/main/docker/README.IT.md#software)
+- [Come iniziare](https://github.com/saritchakraborty09012012/syntara-nde/blob/main/docker/README.IT.md#come-iniziare)
+    - [Passo 1: Scarica il modello](https://github.com/saritchakraborty09012012/syntara-nde/blob/main/docker/README.IT.md#passo-1-scarica-il-modello)
+    - [Passo 2: Scarica il Dockerfile di Syntara](https://github.com/saritchakraborty09012012/syntara-nde/blob/main/docker/README.IT.md#passo-2-scarica-il-dockerfile-di-syntarabr%C3%AC)
+    - [Passo 3: Compila l'immagine Docker](https://github.com/saritchakraborty09012012/syntara-nde/blob/main/docker/README.IT.md#passo-3-compila-limmagine-docker)
+    - [Passo 4: Avvia Syntara](https://github.com/saritchakraborty09012012/syntara-nde/blob/main/docker/README.IT.md#passo-4-avvia-syntarabr%C3%AC)
+    - [Cosa significa quel comando?](https://github.com/saritchakraborty09012012/syntara-nde/blob/main/docker/README.IT.md#cosa-significa-quel-comando)
+    - [Usare Syntara](https://github.com/saritchakraborty09012012/syntara-nde/blob/main/docker/README.IT.md#usare-syntarabr%C3%AC)
+- [Entrare nel container](https://github.com/saritchakraborty09012012/syntara-nde/blob/main/docker/README.IT.md#entrare-nel-container)
+- [Risoluzione dei problemi](https://github.com/saritchakraborty09012012/syntara-nde/blob/main/docker/README.IT.md#risoluzione-dei-problemi)
+- [Note tecniche](https://github.com/saritchakraborty09012012/syntara-nde/blob/main/docker/README.IT.md#note-tecniche)
+- [Domande frequenti](https://github.com/saritchakraborty09012012/syntara-nde/blob/main/docker/README.IT.md#domande-frequenti)
+- [Supporto e contributi](https://github.com/saritchakraborty09012012/syntara-nde/blob/main/docker/README.IT.md#supporto-e-contributi)
+- [Testing on a low resource PC](https://github.com/saritchakraborty09012012/syntara-nde/blob/main/docker/README.IT.md#test-su-un-pc-con-poche-risorse)
 
 ---
 
@@ -96,7 +96,7 @@ Se sei su Windows e non riesci con Python:
 
 ### Passo 2: Scarica il Dockerfile di Syntara
 
-1. Vai a: https://github.com/NoirDemons/Syntara/blob/main/docker/Dockerfile
+1. Vai a: https://github.com/saritchakraborty09012012/syntara-nde/blob/main/docker/Dockerfile
 2. Clicca il pulsante **Download** (icona ⬇️) in alto a destra
 3. Salva il file in una cartella (es. `C:\LLM\Syntara`)
 

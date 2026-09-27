@@ -1,9 +1,9 @@
 # Grammar-forced speculative drafts
 
 *The canonical reference for the `GRAMMAR=` draft source (method F). History: idea in
-[#48](https://github.com/NoirDemons/Syntara/issues/48), implementation in
-[#70](https://github.com/NoirDemons/Syntara/pull/70), consolidated write-up with A/B
-measurements and corrections in [#146](https://github.com/NoirDemons/Syntara/issues/146).*
+[#48](https://github.com/saritchakraborty09012012/syntara-nde/issues/48), implementation in
+[#70](https://github.com/saritchakraborty09012012/syntara-nde/pull/70), consolidated write-up with A/B
+measurements and corrections in [#146](https://github.com/saritchakraborty09012012/syntara-nde/issues/146).*
 
 ## The mechanism in one paragraph
 

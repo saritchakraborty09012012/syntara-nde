@@ -80,7 +80,7 @@ export function OpenSource() {
       <div className="mt-8 flex flex-wrap gap-3">
         <a
           className="hud-btn hud-btn-ghost cut-sm"
-          href="https://github.com/NoirDemons/Syntara/blob/main/CONTRIBUTING.md"
+          href="https://github.com/saritchakraborty09012012/syntara-nde/blob/main/CONTRIBUTING.md"
           target="_blank"
           rel="noreferrer"
         >
@@ -88,7 +88,7 @@ export function OpenSource() {
         </a>
         <a
           className="hud-btn hud-btn-ghost cut-sm"
-          href="https://github.com/NoirDemons/Syntara/issues"
+          href="https://github.com/saritchakraborty09012012/syntara-nde/issues"
           target="_blank"
           rel="noreferrer"
         >
@@ -96,7 +96,7 @@ export function OpenSource() {
         </a>
         <a
           className="hud-btn hud-btn-ghost cut-sm"
-          href="https://github.com/NoirDemons/Syntara"
+          href="https://github.com/saritchakraborty09012012/syntara-nde"
           target="_blank"
           rel="noreferrer"
         >

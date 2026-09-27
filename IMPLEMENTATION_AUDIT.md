@@ -4,11 +4,11 @@ This repository is the Syntara product work tree derived from the supplied upstr
 
 ## Product identity
 
-- Product: **Syntara**
-- Company: **NoirDemons**
+- Product: **Syntara: The Universal Local AI Runtime by NDe: NoirDemons**
+- Company: **NDe**
 - Authentication: none required by Syntara itself
 - Local-first: yes
-- User-provided Syntara and NoirDemons logos are used by the application and website.
+- User-provided Syntara and NDe logos are used by the application and website.
 
 ## Implemented in this source tree
 
