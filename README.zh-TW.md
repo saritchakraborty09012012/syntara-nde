@@ -385,4 +385,4 @@ docs/                     參考文件、實驗與媒體檔
 
 ## 授權條款
 
-Apache 2.0，Copyright 2026 Vincenzo Fornaro。詳見 [LICENSE](LICENSE) 與 [NOTICE](NOTICE)。GLM-5.2 權重由 Z.ai 以 MIT 授權發布。
+MIT License，Copyright 2026 Sarit Chakraborty。詳見 [LICENSE](LICENSE) 與 [NOTICE](NOTICE)。GLM-5.2 權重由 Z.ai 以 MIT 授權發布。

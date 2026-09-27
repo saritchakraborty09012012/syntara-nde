@@ -450,4 +450,4 @@ il primo prototipo — i commenti nel codice lo testimoniano ancora.
 
 ## Licenza
 
-Apache 2.0, Copyright 2026 Vincenzo Fornaro. Vedi [LICENSE](LICENSE) e [NOTICE](NOTICE). I pesi di GLM-5.2 sono rilasciati da Z.ai sotto licenza MIT.
+Licenza MIT, Copyright 2026 Sarit Chakraborty. Vedi [LICENSE](LICENSE) e [NOTICE](NOTICE). I pesi di GLM-5.2 sono rilasciati da Z.ai sotto licenza MIT.

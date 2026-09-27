@@ -405,4 +405,4 @@ docs/                     参考文档、实验、媒体文件与 DeepSeek V4 �
 
 ## 许可证
 
-Apache 2.0，Copyright 2026 Vincenzo Fornaro。详见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。GLM-5.2 权重由 Z.ai 以 MIT 许可发布。
+MIT License，Copyright 2026 Sarit Chakraborty。详见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。GLM-5.2 权重由 Z.ai 以 MIT 许可发布。

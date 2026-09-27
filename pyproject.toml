@@ -7,7 +7,7 @@ name = "syntara-engine"
 dynamic = ["version"]
 description = "Syntara local AI runtime and developer toolkit"
 readme = "README.md"
-license = "Apache-2.0"
+license = "MIT"
 requires-python = ">=3.10"
 authors = [
     {name = "NDe"},
