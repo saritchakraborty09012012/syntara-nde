@@ -447,7 +447,12 @@ static wchar_t *wide(const char *s)
     wchar_t *w = bufs[turn++ % 8];
     if (s[0] == '@' && s[1] >= '0' && s[1] <= '9' && s[2] == '\0') {
         wchar_t name[] = L"SYNTARA_TEST_ARG0";
-        name[13] = (wchar_t)s[1];
+        /* Patch the trailing digit, not a hardcoded middle index: the slot
+         * lives at the end (strlen-2, strlen-1 is the NUL). The old hardcoded
+         * index overwrote the 'A' of ARG, so GetEnvironmentVariableW asked for
+         * SYNTARA_TEST_0RG0, found nothing and returned an empty path -- every
+         * non-ASCII argument silently became "". */
+        name[sizeof name / sizeof name[0] - 2] = (wchar_t)s[1];
         w[0] = L'\0';
         GetEnvironmentVariableW(name, w, SLOT);
         return w;

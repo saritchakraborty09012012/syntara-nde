@@ -65,6 +65,20 @@ CPU · GPU · RAM · VRAM · SSD
 - Light / Dark / System UI modes
 - Open-source development model
 
+## Supported model families
+
+Nine model families are registered with the engine, each with its own planner, memory model and quantization path:
+
+- **GLM-5.2/5.3** (744B MoE) and **GLM-5.3-Flash** (321B, vision)
+- **Inkling** (975B)
+- **Kimi K3** (2.8T)
+- **DeepSeek V4 Flash** (284B) and **DeepSeek V4.1 Flash** (552B, vision)
+- **Qwen3.8-Flash-Next** (125B + 51B n-gram)
+- **Qwen3.6** (35B-A3B)
+- **OLMoE** (7B)
+
+The registry lives in `c/family_registry.py`; the translated READMEs in this repository describe the same nine families in their own language.
+
 ## No account philosophy
 
 Syntara does not require a Syntara login, signup, activation account or cloud identity. Persistent data is designed to remain on the user's device unless the user explicitly exports or connects another service.

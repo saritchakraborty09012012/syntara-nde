@@ -11,6 +11,18 @@ static int g_kvsave=1;
 #define KV_MAGIC3 "SYNTARAKV3\0"                    /* v3 (KV_TQ): righe PolarQuant + raggio f32 per riga (h[7]=bits) */
 static const char *kv_active_magic(void){ return g_tq?KV_MAGIC3 : g_kv8?KV_MAGIC2 : KV_MAGIC; }
 
+/* The file signature is only ever the FIRST 8 bytes of the magic, and all
+ * three magics share them ("SYNTARAK") -- the V1/V2/V3 that would tell the
+ * formats apart sits past byte 8 and is never written. The format tag has
+ * always lived in header word 7 instead (kv_hdr: 0=f32 v1, 1=kv8 v2,
+ * (codec<<8)|bits for v3 PolarQuant). Reading h[7] is what actually
+ * distinguishes them: comparing 8 bytes of magic never could, so a file saved
+ * in another format looked like the active one and kv_disk_load decoded fp8 or
+ * polar rows as f32 (or v1 rows into the byte cache) until the record sizes
+ * ran out -- test_kv_disk's round-trip, reject and self-heal cases. */
+static int kv_hdr_fmt(const int32_t *h){ return h[7]==0 ? 0 : h[7]==1 ? 1 : 2; }
+static int kv_active_fmt(void){ return g_tq ? 2 : g_kv8 ? 1 : 0; }
+
 static void kv_hdr(Model *m, int32_t *h, int nrec){
     Cfg *c=&m->c; int nic=0;
     for(int i=0;i<c->n_layers;i++) if(m->Ic && m->Ic[i]) nic++;
@@ -32,8 +44,9 @@ static int kv_disk_open(Model *m){
     KVState *k=m->kv;
     if(k->disk_fp) return 1;
     k->disk_fp=fopen(k->disk_path,"r+b");
-    if(k->disk_fp){ char mg[8];                 /* formato del file != formato attivo -> riscrivi */
-        if(fread(mg,1,8,k->disk_fp)!=8 || memcmp(mg,kv_active_magic(),8)){
+    if(k->disk_fp){ char mg[8]; int32_t h[8];  /* formato del file != formato attivo -> riscrivi */
+        if(fread(mg,1,8,k->disk_fp)!=8 || memcmp(mg,KV_MAGIC,8) ||
+           fread(h,4,8,k->disk_fp)!=8 || kv_hdr_fmt(h)!=kv_active_fmt()){
             fclose(k->disk_fp); k->disk_fp=NULL; k->disk_nrec=0; }
     }
     if(!k->disk_fp){
@@ -141,11 +154,8 @@ static int kv_disk_load(Model *m, int *hist, int maxctx){
     FILE *f=fopen(k->disk_path,"rb"); if(!f) return 0;
     char mg[8]; int32_t h[8], w[8]; kv_hdr(m,w,0);
     int dt=-1;                                        /* dtype del FILE: 0=f32 (v1), 1=fp8 (v2), 2=PolarQuant (v3) */
-    if(fread(mg,1,8,f)==8){
-        if(!memcmp(mg,KV_MAGIC,8)) dt=0; else if(!memcmp(mg,KV_MAGIC2,8)) dt=1;
-        else if(!memcmp(mg,KV_MAGIC3,8)) dt=2; }
-    if(dt<0 || fread(h,4,8,f)!=8 ||
-       h[0]!=w[0]||h[1]!=w[1]||h[2]!=w[2]||h[3]!=w[3]||h[4]!=w[4]||h[5]!=w[5]){
+    if(fread(mg,1,8,f)==8 && !memcmp(mg,KV_MAGIC,8) && fread(h,4,8,f)==8) dt=kv_hdr_fmt(h);
+    if(dt<0 || h[0]!=w[0]||h[1]!=w[1]||h[2]!=w[2]||h[3]!=w[3]||h[4]!=w[4]||h[5]!=w[5]){
         fprintf(stderr,"[KV] ignoring .syntara_kv from a different model or version\n"); fclose(f); return 0; }
     if(dt==1 && !g_kv8){
         fprintf(stderr,"[KV] .syntara_kv is fp8 (saved under KV8=1): starting over (set KV8=1 to resume it)\n");

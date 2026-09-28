@@ -10,7 +10,12 @@ desktop/src-tauri/target/
 desktop/src-tauri/gen/
 
 # binari compilati (si rigenerano con make / syntara build)
-c/syntara
+# c/syntara is NOT a build artifact: it is the committed extensionless Python
+# CLI launcher (c/Makefile ENGINE_REAL splits the engine to `glm` on POSIX and
+# syntara.exe on Windows precisely so it can never land here). Ignoring it
+# leaves the launcher untracked, which fails the launcher-contract job, the
+# Docker COPY, every c/tests suite that imports it and the oracle jobs that
+# `python c/syntara serve`.
 c/syntara.exe
 c/glm
 c/glm.exe
