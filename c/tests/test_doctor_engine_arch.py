@@ -7,6 +7,7 @@ around would have been told the engine was ready for a model that never runs on
 it. A diagnostic that reports on the wrong file is worse than no diagnostic.
 """
 import json
+import os
 import struct
 import subprocess
 import sys
@@ -17,8 +18,14 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent.parent
 CLI = HERE / "syntara"
 
+# c/Makefile ENGINE_REAL = $(if $(EXE),syntara$(EXE),glm): the GLM engine is
+# `syntara.exe` on Windows and plain `glm` on POSIX -- the extensionless
+# `syntara` path is the Python launcher itself, so POSIX must never build an
+# engine onto it. Expectations below follow that contract, not one platform.
+GLM_ENGINE = "syntara" if os.name == "nt" else "glm"
+
 ARCHES = [
-    ("glm_moe_dsa", "syntara"),
+    ("glm_moe_dsa", GLM_ENGINE),
     ("inkling", "inkling"),
     ("kimi_k3", "kimi_k3"),
     ("olmoe", "olmoe"),

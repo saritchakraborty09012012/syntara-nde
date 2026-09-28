@@ -7,7 +7,9 @@ site
 docs
 **/*.o
 **/*.exe
-c/syntara
+# c/syntara is the Python launcher (source), not a build artifact -- the
+# Dockerfile.slim COPYs it and asserts on it at build time, so it must stay
+# in the context. ENGINE_REAL builds the POSIX engine to c/glm below.
 c/glm
 c/olmoe
 c/glm_tiny
