@@ -3,6 +3,25 @@
 All notable changes to Syntara are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Desktop native downloads (Quantum Download Manager)
+
+- **QDM download engine ported into the desktop shell**
+  (`desktop/src-tauri/src/qdm/`): multi-segment HTTP transfers with
+  pause/resume/cancel, a persisted queue that resumes automatically after a
+  restart, and engine-side concurrency limits. The Tauri shell uses it for
+  every model download; plain `syntara web` keeps the browser streaming path.
+- **Model Hub Install**: a card whose family has exactly one downloadable
+  checkpoint queues **all** of that checkpoint's shards in one click and opens
+  the Downloads view; larger families still go through the family page, whose
+  checkpoint rows gained an `Install N files` button (per-file selection stays
+  behind `Choose files`).
+- **Downloads view**: feature line, model storage folder and a folder picker;
+  storage defaults to `<app-data>/models` and is changeable.
+- Attribution: QDM (MIT) recorded in `THIRD_PARTY_NOTICES.md`; the port's
+  deviations are listed in `MODIFICATIONS.md`.
+
 ## [0.4.3] — 2026-09-24
 
 ### Python CLI launcher restored

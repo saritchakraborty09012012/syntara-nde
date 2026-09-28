@@ -249,6 +249,9 @@ git clone https://github.com/saritchakraborty09012012/syntara-nde && cd syntara/
 
 ### 2. 获取模型
 
+> 在桌面应用中，Model Hub 通过集成的 **Quantum Download Manager** 下载：
+> 顺畅省心——传输不会卡住，也不会无谓重来（支持暂停、断点续传与重启后自动恢复）。
+
 Hugging Face 上已有预转换的 **GLM-5.2 int4** 容器——请务必使用
 **含 int8 MTP head 的 group-scaled（gs64）版本**。它约为 **372 GB**，请放在空间足够的磁盘上，最好是快盘：
 

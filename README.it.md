@@ -292,6 +292,11 @@ resta in `c/` — è un'installazione editabile dal clone, non un wheel).
 
 ### 2. Scarica il modello
 
+> Nell'app desktop il Model Hub scarica tramite **Quantum Download Manager**,
+> integrato in Syntara: trasferimenti senza pensieri — niente trasferimenti
+> bloccati, niente ripartenze inutili (pausa, ripresa e ripartenza automatica
+> dopo il riavvio).
+
 Un container **GLM-5.2 int4** pre-convertito è su Hugging Face — usa la build
 **group-scaled (gs64) con la testa MTP int8**. Pesa circa **372 GB**, quindi mettilo su un
 disco che abbia lo spazio, meglio se veloce:

@@ -197,6 +197,7 @@ a { color: inherit; text-decoration: none; }
 .ft-flag.missing { color: var(--danger); border-color: rgba(255,99,111,.3); background: rgba(255,99,111,.07); }
 .family-table button[disabled] { opacity: .5; cursor: not-allowed; }
 .ft-actions { text-align: right; white-space: nowrap; }
+.ft-actions button + button { margin-left: 6px; }
 .ft-files-row > td { background: rgba(0,0,0,.16); padding: 0; }
 .ft-files { display: grid; gap: 6px; padding: 12px 14px 14px; max-height: 380px; overflow-y: auto; }
 .ft-files-note { margin: 0; color: var(--muted); font-size: 9px; line-height: 1.6; }

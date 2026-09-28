@@ -54,6 +54,7 @@ CPU · GPU · RAM · VRAM · SSD
 - Chat Mode
 - Agent Mode with permission gates
 - Model Hub and integrated download manager
+- Seamless and hassle-free downloads through Quantum Download Manager — no stuck transfers, no unnecessary restarts
 - Projects and persistent local memory
 - Local backup / import / restore
 - OpenAI-compatible local API
