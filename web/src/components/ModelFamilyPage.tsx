@@ -1,5 +1,5 @@
 import { Fragment, useState } from "react"
-import { ArrowLeft, Download, Link2, Package } from "lucide-react"
+import { ArrowLeft, Download, ExternalLink, Link2, Package } from "lucide-react"
 import { modelCatalog, type CatalogFile, type CatalogModel } from "@/lib/model-catalog"
 import type { ModelMeta } from "@/lib/syntara-state"
 
@@ -7,6 +7,7 @@ export interface FamilyDownload {
   repo: string
   name: string
   url: string
+  filename: string
 }
 
 interface ModelFamilyPageProps {
@@ -17,20 +18,26 @@ interface ModelFamilyPageProps {
 }
 
 /* One family = one addressable page (#models/<family-id>). Every checkpoint
-   from the catalog export renders as a table row; the Download button reads
-   its URL from catalog data at click time, so the page never exposes direct
-   download links. Sharded checkpoints expand into their required files —
-   every file has its own button because every file is required. */
+   from the catalog renders as a table row; the Download button reads its URL
+   from catalog data at click time, so the page never exposes direct download
+   links. Gated repos (HF license/login required) offer "Open on HF" instead
+   of an anonymous download that would 401. Sharded checkpoints expand into
+   their required files — every file has its own button because every file
+   is required. Save filenames are prefixed with the repo so two models never
+   collide on "model.safetensors". */
 export function ModelFamilyPage({ family, familyId, onBack, onDownload }: ModelFamilyPageProps) {
   const models = modelCatalog[familyId] ?? []
   const [openRepo, setOpenRepo] = useState<string | null>(null)
-  const totalFiles = models.reduce((count, model) => count + model.files.length, 0)
+  const downloadable = models.filter((model) => !model.gated && !model.missing)
+  const totalFiles = downloadable.reduce((count, model) => count + model.files.length, 0)
 
   const downloadFile = (model: CatalogModel, file: CatalogFile) => {
+    const segment = decodeURIComponent((file.url.split("/").pop() || "model.bin").split("?")[0])
     onDownload({
       repo: model.repo,
       name: model.files.length === 1 ? model.repo : `${model.repo} · ${file.label}`,
       url: file.url,
+      filename: `${model.repo.replace(/\//g, "_")}_${segment}`,
     })
   }
 
@@ -45,7 +52,7 @@ export function ModelFamilyPage({ family, familyId, onBack, onDownload }: ModelF
           <h2>{family ? family.name : "Unknown family"}</h2>
           <p>
             {family
-              ? `${family.provider} · ${family.architecture} · ${models.length} checkpoints · ${totalFiles} downloadable files`
+              ? `${family.provider} · ${family.architecture} · ${models.length} checkpoints · ${totalFiles} downloadable files${models.length - downloadable.length ? ` · ${models.length - downloadable.length} gated` : ""}`
               : "This family is not part of your catalog."}
           </p>
         </div>
@@ -92,25 +99,45 @@ export function ModelFamilyPage({ family, familyId, onBack, onDownload }: ModelF
                     <tr>
                       <td className="ft-model">
                         <span className="ft-repo">{model.repo}</span>
-                        {!single && <span className="ft-shard-badge">{model.files.length} files</span>}
+                        {model.gated && <span className="ft-flag gated">HF login</span>}
+                        {model.missing && <span className="ft-flag missing">unavailable</span>}
+                        {!single && !model.gated && !model.missing && (
+                          <span className="ft-shard-badge">{model.files.length} files</span>
+                        )}
                       </td>
                       <td>{model.bRating}</td>
                       <td>{model.parameters}</td>
                       <td>{model.size}</td>
                       <td className="ft-actions">
-                        <button
-                          className="primary-btn small"
-                          onClick={() => {
-                            if (single) downloadFile(model, model.files[0])
-                            else setOpenRepo(expanded ? null : model.repo)
-                          }}
-                        >
-                          <Download size={13} />
-                          {single ? "Download" : expanded ? "Hide files" : `Download ${model.files.length} files`}
-                        </button>
+                        {model.missing ? (
+                          <button className="ghost-btn small" disabled title="This repository is no longer available on Hugging Face">
+                            Unavailable
+                          </button>
+                        ) : model.gated ? (
+                          <a
+                            className="ghost-btn small"
+                            href={`https://huggingface.co/${model.repo}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            title="This model requires a Hugging Face account and license acceptance before downloading"
+                          >
+                            <ExternalLink size={13} /> Open on HF
+                          </a>
+                        ) : (
+                          <button
+                            className="primary-btn small"
+                            onClick={() => {
+                              if (single) downloadFile(model, model.files[0])
+                              else setOpenRepo(expanded ? null : model.repo)
+                            }}
+                          >
+                            <Download size={13} />
+                            {single ? "Download" : expanded ? "Hide files" : `Download ${model.files.length} files`}
+                          </button>
+                        )}
                       </td>
                     </tr>
-                    {!single && expanded && (
+                    {!single && !model.gated && !model.missing && expanded && (
                       <tr className="ft-files-row">
                         <td colSpan={5}>
                           <div className="ft-files">

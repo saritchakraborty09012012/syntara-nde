@@ -57,12 +57,12 @@ describe("model catalog", () => {
     expect(byRepo("glm-local", "zai-org/GLM-5")?.files).toHaveLength(282)
     expect(byRepo("qwen-local", "Qwen/Qwen3.6-35B-A3B")?.files).toHaveLength(26)
     expect(byRepo("olmo-local", "allenai/OLMoE-1B-7B-0125")?.files).toHaveLength(6)
-    expect(byRepo("qwen-local", "Qwen/Qwen-Image-2.1")?.files).toHaveLength(5)
+    expect(byRepo("qwen-local", "Qwen/Qwen-Image-2.1")?.files).toHaveLength(7)
 
     const glm5 = byRepo("glm-local", "zai-org/GLM-5")
     expect(glm5?.bRating).toBe("744B")
     expect(glm5?.parameters).toBe("744B")
-    expect(glm5?.size).toBe("≈1.49 TB (BF16 estimate)")
+    expect(glm5?.size).toBe("1.37 TB")
     expect(glm5?.files[0].url).toBe(
       "https://huggingface.co/zai-org/GLM-5/resolve/main/model-00001-of-00282.safetensors?download=true",
     )
@@ -80,18 +80,47 @@ describe("model catalog", () => {
     expect(chatglmRepos).toEqual(["THUDM/chatglm3-6b"])
   })
 
-  it("preserves size and parameter metadata per model", () => {
-    const llama8b = modelCatalog["llama-local"].find((model) => model.repo === "meta-llama/Llama-3.1-8B")
-    expect(llama8b).toMatchObject({
-      bRating: "8B",
-      parameters: "8B",
-      size: "≈16.0 GB (BF16 estimate)",
-      files: [{ label: "model.safetensors", url: "https://huggingface.co/meta-llama/Llama-3.1-8B/resolve/main/model.safetensors?download=true" }],
+  it("carries HF-verified sizes and file lists, not filename guesses", () => {
+    const qwen27b = modelCatalog["qwen-local"].find((model) => model.repo === "Qwen/Qwen2-7B")
+    expect(qwen27b).toMatchObject({
+      bRating: "7B",
+      parameters: "7B",
+      size: "14.2 GB",
     })
+    expect(qwen27b?.files.map((file) => file.label)).toEqual([
+      "model-00001-of-00004.safetensors",
+      "model-00002-of-00004.safetensors",
+      "model-00003-of-00004.safetensors",
+      "model-00004-of-00004.safetensors",
+    ])
 
-    const unknown = modelCatalog["mistral-local"].find((model) => model.repo === "mistralai/Mixtral-8x7B-v0.1")
-    expect(unknown?.bRating).toBe("Unknown")
-    expect(unknown?.size).toBe("Unknown / repository-dependent")
+    const mistral7b = modelCatalog["mistral-local"].find((model) => model.repo === "mistralai/Mistral-7B-v0.1")
+    expect(mistral7b?.files).toHaveLength(2)
+    expect(mistral7b?.size).toBe("13.5 GB")
+
+    // Mixtral was "Unknown / repository-dependent" in the source export; the
+    // HF file list resolves it to the real sharded checkpoint.
+    const mixtral = modelCatalog["mistral-local"].find((model) => model.repo === "mistralai/Mixtral-8x7B-v0.1")
+    expect(mixtral?.files.length).toBeGreaterThan(1)
+    expect(mixtral?.size).toMatch(/^\d+(\.\d+)? (GB|TB)$/)
+  })
+
+  it("flags gated repos instead of offering a download that would 401", () => {
+    const gated = Object.values(modelCatalog)
+      .flat()
+      .filter((model) => model.gated)
+    expect(gated.length).toBeGreaterThanOrEqual(20)
+
+    for (const model of modelCatalog["llama-local"]) expect(model.gated).toBe(true)
+    for (const model of modelCatalog["gemma-local"]) expect(model.gated).toBe(true)
+
+    // Gated or not, every model must have a file list or an explicit flag;
+    // nothing silently empty can reach the Download button.
+    for (const model of Object.values(modelCatalog).flat()) {
+      if (!model.gated && !model.missing) expect(model.files.length).toBeGreaterThan(0)
+    }
+    expect(modelCatalog["grok-local"].map((model) => model.repo)).toEqual(["hpcai-tech/grok-1"])
+    expect(modelCatalog["grok-local"][0].missing).toBeUndefined()
   })
 
   it("holds no duplicate file URLs inside a family", () => {
