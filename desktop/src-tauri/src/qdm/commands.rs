@@ -6,7 +6,9 @@
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
 
-use super::types::{AppConfig, DownloadItem, NewDownloadRequest, ProbeResult};
+use super::types::{
+    AppConfig, DownloadItem, DownloadStatus, NewDownloadRequest, ProbeResult, StorageFile,
+};
 use crate::AppState;
 
 // ── Config helpers ─────────────────────────────────────────────────────
@@ -167,6 +169,74 @@ pub async fn download_get_all(state: State<'_, AppState>) -> Result<Vec<Download
 #[tauri::command]
 pub async fn download_missing_files(state: State<'_, AppState>) -> Result<Vec<String>, String> {
     Ok(state.engine.missing_file_ids().await)
+}
+
+/// Files currently in the model storage folder, newest first. This is the
+/// source of truth behind the UI's "Installed" view: a row or an import only
+/// proves metadata exists, this proves the bytes are on disk.
+///
+/// Hidden files and names of transfers that have not completed are skipped —
+/// an assembling checkpoint writes its final name before it is finished, and
+/// that must not show up as an installed model yet. A missing folder is not
+/// an error: a fresh install has nothing to list.
+#[tauri::command]
+pub async fn storage_list_files(state: State<'_, AppState>) -> Result<Vec<StorageFile>, String> {
+    let dir = state.engine.config.lock().await.download_dir.clone();
+    let unfinished: std::collections::HashSet<String> = {
+        let engine_state = state.engine.state.lock().await;
+        engine_state
+            .downloads
+            .values()
+            .filter(|item| item.status != DownloadStatus::Completed)
+            .map(|item| item.file_name.clone())
+            .collect()
+    };
+    match tokio::fs::read_dir(&dir).await {
+        Ok(mut entries) => {
+            let mut files: Vec<StorageFile> = Vec::new();
+            loop {
+                match entries.next_entry().await {
+                    Ok(Some(entry)) => {
+                        // A file can vanish (or a dangling link fail to
+                        // resolve) between iteration and stat — skip it
+                        // instead of failing the whole listing.
+                        let Ok(meta) = entry.metadata().await else {
+                            continue;
+                        };
+                        if !meta.is_file() {
+                            continue;
+                        }
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        if name.starts_with('.')
+                            || name.contains(".part")
+                            || unfinished.contains(&name)
+                        {
+                            continue;
+                        }
+                        let modified_ms = meta
+                            .modified()
+                            .ok()
+                            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|elapsed| elapsed.as_millis() as u64)
+                            .unwrap_or(0);
+                        files.push(StorageFile {
+                            name,
+                            bytes: meta.len(),
+                            modified_ms,
+                        });
+                    }
+                    Ok(None) => break,
+                    Err(err) => {
+                        return Err(format!("Could not read the model storage folder: {err}"));
+                    }
+                }
+            }
+            files.sort_by(|a, b| b.modified_ms.cmp(&a.modified_ms));
+            Ok(files)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(err) => Err(format!("Could not read the model storage folder: {err}")),
+    }
 }
 
 #[tauri::command]

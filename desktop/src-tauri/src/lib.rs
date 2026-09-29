@@ -31,6 +31,7 @@ pub fn run() {
             qdm::commands::config_get,
             qdm::commands::config_set,
             qdm::commands::dialog_select_folder,
+            qdm::commands::storage_list_files,
         ])
         .setup(|app| {
             use tauri::Manager;

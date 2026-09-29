@@ -513,3 +513,20 @@ select option { background-color: var(--bg-soft); color: var(--text); }
   .history-collapsed .conversation-list { display: none; }
   .history-collapsed .composer-area { grid-column: 1; }
 }
+
+/* Models hub tabs (#models, #models/installing, #models/installed). Each tab
+   is a real button pointing at an addressable page — active state mirrors the
+   primary button, idle state mirrors the ghost button, both in the suit
+   skin's terminal dialect. */
+.model-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 6px; }
+.model-tab { border: 1px solid var(--line); background: rgba(69,224,255,.035); color: var(--muted); border-radius: 2px; padding: 8px 13px; cursor: pointer; font-family: 'Share Tech Mono', monospace; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; transition: transform .18s var(--ease), border-color .18s, background .18s, color .18s; }
+.model-tab:hover { border-color: var(--accent); color: var(--accent); transform: translateY(-1px); }
+.model-tab.active { background: linear-gradient(105deg, var(--accent), var(--accent-2)); border-color: transparent; color: #03131f; font-family: 'Orbitron', sans-serif; font-weight: 800; letter-spacing: .12em; box-shadow: 0 0 28px rgba(69,224,255,.22); }
+:root[data-theme="light"] .model-tab { background: rgba(0,140,190,.05); }
+/* The heading's decorative blue line would sit between the title and its tab
+   row, so the tabbed head opts out of it. */
+.section-head.tabbed h2:after { display: none; }
+/* Installing rows carry an inline progress strip instead of the status and
+   action columns, so they only need the icon + content tracks. */
+.download-row.progress-row { grid-template-columns: 36px minmax(0, 1fr); }
+.empty-state-card .primary-btn { margin-top: 10px; }

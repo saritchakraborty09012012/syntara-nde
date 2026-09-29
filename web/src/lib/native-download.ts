@@ -12,6 +12,8 @@
 import { invoke } from "@tauri-apps/api/core"
 import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 
+import type { StorageFileEntry } from "./installed"
+
 export type QdmStatus = "queued" | "downloading" | "paused" | "completed" | "failed" | "assembling" | "stopped"
 
 export interface QdmDownloadItem {
@@ -106,6 +108,11 @@ export const listQdmDownloads = (): Promise<QdmDownloadItem[]> => invoke<QdmDown
 /* Engine records whose completed file no longer exists at its save
    location — the UI strikes those rows through but keeps them. */
 export const missingQdmFiles = (): Promise<string[]> => invoke<string[]>("download_missing_files")
+
+/* Files currently in the model storage folder, newest first (desktop shell
+   only). The Installed tab lists this instead of trusting metadata. */
+export const listStorageFiles = (): Promise<StorageFileEntry[]> =>
+  invoke<StorageFileEntry[]>("storage_list_files")
 
 export const getQdmConfig = (): Promise<QdmConfig> => invoke<QdmConfig>("config_get")
 

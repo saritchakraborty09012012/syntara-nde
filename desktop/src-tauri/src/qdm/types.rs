@@ -124,6 +124,17 @@ pub struct DownloadProgress {
     pub status: DownloadStatus,
 }
 
+/// One file sitting in the model storage folder, as reported to the UI by
+/// `storage_list_files`. The listing is what "Installed" trusts: metadata
+/// alone cannot prove a model is still on disk.
+#[derive(Debug, Clone, Serialize)]
+pub struct StorageFile {
+    pub name: String,
+    pub bytes: u64,
+    #[serde(rename = "modifiedMs")]
+    pub modified_ms: u64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(rename = "downloadDir")]
