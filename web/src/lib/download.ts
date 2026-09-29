@@ -50,6 +50,9 @@ interface Session {
   chunks: Uint8Array[]
   cancelled: boolean
   resumeSignal: (() => void) | null
+  /* A resume can land between the pause abort and the loop parking on
+     resumeSignal; remember it so the request is not swallowed. */
+  resumePending: boolean
 }
 
 export function supportsSavePicker() {
@@ -172,6 +175,21 @@ async function teardown(session: Session, hooks: DownloadHooks, state: "cancelle
   hooks.onState?.(state, note)
 }
 
+/* Park the transfer between pause and resume. Cancellation arriving during
+   the wait must not deadlock on a signal that fired before we subscribed,
+   and a resume that beat the subscription is honoured instead of dropped. */
+async function waitForResume(session: Session) {
+  if (session.cancelled) return
+  if (session.resumePending) {
+    session.resumePending = false
+    session.controller = new AbortController()
+    return
+  }
+  await new Promise<void>((notify) => { session.resumeSignal = notify })
+  session.resumeSignal = null
+  session.controller = new AbortController()
+}
+
 export async function createStreamedDownload(
   url: string,
   filename: string,
@@ -196,18 +214,22 @@ export async function createStreamedDownload(
     chunks: [],
     cancelled: false,
     resumeSignal: null,
+    resumePending: false,
   }
 
   const control: DownloadControl = {
     pause: () => {
       if (session.control && !session.cancelled) {
+        /* A fresh pause invalidates any stale resume from before it. */
+        session.resumePending = false
         session.controller.abort()
         hooks.onState?.("paused")
       }
     },
     resume: () => {
       if (!session.control || session.cancelled) return
-      session.resumeSignal?.()
+      if (session.resumeSignal) session.resumeSignal()
+      else session.resumePending = true
     },
     cancel: () => {
       if (!session.control) return
@@ -217,26 +239,41 @@ export async function createStreamedDownload(
     },
     done: new Promise<boolean>((resolve) => {
       void (async () => {
-        try {
-          while (!session.cancelled) {
+        /* The loop owns pause, cancel and failure as three distinct outcomes.
+           A user pause aborts the in-flight fetch too — that DOMException must
+           be read as "paused" with the control kept alive, never as a failure
+           that tears the session down and leaves the row unresumable. */
+        let completed = false
+        while (true) {
+          if (session.cancelled) break
+          try {
             hooks.onState?.("downloading")
             const outcome = await fetchOnce(session, hooks)
             if (outcome === "aborted") {
-              if (session.cancelled) break
-              await new Promise<void>((notify) => { session.resumeSignal = notify })
-              session.controller = new AbortController()
+              await waitForResume(session)
               continue
             }
             await finalize(session, hooks)
             session.control = null
-            resolve(true)
-            return
+            completed = true
+            break
+          } catch (error) {
+            if (session.cancelled) break
+            if (session.controller.signal.aborted) {
+              hooks.onState?.("paused")
+              await waitForResume(session)
+              continue
+            }
+            await teardown(session, hooks, "error", error instanceof Error ? error.message : "Download failed")
+            break
           }
-          await teardown(session, hooks, "cancelled")
-        } catch (error) {
-          await teardown(session, hooks, "error", error instanceof Error ? error.message : "Download failed")
         }
-        resolve(false)
+        if (!completed && session.control) {
+          /* The error path already tore the session down; a surviving control
+             means the loop exited on cancellation and still owes the UI. */
+          await teardown(session, hooks, "cancelled")
+        }
+        resolve(completed)
       })()
     }),
   }

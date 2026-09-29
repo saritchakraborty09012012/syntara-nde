@@ -89,6 +89,15 @@ export interface DownloadTask {
   etaMs?: number
 }
 
+/* A finished download this workspace has seen before. Kept separately from the
+   download list (rows get trashed) so a repeat install can warn the user they
+   are about to pull a large file they already fetched once. */
+export interface DownloadedModelRecord {
+  name: string
+  at: number
+  bytes?: number
+}
+
 export interface AppSettings {
   theme: ThemeMode
   baseUrl: string
@@ -113,6 +122,7 @@ export interface SyntaraState {
   agents: AgentConfig[]
   models: ModelMeta[]
   downloads: DownloadTask[]
+  downloadedModels: Record<string, DownloadedModelRecord>
   settings: AppSettings
 }
 
@@ -288,6 +298,7 @@ export function defaultState(): SyntaraState {
     agents: [],
     models: seedModels,
     downloads: [],
+    downloadedModels: {},
     settings: {
       theme: "dark",
       baseUrl: "http://127.0.0.1:8000/v1",
@@ -320,6 +331,7 @@ export function loadState(storage: Storage = localStorage): SyntaraState {
       projects: parsed.projects || [],
       agents: parsed.agents || [],
       downloads: parsed.downloads || [],
+      downloadedModels: parsed.downloadedModels || {},
     }
   } catch {
     return defaultState()
@@ -363,6 +375,7 @@ export async function restoreBackup(file: File): Promise<SyntaraState> {
     ...base,
     ...parsed.data,
     schema: 1,
+    downloadedModels: parsed.data.downloadedModels || {},
     settings: { ...base.settings, ...(parsed.data.settings || {}) },
   }
 }

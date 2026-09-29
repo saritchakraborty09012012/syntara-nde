@@ -3,7 +3,8 @@ import { ArrowLeft, Download, ExternalLink, Link2, Package } from "lucide-react"
 import { modelCatalog, type CatalogFile, type CatalogModel } from "@/lib/model-catalog"
 import { catalogFileTarget } from "@/lib/catalog-install"
 import { qdmAvailable } from "@/lib/native-download"
-import type { ModelMeta } from "@/lib/syntara-state"
+import { DownloadProgress } from "@/components/DownloadProgress"
+import type { DownloadTask, ModelMeta } from "@/lib/syntara-state"
 
 export interface FamilyDownload {
   repo: string
@@ -17,9 +18,13 @@ interface ModelFamilyPageProps {
   familyId: string
   onBack: () => void
   onDownload: (file: FamilyDownload) => void
-  /* Fires after an Install queued every file of a checkpoint, so the shell can
-     move the user to the Downloads view where the queue is visible. */
-  onInstallQueued?: () => void
+  /* Live transfers for this family. The shell keeps the user on this page and
+     the header strip shows aggregate progress instead of jumping away to the
+     Downloads view; the three callbacks drive that strip. */
+  activeTasks?: DownloadTask[]
+  onPause?: () => void
+  onResume?: () => void
+  onCancel?: () => void
 }
 
 /* One family = one addressable page (#models/<family-id>). Every checkpoint
@@ -31,7 +36,7 @@ interface ModelFamilyPageProps {
    queues every file at once ("Choose files" keeps per-file control), while a
    plain browser falls back to expanding the list first. Save filenames are
    prefixed with the repo so two models never collide on "model.safetensors". */
-export function ModelFamilyPage({ family, familyId, onBack, onDownload, onInstallQueued }: ModelFamilyPageProps) {
+export function ModelFamilyPage({ family, familyId, onBack, onDownload, activeTasks, onPause, onResume, onCancel }: ModelFamilyPageProps) {
   const models = modelCatalog[familyId] ?? []
   const [openRepo, setOpenRepo] = useState<string | null>(null)
   const nativeEngine = qdmAvailable()
@@ -47,7 +52,6 @@ export function ModelFamilyPage({ family, familyId, onBack, onDownload, onInstal
      concurrent transfers itself, so a 26-shard repo is safe to queue whole. */
   const installCheckpoint = (model: CatalogModel) => {
     model.files.forEach((file) => downloadFile(model, file))
-    onInstallQueued?.()
   }
 
   return (
@@ -73,6 +77,16 @@ export function ModelFamilyPage({ family, familyId, onBack, onDownload, onInstal
           </div>
         )}
       </div>
+
+      {activeTasks && activeTasks.length ? (
+        <DownloadProgress
+          className="family-progress"
+          tasks={activeTasks}
+          onPause={() => onPause?.()}
+          onResume={() => onResume?.()}
+          onCancel={() => onCancel?.()}
+        />
+      ) : null}
 
       {!family || !models.length ? (
         <div className="empty-state-card">

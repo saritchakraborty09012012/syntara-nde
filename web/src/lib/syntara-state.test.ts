@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { defaultState, loadState, saveState } from "./syntara-state"
+import { defaultState, loadState, restoreBackup, saveState } from "./syntara-state"
 
 function memoryStorage(initial = "") {
   const values = new Map<string, string>()
@@ -66,5 +66,28 @@ describe("sidebar collapse preferences", () => {
     const restored = loadState(storage)
     expect(restored.settings.navCollapsed).toBe(true)
     expect(restored.settings.historyCollapsed).toBe(true)
+  })
+})
+
+describe("downloaded-model memory", () => {
+  it("starts empty and backfills for states saved before it existed", () => {
+    expect(defaultState().downloadedModels).toEqual({})
+    const legacy = JSON.stringify({ schema: 1, settings: { theme: "dark" } })
+    expect(loadState(memoryStorage(legacy)).downloadedModels).toEqual({})
+  })
+
+  it("round-trips downloaded records through save and load", () => {
+    const storage = memoryStorage()
+    const next = defaultState()
+    next.downloadedModels["qwen-local"] = { name: "Qwen 3 8B", at: 123, bytes: 5_000_000 }
+    saveState(next, storage)
+    const restored = loadState(storage)
+    expect(restored.downloadedModels["qwen-local"]).toEqual({ name: "Qwen 3 8B", at: 123, bytes: 5_000_000 })
+  })
+
+  it("survives a legacy backup that predates the field", async () => {
+    const legacy = new File([JSON.stringify({ kind: "syntara-backup", schema: 1, data: { schema: 1, conversations: [], memories: [], projects: [], agents: [], models: [], downloads: [], settings: {} } })], "b.syntara-backup")
+    const restored = await restoreBackup(legacy)
+    expect(restored.downloadedModels).toEqual({})
   })
 })
