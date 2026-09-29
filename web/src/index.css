@@ -271,6 +271,9 @@ a { color: inherit; text-decoration: none; }
 .download-status .download-state.paused { color: var(--warn) }
 .download-status .download-state.error { color: var(--danger) }
 .download-status .download-state.complete { color: var(--success) }
+.download-status .download-state.cancelled { color: var(--muted-2); text-decoration: line-through }
+.download-row.cancelled { opacity: .62 }
+.download-row.cancelled .download-main strong { text-decoration: line-through }
 .download-error { max-width: 280px; color: var(--danger); font-size: 11px; line-height: 1.5; text-align: right; }
 
 /* Models drag-and-drop highlight + settings extras. */

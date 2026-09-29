@@ -77,7 +77,7 @@ export interface DownloadTask {
   modelId: string
   name: string
   url: string
-  state: "queued" | "downloading" | "paused" | "complete" | "error"
+  state: "queued" | "downloading" | "paused" | "cancelled" | "complete" | "error"
   progress: number
   receivedBytes: number
   totalBytes?: number

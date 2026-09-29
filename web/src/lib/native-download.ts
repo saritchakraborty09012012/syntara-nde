@@ -65,12 +65,15 @@ export function qdmAvailable(): boolean {
 }
 
 /* Engine status values are richer than the DownloadTask states the UI knows;
-   `assembling` still counts as downloading, `stopped` rows are dropped. */
-export function qdmStatusToTaskState(status: QdmStatus): "queued" | "downloading" | "paused" | "complete" | "error" {
+   `assembling` still counts as downloading, and `stopped` (a cancelled
+   transfer, persisted in the engine across restarts) stays visible as
+   cancelled history instead of disappearing from the list. */
+export function qdmStatusToTaskState(status: QdmStatus): "queued" | "downloading" | "paused" | "cancelled" | "complete" | "error" {
   if (status === "completed") return "complete"
   if (status === "failed") return "error"
   if (status === "paused") return "paused"
   if (status === "queued") return "queued"
+  if (status === "stopped") return "cancelled"
   return "downloading"
 }
 
@@ -90,6 +93,10 @@ export const addQdmDownload = (request: QdmNewDownloadRequest): Promise<QdmDownl
 export const pauseQdmDownload = (id: string): Promise<unknown> => invoke("download_pause", { id })
 
 export const resumeQdmDownload = (id: string): Promise<unknown> => invoke("download_resume", { id })
+
+/* Stops the transfer but keeps the engine record (`stopped`), so the row
+   survives as struck-through history; `removeQdmDownload` purges it. */
+export const cancelQdmDownload = (id: string): Promise<unknown> => invoke("download_cancel", { id })
 
 export const removeQdmDownload = (id: string, deleteFile = false): Promise<unknown> =>
   invoke("download_remove", { id, deleteFile })

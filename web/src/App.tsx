@@ -49,6 +49,7 @@ import { getHealth, listModels, streamChat, type ChatMessage, type HealthRespons
 import { createStreamedDownload, supportsSavePicker, type DownloadControl } from "@/lib/download"
 import {
   addQdmDownload,
+  cancelQdmDownload,
   friendlyQdmError,
   getQdmConfig,
   listenQdmEvents,
@@ -231,6 +232,12 @@ export default function App() {
   /* Ids owned by the desktop engine's download queue (native rows never get a
      browser DownloadControl, so this set is what tells the controls apart). */
   const nativeDownloadIds = useRef(new Set<string>())
+  /* A row can exist before its transfer materialises (the save picker is
+     still open, the engine record is still being created). `pendingStarts`
+     marks that window and `earlyIntent` records what Cancel/Delete asked for
+     so the transfer honours it the moment it appears. */
+  const pendingStarts = useRef(new Set<string>())
+  const earlyIntent = useRef(new Map<string, "cancel" | "delete">())
   const storageDirRef = useRef("")
   const [storageDir, setStorageDir] = useState("")
   const [setupOpen, setSetupOpen] = useState(false)
@@ -380,7 +387,10 @@ export default function App() {
       }),
       onStarted: (id) => patchDownloadIfPresent(id, { state: "downloading", error: undefined }),
       onPaused: (paused) => patchDownloadIfPresent(paused.id, { state: "paused", speedBps: undefined, etaMs: undefined }),
-      onCancelled: forgetDownload,
+      /* A cancel stops the transfer but keeps the row: it stays in the list,
+         struck through, until the user explicitly deletes it. Deletes emit
+         `cancelled` first and the row is already gone, so this is a no-op. */
+      onCancelled: (id) => patchDownloadIfPresent(id, { state: "cancelled", speedBps: undefined, etaMs: undefined, error: undefined }),
       onRemoved: forgetDownload,
       onCompleted: (completed) => {
         setState((current) => {
@@ -422,18 +432,18 @@ export default function App() {
         setStorageDir(config.downloadDir)
         const items = await listQdmDownloads()
         if (disposed) return
-        /* `stopped` records are cancelled leftovers with nothing to resume. */
-        items.filter((item) => item.status === "stopped").forEach((item) => { void removeQdmDownload(item.id, false).catch(() => {}) })
-        const active = items.filter((item) => item.status !== "stopped")
-        active.forEach((item) => nativeDownloadIds.current.add(item.id))
+        /* Every engine record stays owned by the UI — including `stopped`
+           (cancelled) ones — so the row survives restarts as history and
+           Delete can purge the engine entry later. */
+        items.forEach((item) => nativeDownloadIds.current.add(item.id))
         setState((current) => {
-          const activeById = new Map(active.map((item) => [item.id, item] as const))
-          const engineIds = new Set(items.map((item) => item.id))
+          const byId = new Map(items.map((item) => [item.id, item] as const))
           const synced: DownloadTask[] = []
+          const seen = new Set<string>()
           for (const prior of current.downloads) {
-            if (!engineIds.has(prior.id)) { synced.push(prior); continue }
-            const engineItem = activeById.get(prior.id)
-            if (!engineItem) continue
+            const engineItem = byId.get(prior.id)
+            if (!engineItem) { synced.push(prior); continue }
+            seen.add(engineItem.id)
             synced.push({
               ...prior,
               name: engineItem.fileName,
@@ -448,8 +458,8 @@ export default function App() {
               updatedAt: Date.now(),
             })
           }
-          for (const engineItem of active) {
-            if (current.downloads.some((row) => row.id === engineItem.id)) continue
+          for (const engineItem of items) {
+            if (seen.has(engineItem.id)) continue
             synced.push({
               id: engineItem.id,
               modelId: "",
@@ -473,6 +483,23 @@ export default function App() {
       disposed = true
       unlisten?.()
     }
+  }, [])
+
+  /* Browser-mode rows cannot survive a reload — their stream controllers are
+     gone, so a restored `downloading`/`paused` row would never move again and
+     pause/resume would silently no-op. Surface that honestly instead. */
+  useEffect(() => {
+    if (qdmAvailable()) return
+    setState((current) => {
+      const isStale = (task: DownloadTask) => task.state === "downloading" || task.state === "paused"
+      if (!current.downloads.some(isStale)) return current
+      return {
+        ...current,
+        downloads: current.downloads.map((task) => isStale(task)
+          ? { ...task, state: "error" as const, error: "Interrupted when the page closed; start the download again.", speedBps: undefined, etaMs: undefined }
+          : task),
+      }
+    })
   }, [])
 
   const saveConversation = (next: Conversation) => {
@@ -818,6 +845,8 @@ export default function App() {
       /* deleteFile=false keeps completed files on disk; the engine cancels any
          running transfer itself and purges only its segment records. */
       void removeQdmDownload(id, false).catch(() => {})
+    } else if (pendingStarts.current.has(id)) {
+      earlyIntent.current.set(id, "delete")
     }
     setState((currentState) => ({ ...currentState, downloads: currentState.downloads.filter((item) => item.id !== id) }))
   }
@@ -861,6 +890,7 @@ export default function App() {
   const startUrlDownload = async (modelId: string, name: string, url: string, filename?: string) => {
     if (!url) return
     const id = createId("dl")
+    pendingStarts.current.add(id)
     const fromUrl = decodeURIComponent((url.split("/").pop() || "model.bin").split("?")[0]) || "model.bin"
     const file = filename || fromUrl
 
@@ -876,7 +906,16 @@ export default function App() {
         const item = await addQdmDownload({ url, fileName: file, savePath: storageDirRef.current || undefined, autoStart: true })
         nativeDownloadIds.current.add(item.id)
         patchDownload(id, { id: item.id, state: qdmStatusToTaskState(item.status), receivedBytes: item.downloaded, totalBytes: item.fileSize > 0 ? item.fileSize : undefined })
+        pendingStarts.current.delete(id)
+        const intent = earlyIntent.current.get(id)
+        earlyIntent.current.delete(id)
+        /* Cancel keeps the stopped record as struck-through history; Delete
+           purges it so the row cannot resurrect from the engine on reboot. */
+        if (intent === "cancel") void cancelQdmDownload(item.id).catch(() => {})
+        else if (intent === "delete") void removeQdmDownload(item.id, false).catch(() => {})
       } catch (error) {
+        pendingStarts.current.delete(id)
+        if (earlyIntent.current.delete(id)) return
         patchDownload(id, { state: "error", error: error instanceof Error ? error.message : friendlyQdmError(String(error)) })
       }
       return
@@ -908,15 +947,23 @@ export default function App() {
           else if (state === "restarting") patchDownload(id, { receivedBytes: 0, progress: 0 })
           else if (state === "complete") { patchDownload(id, { state: "complete", progress: 100, error: undefined, speedBps: undefined, etaMs: undefined }); markDownloaded(modelId, name); downloadControls.current.delete(id) }
           else if (state === "error") { patchDownload(id, { state: "error", error: note, speedBps: undefined, etaMs: undefined }); downloadControls.current.delete(id) }
-          else if (state === "cancelled") dropDownload(id)
+          /* Cancelled rows stay in the list; only the trash removes them. */
+          else if (state === "cancelled") { patchDownload(id, { state: "cancelled", speedBps: undefined, etaMs: undefined, error: undefined }); downloadControls.current.delete(id) }
         },
       })
+      pendingStarts.current.delete(id)
       if (!control) {
+        if (earlyIntent.current.delete(id)) return
         patchDownload(id, { state: "error", error: "No file location was chosen, so nothing was downloaded." })
         return
       }
       downloadControls.current.set(id, control)
+      const intent = earlyIntent.current.get(id)
+      earlyIntent.current.delete(id)
+      if (intent) control.cancel()
     } catch (error) {
+      pendingStarts.current.delete(id)
+      if (earlyIntent.current.delete(id)) return
       patchDownload(id, { state: "error", error: error instanceof Error ? error.message : "Could not start the download." })
     }
   }
@@ -952,10 +999,38 @@ export default function App() {
     if (control) { control.resume(); return }
     if (nativeDownloadIds.current.has(id)) void resumeQdmDownload(id).catch(() => {})
   }
+  /* Cancel stops the transfer but keeps the row in the list (struck through);
+     only Delete (dropDownload) removes it. Browser rows confirm through the
+     `cancelled` state event, engine rows through `download:cancelled`. */
   const cancelDownload = (id: string) => {
-    downloadControls.current.get(id)?.cancel()
-    dropDownload(id)
+    const control = downloadControls.current.get(id)
+    if (control) {
+      control.cancel()
+      patchDownload(id, { state: "cancelled", speedBps: undefined, etaMs: undefined, error: undefined })
+      return
+    }
+    if (nativeDownloadIds.current.has(id)) {
+      void cancelQdmDownload(id)
+        .then(() => patchDownloadIfPresent(id, { state: "cancelled", speedBps: undefined, etaMs: undefined, error: undefined }))
+        .catch(() => patchDownloadIfPresent(id, { state: "error", error: "Could not cancel the download; try again.", speedBps: undefined, etaMs: undefined }))
+      return
+    }
+    /* Cancel arrived before the transfer did: mark the row now and abort the
+       controller (or engine record) as soon as it materialises. */
+    if (pendingStarts.current.has(id)) earlyIntent.current.set(id, "cancel")
+    patchDownload(id, { state: "cancelled", speedBps: undefined, etaMs: undefined, error: undefined })
   }
+
+  /* Downloads-toolbar bulk actions. The pause/resume button auto-toggles: it
+     pauses everything running while anything runs, otherwise resumes
+     everything paused. Cancel keeps rows, delete removes them. */
+  const activeDownloadRows = state.downloads.filter((task) => task.state === "downloading" || task.state === "queued")
+  const pausedDownloadRows = state.downloads.filter((task) => task.state === "paused")
+  const cancellableDownloadRows = state.downloads.filter((task) => task.state === "downloading" || task.state === "queued" || task.state === "paused")
+  const pauseAllDownloads = () => activeDownloadRows.forEach((task) => pauseDownload(task.id))
+  const resumeAllDownloads = () => pausedDownloadRows.forEach((task) => resumeDownload(task.id))
+  const cancelAllDownloads = () => cancellableDownloadRows.forEach((task) => cancelDownload(task.id))
+  const deleteAllDownloads = () => [...state.downloads].forEach((task) => dropDownload(task.id))
 
   const changeStorageDir = async () => {
     if (!qdmAvailable()) return
@@ -1197,7 +1272,7 @@ export default function App() {
         {view === "models" && familyId && <ModelFamilyPage family={state.models.find((item) => item.id === familyId)} familyId={familyId} onBack={() => setView("models")} onDownload={(file) => { void guardRedownload(familyId, state.models.find((item) => item.id === familyId)?.name || file.name).then((approved) => { if (approved) void startUrlDownload(familyId, file.name, file.url, file.filename) }) }} activeTasks={familyActiveTasks} onPause={() => familyActiveTasks.forEach((task) => pauseDownload(task.id))} onResume={() => familyActiveTasks.forEach((task) => resumeDownload(task.id))} onCancel={() => familyActiveTasks.forEach((task) => cancelDownload(task.id))} />}
         {view === "models" && !route.family && <section className={cn("view scroll-view", dragging && "drop-zone-active")} onDragOver={(e) => { e.preventDefault(); setDragging(true) }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); installImportedModel(event.dataTransfer.files) }}><div className="section-head"><div><span className="section-kicker">MODEL HUB</span><h2>Discover, import, install, manage.</h2><p>Formats, architectures, backends and hardware are evaluated independently.</p></div><div className="head-actions"><button className="ghost-btn" onClick={() => modelImportRef.current?.click()}><Upload size={15} /> Import local model</button><input ref={modelImportRef} hidden type="file" onChange={(event) => installImportedModel(event.target.files)} /></div></div><div className="search-row"><div className="search-box"><Search size={15} /><input value={modelSearch} onChange={(e) => setModelSearch(e.target.value)} placeholder="Search models, providers, capabilities…" /></div><div className="hardware-pill"><Cpu size={14} /> {hardware.cpu} · {hardware.ramGb ? `${hardware.ramGb} GB RAM` : "hardware scan"}</div></div><div className="model-grid">{filteredModels.map((model) => { const score = scoreModel(model, hardware); const catalogCount = modelCatalog[model.id]?.length ?? 0; const installableCount = downloadableCheckpoints(model.id).length; const tasks = activeTasksFor(state.downloads.filter((task) => task.modelId === model.id)); return <article key={model.id} className="model-card"><div className="model-card-top"><div className="model-icon"><Package size={18} /></div><div><div className="model-title">{model.name}</div><div className="model-provider">{model.provider} · {model.architecture}</div></div><span className={cn("compat-pill", score >= 75 ? "good" : score >= 55 ? "mid" : "heavy")}>{recommendationLabel(score)}</span></div><div className="model-specs"><span><MemoryStick size={13} /> {model.recommendedRam}</span><span><HardDrive size={13} /> {model.disk}</span><span><Zap size={13} /> {model.parameters}</span><span><Database size={13} /> Context: {model.context}</span></div><div className="chip-row">{model.quantizations.map((tag) => <span key={tag} className="quant-tag">{tag}</span>)}{model.formats.map((tag) => <span key={tag}>{tag}</span>)}{model.capabilities.slice(0, 4).map((tag) => <span key={tag}>{tag.replace("*", "")}</span>)}</div>{tasks.length ? <DownloadProgress tasks={tasks} onPause={() => tasks.forEach((task) => pauseDownload(task.id))} onResume={() => tasks.forEach((task) => resumeDownload(task.id))} onCancel={() => tasks.forEach((task) => cancelDownload(task.id))} /> : null}<div className="model-footer"><a href={model.sourceUrl} target="_blank" rel="noreferrer"><Link2 size={13} /> Source</a>{catalogCount > 0 && <span className="model-count">{catalogCount} checkpoints</span>}{state.downloadedModels[model.id] && model.status === "available" && !tasks.length ? <span className="downloaded-flag">Downloaded before</span> : null}<div className="row-actions">{model.status === "installed" && <><span className="installed-label"><Check size={13} /> Installed</span><button className="icon-btn" title="Detach model" onClick={() => detachModel(model.id)}><Link2 size={13} /></button><button className="icon-btn danger" title="Delete model metadata" onClick={() => deleteModel(model.id)}><Trash2 size={13} /></button></>}{model.status === "detached" && <button className="ghost-btn small" onClick={() => setState((current) => ({ ...current, models: current.models.map((item) => item.id === model.id ? { ...item, status: "available" } : item) }))}>Attach</button>}{model.status === "available" && !tasks.length && (!catalogCount || installableCount === 1) && <button className="primary-btn small" onClick={() => void startDownload(model)}><Download size={13} /> Install</button>}{catalogCount > 0 && <button className="primary-btn small" onClick={() => openFamily(model.id)}><Boxes size={13} /> Browse models</button>}</div></div></article> })}</div></section>}
 
-        {view === "downloads" && <section className="view scroll-view"><div className="section-head"><div><span className="section-kicker">DOWNLOADS</span><h2>Model installation without friction.</h2><p>{qdmAvailable() ? "Seamless and hassle-free downloads through Quantum Download Manager — no stuck transfers, no unnecessary restarts. Transfers run natively with multiple parallel connections, resume after a restart and stay cancellable." : <>Files stream to a location you choose, with progress, pause, resume and cancel. {supportsSavePicker() ? "Direct-to-disk streaming is active in this browser." : "This browser buffers in memory; Chromium-based browsers can stream straight to disk."}</>}</p>{qdmAvailable() ? <p className="panel-note">Model storage: {storageDir || "…"} <button className="ghost-btn" onClick={() => void changeStorageDir()}><FolderOpen size={14} /> Change folder</button></p> : null}</div></div><div className="download-list">{state.downloads.length ? state.downloads.map((task) => <div className="download-row" key={task.id}><div className="download-icon"><Download size={16} /></div><div className="download-main"><strong>{task.name}</strong><span>{task.url}</span><div className="progress-track"><span style={{ width: `${Math.min(100, task.progress)}%` }} /></div></div><div className="download-status"><span className={cn("download-state", task.state)}>{task.state}{task.state === "complete" ? " ✓" : ""}</span><span>{task.totalBytes ? `${formatBytes(task.receivedBytes)} / ${formatBytes(task.totalBytes)}` : task.receivedBytes ? formatBytes(task.receivedBytes) : ""}</span>{task.state === "downloading" && task.speedBps ? <span className="download-meta">{formatBytes(task.speedBps)}/s{task.etaMs ? ` · ${formatEta(task.etaMs)} left` : ""}</span> : null}{task.error ? <span className="download-error">{task.error}</span> : null}</div><div className="row-actions">{task.state === "downloading" ? <button className="icon-btn" onClick={() => pauseDownload(task.id)} title="Pause download"><Pause size={14} /></button> : null}{task.state === "paused" ? <button className="icon-btn" onClick={() => resumeDownload(task.id)} title="Resume download"><Play size={14} /></button> : null}{(task.state === "downloading" || task.state === "paused") ? <button className="icon-btn" onClick={() => cancelDownload(task.id)} title="Cancel download"><X size={14} /></button> : null}<button className="icon-btn danger" onClick={() => dropDownload(task.id)} title="Remove from list"><Trash2 size={14} /></button></div></div>) : <div className="empty-state-card"><Download size={22} /><strong>No downloads yet</strong><p>Install a model from Model Hub to populate the queue.</p></div>}</div></section>}
+        {view === "downloads" && <section className="view scroll-view"><div className="section-head"><div><span className="section-kicker">DOWNLOADS</span><h2>Model installation without friction.</h2><p>{qdmAvailable() ? "Seamless and hassle-free downloads through Quantum Download Manager — no stuck transfers, no unnecessary restarts. Transfers run natively with multiple parallel connections, resume after a restart and stay cancellable." : <>Files stream to a location you choose, with progress, pause, resume and cancel. {supportsSavePicker() ? "Direct-to-disk streaming is active in this browser." : "This browser buffers in memory; Chromium-based browsers can stream straight to disk."}</>}</p>{qdmAvailable() ? <p className="panel-note">Model storage: {storageDir || "…"} <button className="ghost-btn" onClick={() => void changeStorageDir()}><FolderOpen size={14} /> Change folder</button></p> : null}</div><div className="head-actions">{activeDownloadRows.length || pausedDownloadRows.length ? <button className="ghost-btn" onClick={activeDownloadRows.length ? pauseAllDownloads : resumeAllDownloads} title={activeDownloadRows.length ? `Pause ${activeDownloadRows.length} running transfer${activeDownloadRows.length > 1 ? "s" : ""}` : `Resume ${pausedDownloadRows.length} paused transfer${pausedDownloadRows.length > 1 ? "s" : ""}`}>{activeDownloadRows.length ? <><Pause size={15} /> Pause all</> : <><Play size={15} /> Resume all</>}</button> : null}<button className="ghost-btn" onClick={cancelAllDownloads} disabled={!cancellableDownloadRows.length} title={cancellableDownloadRows.length ? "Stop every running or paused transfer; rows stay in the list" : "Nothing is running to cancel"}><X size={15} /> Cancel all</button><button className="ghost-btn" onClick={deleteAllDownloads} disabled={!state.downloads.length} title="Remove every row from the list; files already saved to disk are kept"><Trash2 size={15} /> Delete all</button></div></div><div className="download-list">{state.downloads.length ? state.downloads.map((task) => <div className={cn("download-row", task.state)} key={task.id}><div className="download-icon"><Download size={16} /></div><div className="download-main"><strong>{task.name}</strong><span>{task.url}</span><div className="progress-track"><span style={{ width: `${Math.min(100, task.progress)}%` }} /></div></div><div className="download-status"><span className={cn("download-state", task.state)}>{task.state}{task.state === "complete" ? " ✓" : ""}</span><span>{task.totalBytes ? `${formatBytes(task.receivedBytes)} / ${formatBytes(task.totalBytes)}` : task.receivedBytes ? formatBytes(task.receivedBytes) : ""}</span>{task.state === "downloading" && task.speedBps ? <span className="download-meta">{formatBytes(task.speedBps)}/s{task.etaMs ? ` · ${formatEta(task.etaMs)} left` : ""}</span> : null}{task.error ? <span className="download-error">{task.error}</span> : null}</div><div className="row-actions">{task.state === "downloading" || task.state === "queued" ? <button className="icon-btn" onClick={() => pauseDownload(task.id)} title="Pause download"><Pause size={14} /></button> : null}{task.state === "paused" ? <button className="icon-btn" onClick={() => resumeDownload(task.id)} title="Resume download"><Play size={14} /></button> : null}{task.state === "downloading" || task.state === "queued" || task.state === "paused" ? <button className="icon-btn" onClick={() => cancelDownload(task.id)} title="Cancel download (keeps it in the list)"><X size={14} /></button> : null}<button className="icon-btn danger" onClick={() => dropDownload(task.id)} title={task.state === "downloading" || task.state === "queued" || task.state === "paused" ? "Cancel and remove from list" : "Remove from list"}><Trash2 size={14} /></button></div></div>) : <div className="empty-state-card"><Download size={22} /><strong>No downloads yet</strong><p>Install a model from Model Hub to populate the queue.</p></div>}</div></section>}
 
         {view === "projects" && <section className="view scroll-view"><div className="section-head"><div><span className="section-kicker">PROJECTS</span><h2>Persistent local workspaces.</h2><p>Projects bundle files, conversations, memory and agent settings without requiring an account.</p></div><button className="primary-btn" onClick={createProject}><Plus size={15} /> New project</button></div><div className="project-grid">{state.projects.map((project) => <article className="project-card" key={project.id}><div className="project-top"><FolderOpen size={20} /><span>{new Date(project.updatedAt).toLocaleDateString()}</span></div><h3>{project.name}</h3><p>{project.description}</p><div className="project-foot"><span>{project.memoryIds.length} memory links</span><button className="ghost-btn" onClick={() => { updateSettings({ selectedProjectId: project.id }); setView("chat") }}>Open</button></div></article>)}{!state.projects.length && <div className="empty-state-card"><FolderOpen size={22} /><strong>No projects yet</strong><p>Create one to tie chats, memories and agents together.</p></div>}</div></section>}
 
