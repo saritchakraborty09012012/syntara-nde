@@ -87,6 +87,9 @@ export interface DownloadTask {
   /* Estimated transfer rate and remaining time, recomputed on every progress event. */
   speedBps?: number
   etaMs?: number
+  /* A completed row whose file no longer exists at the storage location
+     (verified against disk): shown struck through, but never auto-removed. */
+  fileMissing?: boolean
 }
 
 /* A finished download this workspace has seen before. Kept separately from the
@@ -127,6 +130,10 @@ export interface SyntaraState {
 }
 
 const STORAGE_KEY = "syntara.state.v1"
+/* Download history (rows + re-download memory) lives under its own key with
+   no size cap: rows stay in local storage until the user explicitly deletes
+   them, even when the heavier chat state cannot be written this round. */
+const DOWNLOADS_KEY = "syntara.downloads.v1"
 const MAX_PERSIST_BYTES = 2_000_000
 
 /* Empty families are catalog placeholders: their metadata is filled in as
@@ -316,39 +323,84 @@ export function defaultState(): SyntaraState {
 }
 
 export function loadState(storage: Storage = localStorage): SyntaraState {
+  const base = defaultState()
+  let parsed: Partial<SyntaraState> = {}
   try {
     const raw = storage.getItem(STORAGE_KEY)
-    if (!raw) return defaultState()
-    const parsed = JSON.parse(raw) as Partial<SyntaraState>
-    const base = defaultState()
-    return {
-      ...base,
-      ...parsed,
-      settings: { ...base.settings, ...(parsed.settings || {}) },
-      models: mergeSeedModels(parsed.models || []),
-      conversations: parsed.conversations || [],
-      memories: parsed.memories || [],
-      projects: parsed.projects || [],
-      agents: parsed.agents || [],
-      downloads: parsed.downloads || [],
-      downloadedModels: parsed.downloadedModels || {},
-    }
+    if (raw) parsed = JSON.parse(raw) as Partial<SyntaraState>
   } catch {
-    return defaultState()
+    parsed = {}
+  }
+  /* The dedicated history key wins when present; older stores only have the
+     rows inside the main state, so those keep loading from there. */
+  let history: { downloads?: DownloadTask[]; downloadedModels?: Record<string, DownloadedModelRecord> } = {}
+  try {
+    const raw = storage.getItem(DOWNLOADS_KEY)
+    if (raw) history = JSON.parse(raw) as typeof history
+  } catch {
+    history = {}
+  }
+  return {
+    ...base,
+    ...parsed,
+    settings: { ...base.settings, ...(parsed.settings || {}) },
+    models: mergeSeedModels(parsed.models || []),
+    conversations: parsed.conversations || [],
+    memories: parsed.memories || [],
+    projects: parsed.projects || [],
+    agents: parsed.agents || [],
+    downloads: history.downloads || parsed.downloads || [],
+    downloadedModels: history.downloadedModels || parsed.downloadedModels || {},
   }
 }
 
 export function saveState(state: SyntaraState, storage: Storage = localStorage) {
   try {
-    const serialized = JSON.stringify(state)
+    const { downloads, downloadedModels, ...rest } = state
+    const serialized = JSON.stringify(rest)
     if (serialized.length <= MAX_PERSIST_BYTES) storage.setItem(STORAGE_KEY, serialized)
   } catch {
     // Restricted storage, quota, or private mode: local session continues.
   }
+  try {
+    storage.setItem(DOWNLOADS_KEY, JSON.stringify({ downloads: state.downloads, downloadedModels: state.downloadedModels }))
+  } catch {
+    // Quota exceeded mid-session; the previous history snapshot stays put.
+  }
 }
 
 export function clearState(storage: Storage = localStorage) {
-  try { storage.removeItem(STORAGE_KEY) } catch {}
+  try {
+    storage.removeItem(STORAGE_KEY)
+    storage.removeItem(DOWNLOADS_KEY)
+  } catch {}
+}
+
+/* Disk verification for completed rows: a file the user moved or deleted
+   outside the app strikes its row through (the row itself is never removed
+   here — only an explicit delete does that) and drops the re-download memory
+   for models whose completed rows are all gone from disk. Returns the same
+   state object when nothing changed. */
+export function markMissingFiles(current: SyntaraState, missingIds: Set<string>): SyntaraState {
+  let downloadsChanged = false
+  const downloads = current.downloads.map((row) => {
+    if (row.state !== "complete") return row
+    const missing = missingIds.has(row.id)
+    if (missing === !!row.fileMissing) return row
+    downloadsChanged = true
+    return { ...row, fileMissing: missing || undefined, updatedAt: Date.now() }
+  })
+  let memoryChanged = false
+  const downloadedModels = { ...current.downloadedModels }
+  for (const modelId of Object.keys(downloadedModels)) {
+    const completed = downloads.filter((row) => row.modelId === modelId && row.state === "complete")
+    if (completed.length && completed.every((row) => row.fileMissing)) {
+      delete downloadedModels[modelId]
+      memoryChanged = true
+    }
+  }
+  if (!downloadsChanged && !memoryChanged) return current
+  return { ...current, downloads, downloadedModels }
 }
 
 export function createId(prefix: string) {
@@ -380,4 +432,4 @@ export async function restoreBackup(file: File): Promise<SyntaraState> {
   }
 }
 
-export { STORAGE_KEY }
+export { STORAGE_KEY, DOWNLOADS_KEY }

@@ -1402,6 +1402,21 @@ impl DownloadEngine {
         items
     }
 
+    /// Ids of completed downloads whose file is no longer at its save
+    /// location (moved or deleted outside the app). The record itself is
+    /// never touched here — the UI only strikes the row through — so the
+    /// entry survives until the user explicitly deletes it.
+    pub async fn missing_file_ids(&self) -> Vec<String> {
+        let state = self.state.lock().await;
+        state
+            .downloads
+            .iter()
+            .filter(|(_, item)| item.status == DownloadStatus::Completed)
+            .filter(|(_, item)| !Path::new(&item.save_path).join(&item.file_name).exists())
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
     pub async fn open_file(&self, id: &str) -> bool {
         let (save_path, file_name) = {
             let state = self.state.lock().await;

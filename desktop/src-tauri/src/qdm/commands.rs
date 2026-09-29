@@ -162,6 +162,13 @@ pub async fn download_get_all(state: State<'_, AppState>) -> Result<Vec<Download
     Ok(state.engine.get_all_downloads().await)
 }
 
+/// Completed downloads whose file vanished from disk; the UI strikes those
+/// rows through but never removes them.
+#[tauri::command]
+pub async fn download_missing_files(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    Ok(state.engine.missing_file_ids().await)
+}
+
 #[tauri::command]
 pub async fn download_open_file(state: State<'_, AppState>, id: String) -> Result<bool, String> {
     Ok(state.engine.open_file(&id).await)

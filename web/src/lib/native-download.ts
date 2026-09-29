@@ -103,6 +103,10 @@ export const removeQdmDownload = (id: string, deleteFile = false): Promise<unkno
 
 export const listQdmDownloads = (): Promise<QdmDownloadItem[]> => invoke<QdmDownloadItem[]>("download_get_all")
 
+/* Engine records whose completed file no longer exists at its save
+   location — the UI strikes those rows through but keeps them. */
+export const missingQdmFiles = (): Promise<string[]> => invoke<string[]>("download_missing_files")
+
 export const getQdmConfig = (): Promise<QdmConfig> => invoke<QdmConfig>("config_get")
 
 /* `config_set` merges each provided key into the stored config, so callers can

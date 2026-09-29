@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { defaultState, loadState, restoreBackup, saveState } from "./syntara-state"
+import { clearState, defaultState, DOWNLOADS_KEY, loadState, markMissingFiles, restoreBackup, saveState, type DownloadTask } from "./syntara-state"
 
 function memoryStorage(initial = "") {
   const values = new Map<string, string>()
@@ -89,5 +89,83 @@ describe("downloaded-model memory", () => {
     const legacy = new File([JSON.stringify({ kind: "syntara-backup", schema: 1, data: { schema: 1, conversations: [], memories: [], projects: [], agents: [], models: [], downloads: [], settings: {} } })], "b.syntara-backup")
     const restored = await restoreBackup(legacy)
     expect(restored.downloadedModels).toEqual({})
+  })
+})
+
+function task(over: Partial<DownloadTask> & { id: string }): DownloadTask {
+  return {
+    modelId: "qwen-local", name: "qwen.gguf", url: "https://example.com/qwen.gguf",
+    state: "complete", progress: 100, receivedBytes: 100, totalBytes: 100,
+    createdAt: 1, updatedAt: 1, ...over,
+  }
+}
+
+function stateWith(rows: DownloadTask[], memory: Record<string, { name: string; at: number }> = {}) {
+  const next = defaultState()
+  next.downloads = rows
+  next.downloadedModels = memory
+  return next
+}
+
+describe("download history persistence", () => {
+  it("keeps rows under their own key even when the main state write is capped", () => {
+    const storage = memoryStorage()
+    const next = defaultState()
+    next.downloads = [task({ id: "dl_1" })]
+    next.conversations.push({ id: "c1", title: "x".repeat(2_100_000), model: "", messages: [], createdAt: 1, updatedAt: 1 })
+    saveState(next, storage)
+    expect(storage.getItem("syntara.state.v1")).toBeNull()
+    expect(loadState(storage).downloads.map((row) => row.id)).toEqual(["dl_1"])
+  })
+
+  it("clearState removes both the workspace key and the history key", () => {
+    const storage = memoryStorage()
+    saveState(stateWith([task({ id: "dl_1" })]), storage)
+    clearState(storage)
+    expect(storage.getItem("syntara.state.v1")).toBeNull()
+    expect(storage.getItem(DOWNLOADS_KEY)).toBeNull()
+    expect(loadState(storage).downloads).toEqual([])
+  })
+
+  it("the history key wins over stale rows inside the main state", () => {
+    const storage = memoryStorage()
+    saveState(stateWith([task({ id: "dl_fresh" })]), storage)
+    storage.setItem("syntara.state.v1", JSON.stringify({ schema: 1, downloads: [task({ id: "dl_stale" })] }))
+    expect(loadState(storage).downloads.map((row) => row.id)).toEqual(["dl_fresh"])
+  })
+
+  it("legacy stores without the history key still load their rows", () => {
+    const legacy = JSON.stringify({ schema: 1, downloads: [task({ id: "dl_legacy" })] })
+    expect(loadState(memoryStorage(legacy)).downloads.map((row) => row.id)).toEqual(["dl_legacy"])
+  })
+})
+
+describe("missing-file flags", () => {
+  it("strikes completed rows whose file vanished but keeps them in the list", () => {
+    const next = markMissingFiles(stateWith([task({ id: "dl_1" }), task({ id: "dl_2" })]), new Set(["dl_1"]))
+    expect(next.downloads).toHaveLength(2)
+    expect(next.downloads[0]).toMatchObject({ state: "complete", fileMissing: true })
+    expect(next.downloads[1].fileMissing).toBeUndefined()
+  })
+
+  it("drops re-download memory only when every completed row of the model is gone", () => {
+    const current = stateWith(
+      [task({ id: "dl_1" }), task({ id: "dl_2" }), task({ id: "dl_3", modelId: "phi-local" })],
+      { "qwen-local": { name: "Qwen 3 8B", at: 1 }, "phi-local": { name: "Phi", at: 2 } },
+    )
+    const next = markMissingFiles(current, new Set(["dl_1", "dl_2"]))
+    expect(next.downloadedModels["qwen-local"]).toBeUndefined()
+    expect(next.downloadedModels["phi-local"]).toEqual({ name: "Phi", at: 2 })
+  })
+
+  it("unflags a row whose file is back on disk", () => {
+    const next = markMissingFiles(stateWith([task({ id: "dl_1", fileMissing: true })]), new Set())
+    expect(next.downloads[0].fileMissing).toBeUndefined()
+  })
+
+  it("returns the same state object when nothing changed and ignores non-complete rows", () => {
+    const current = stateWith([task({ id: "dl_1" }), task({ id: "dl_9", state: "cancelled" })])
+    expect(markMissingFiles(current, new Set())).toBe(current)
+    expect(markMissingFiles(current, new Set(["dl_9"]))).toBe(current)
   })
 })

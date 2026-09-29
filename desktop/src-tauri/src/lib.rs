@@ -21,6 +21,7 @@ pub fn run() {
             qdm::commands::download_remove,
             qdm::commands::download_retry,
             qdm::commands::download_get_all,
+            qdm::commands::download_missing_files,
             qdm::commands::download_open_file,
             qdm::commands::download_open_folder,
             qdm::commands::download_pause_all,
