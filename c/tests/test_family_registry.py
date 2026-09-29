@@ -1243,7 +1243,7 @@ class FamilyRegistryTest(unittest.TestCase):
         """
         repo = Path(__file__).resolve().parents[2]
         tests_dir = repo / "c" / "tests"
-        guard = re.compile(r'ENGINE\s*=\s*HERE\s*/\s*\(?\s*"([a-z0-9_]+)\.exe"'
+        guard = re.compile(r'ENGINE\s*=\s*(?:HERE|C_DIR)\s*/\s*\(?\s*"([a-z0-9_]+)\.exe"'
                            r'.*?else\s*"([a-z0-9_]+)"', re.S)
         needed = {}
         for path in sorted(tests_dir.glob("test_*.py")):
@@ -1275,6 +1275,11 @@ class FamilyRegistryTest(unittest.TestCase):
             m = re.search(r"\bmake\b(?:\s+-C\s+\S+)?\s+(.*)", run_line)
             if m:
                 built.update(tok for tok in m.group(1).split() if not tok.startswith("-"))
+        # ENGINE_REAL (c/Makefile): il bersaglio make `syntara` produce il
+        # file `glm` su POSIX, perche' l'omonimo path senza estensione e' il
+        # launcher Python. I test gates sul FILE, CI nomina il BERSAGLIO.
+        if "syntara" in built:
+            built.add("glm")
         for engine, where in sorted(needed.items()):
             self.assertIn(engine, built,
                           f"{where} si salta se '{engine}' non e' compilato, e il "

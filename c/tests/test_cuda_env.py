@@ -22,7 +22,9 @@ from pathlib import Path
 
 
 HERE = Path(__file__).resolve().parent.parent
-SYNTARA = HERE / ("syntara.exe" if sys.platform == "win32" else "syntara")
+# ENGINE_REAL (c/Makefile): syntara.exe on Windows, glm on POSIX. The
+# extensionless c/syntara is the Python launcher, never this binary.
+SYNTARA = HERE / ("syntara.exe" if sys.platform == "win32" else "glm")
 
 
 def _binary_has_cuda():

@@ -26,13 +26,10 @@ from tools.efficiency import (
 
 HERE = Path(__file__).resolve().parent
 C_DIR = HERE.parent
-# The engine was renamed glm -> syntara, and this file kept pointing at
-# "glm.exe" -- a name that does not exist on Linux or macOS (no .exe) and no
-# longer exists on Windows either. _engine_present() was therefore always
-# False, so every test in this file has been skipping on every platform
-# instead of running. Resolve the real name, both extensions.
-ENGINE = next((p for p in (C_DIR / "syntara", C_DIR / "syntara.exe") if p.exists()),
-              C_DIR / "syntara")
+# ENGINE_REAL (c/Makefile): syntara.exe on Windows, glm on POSIX. The
+# extensionless c/syntara is the Python launcher -- resolving to it ran
+# argparse over the engine's bare-numeric argv instead of the engine.
+ENGINE = C_DIR / ("syntara.exe" if os.name == "nt" else "glm")
 TINY = C_DIR / "glm_tiny"
 
 

@@ -39,7 +39,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 C_DIR = HERE.parent
-ENGINE = C_DIR / "syntara"
+ENGINE = C_DIR / ("syntara.exe" if os.name == "nt" else "glm")
 FMT6 = C_DIR / "glm_tiny_fmt6"
 FMT4 = C_DIR / "glm_tiny_fmt4"
 
