@@ -1,0 +1,11 @@
+# tools/name_check_allowlist.txt
+#
+# Literal strings that ARE allowed to appear in the shipped tree despite
+# containing a banned token. Each entry must be justified.
+# Format: [path-glob] <literal>   (path-glob optional, defaults to anywhere)
+#
+# --- external identifiers that cannot be renamed without breaking downloads ---
+# Third-party Hugging Face repository ids: the model weight files only exist
+# under these exact names, so the download catalog must keep the literal URLs.
+* Inkling-Gutenberg-DPO-colibri-int4
+* Inkling-colibri-int4

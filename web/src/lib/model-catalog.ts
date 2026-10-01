@@ -11323,7 +11323,7 @@ export const modelCatalog: Record<string, CatalogModel[]> = {
       "gated": true
     }
   ],
-  "colibri-local": [
+  "inkling-int4-local": [
     {
       "repo": "nbeerbower/Inkling-Gutenberg-DPO-colibri-int4",
       "bRating": "Unknown",

@@ -24,7 +24,7 @@ const SEED_FAMILIES = [
   "gpt2-local",
   "pythia-local",
   "grok-local",
-  "colibri-local",
+  "inkling-int4-local",
   "openbmb-local",
   "ltx-local",
   "other-open-weight-local",

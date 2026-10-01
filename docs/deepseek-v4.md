@@ -252,7 +252,7 @@ numbers, still far ahead of CPU.
 |---|---|---|
 | 826-token prefill (cold) | 578 s (CPU) | ~40 s |
 | 3324-token prefill (cold) | 271 s (early GPU) | **90 s** (DeepGEMM), 225 s (generic DLL) |
-| 8.3k opencode system prompt, first turn after start | ~600 s | **~4 min** — once per model (checkpoint on disk) |
+| 8.3k agent system prompt, first turn after start | ~600 s | **~4 min** — once per model (checkpoint on disk) |
 | every later session with the same system prompt | 300 s | **6–9 s** |
 | follow-up turn in a conversation (tool result) | 677 s | **6 s** |
 | decode at 3.3k context | 0.6 tok/s | **1.5–1.6 tok/s** |

@@ -12828,7 +12828,7 @@ static int v4_ngram_draft(const int *prompt, int prompt_count,
  * The window state cannot rewind, so cross-conversation reuse needs a
  * snapshot taken AT the shared boundary. The boundary is discovered, not
  * declared: the longest common prefix of two successive fresh prompts is the
- * stable system prefix (opencode: system + tool block, identical across
+ * stable system prefix (agent client: system + tool block, identical across
  * sessions). LRU slots (V4_PREFIX_CKPT_SLOTS, default 4), in-memory only;
  * each holds the full per-layer attention snapshot (~250 MB for a 2k-window
  * model, growing with context) plus the prefix ids.
@@ -12838,7 +12838,7 @@ static int v4_ngram_draft(const int *prompt, int prompt_count,
  * agent's next turn re-renders the assistant reply (tool calls, stripped
  * reasoning), so strict-prefix session reuse fails at the reply boundary and
  * without this snapshot the whole conversation re-prefilled (measured:
- * opencode turn 2 = 677 s for 66 new tokens). Eviction takes the LRU
+ * agent turn 2 = 677 s for 66 new tokens). Eviction takes the LRU
  * prompt-end slot first so the system prefix survives a long session. */
 typedef struct {
     int *ids;

@@ -81,3 +81,34 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Design-consultation references (no code copied)
+
+These projects were studied read-only during the Phase 0 audit as behavioural
+references. No source file from them is vendored, adapted or linked; they are
+recorded here because this file — unlike the rest of the tree — is the
+documented place where exact third-party identities may appear.
+
+### Ollama (MIT)
+
+https://github.com/ollama/ollama — Copyright (c) Ollama
+Consulted for local model-server lifecycle, model registry and HTTP API
+behaviour. MIT licensed; no code incorporated.
+(Occasionally referenced as "the reference runtime" in benchmark tables,
+e.g. `docs/qwen36-cuda-tier.md`, to keep the shipped tree free of brand
+tokens.)
+
+### opencode (MIT)
+
+https://github.com/sst/opencode — MIT licensed.
+Consulted for agent-loop architecture (sessions, tool execution, permission
+model, plan/apply split). No code incorporated. Shipped docs and comments
+refer to this class of client generically as "agent".
+
+### Open WebUI (BSD 3-Clause + additional branding terms)
+
+https://github.com/open-webui/open-webui
+Consulted for chat interface patterns (message grouping, streaming
+re-render, model picker). **RESTRICTIVE:** beyond BSD-3 the project attaches
+branding/non-endorsement conditions, so by policy **zero code was copied** —
+layout and interaction ideas only. Do not vendor anything from it.

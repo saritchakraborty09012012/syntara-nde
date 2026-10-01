@@ -460,7 +460,7 @@ These are read by the Python programs (not the `glm` engine), so they don't appe
 
 | Variable | Default | Effect |
 |---|---|---|
-| `SYNTARA_DEBUG` | `0` (off) | Tee the engine transaction to stderr, by level. **`1`** = decoded model output stream only (byte-by-byte, on both the tool-call and plain paths). **`2`** = both sides — the fully-rendered prompt the engine received *and* the output, bracketed and correlated by request id, so stderr reads as the whole conversation. Invaluable for seeing what the model received vs. emitted during an OpenCode session. |
+| `SYNTARA_DEBUG` | `0` (off) | Tee the engine transaction to stderr, by level. **`1`** = decoded model output stream only (byte-by-byte, on both the tool-call and plain paths). **`2`** = both sides — the fully-rendered prompt the engine received *and* the output, bracketed and correlated by request id, so stderr reads as the whole conversation. Invaluable for seeing what the model received vs. emitted during an agent session. |
 | `SYNTARA_TOOL_SALVAGE` | `0` (off) | Opt-in de-mangler: reconstruct a malformed int4 tool call by mapping its lone payload onto the tool's primary parameter. Never rewrites well-formed output; recommended for int4 deployments. |
 | `SYNTARA_THINK` | `0` (off) | Make thinking the default when the client sends *neither* `reasoning_effort` nor `enable_thinking`. Any explicit client value still wins. |
 | `SYNTARA_MODEL` | unset | Default model directory (fallback for `--model`). |
@@ -476,7 +476,7 @@ These are read by the Python programs (not the `glm` engine), so they don't appe
 | `SYNTARA_COLOR` | auto (TTY) | `SYNTARA_COLOR=1` forces colored `syntara` output when not a TTY. |
 | `SYNTARA_RAW` | `0` | `syntara` raw output mode. |
 
-> **Debugging an OpenCode session:** `SYNTARA_DEBUG=1` watches the model's output stream; `SYNTARA_DEBUG=2` shows both sides (prompt + output) as a transcript. Add `SYNTARA_TOOL_SALVAGE=1` on int4 to catch mangled tool calls.
+> **Debugging an agent session:** `SYNTARA_DEBUG=1` watches the model's output stream; `SYNTARA_DEBUG=2` shows both sides (prompt + output) as a transcript. Add `SYNTARA_TOOL_SALVAGE=1` on int4 to catch mangled tool calls.
 
 ## Set by the CLI (don't usually set by hand)
 

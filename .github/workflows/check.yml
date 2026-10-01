@@ -20,6 +20,24 @@ env:
   PYTHONUTF8: '1'
 
 jobs:
+  name-purge:
+    # Brand-name gate for the whole shipped tree (Phase 0): the four banned
+    # third-party brand tokens must appear only in the licence carve-outs
+    # (NOTICE / LICENSE / THIRD_PARTY_NOTICES*) and the documented allowlist
+    # (tools/name_check_allowlist.txt, external repository ids only).
+    name: Name purge (whole tree)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: check_names.py must be clean
+        run: python tools/check_names.py
+      - name: gate tests (planted violation + allowlist window)
+        run: python -m unittest -v syntara.tests.test_name_purge
+
   linux:
     name: Linux
     runs-on: ubuntu-latest

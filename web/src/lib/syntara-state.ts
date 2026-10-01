@@ -273,7 +273,7 @@ const seedModels: ModelMeta[] = [
   emptyFamily("gpt2-local", "GPT-2", "OpenAI", "https://huggingface.co/openai-community"),
   emptyFamily("pythia-local", "EleutherAI Pythia", "EleutherAI", "https://huggingface.co/EleutherAI"),
   emptyFamily("grok-local", "xAI Grok", "xAI", "https://huggingface.co/x-ai"),
-  emptyFamily("colibri-local", "Colibri-related models", "Colibri", "https://github.com/saritchakraborty09012012/syntara-nde"),
+  emptyFamily("inkling-int4-local", "Inkling int4 builds", "Community", "https://github.com/saritchakraborty09012012/syntara-nde"),
   emptyFamily("openbmb-local", "OpenBMB", "OpenBMB", "https://huggingface.co/OpenBMB"),
   emptyFamily("ltx-local", "LTX", "LTX", "https://huggingface.co/Lightricks"),
   emptyFamily("other-open-weight-local", "Other open-weight families", "Open-source community", "https://huggingface.co/models"),

@@ -1,5 +1,5 @@
 // Standalone large-batch correctness test for syntara_metal_gemm — reproduces the
-// long-context OpenCode prefill corruption WITHOUT the model or a 33-minute run.
+// long-context agent prefill corruption WITHOUT the model or a 33-minute run.
 //
 // Isolation established (see INVESTIGATION_LOG_metal_moe_race.md): corruption <=> dense
 // GEMM on GPU (`syntara_metal_gemm`), independent of MoE. The engine's existing kernel tests

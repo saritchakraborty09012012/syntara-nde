@@ -235,14 +235,14 @@ the launcher contract; the still-missing piece is the Python CLI source itself.
 ## Native/desktop, release and launcher-restore pass (0.4.3)
 
 Closes the 0.4.2 flag: the Python CLI launcher was recovered from the upstream
-`colibri-main.zip` tree and a 9-part report was assembled.
+reference archive tree and a 9-part report was assembled.
 
 ### Where the launcher came from (classification A)
 
-The tree was decreed unrecoverable until `colibri-main.zip` surfaced in the
+The tree was decreed unrecoverable until the reference archive surfaced in the
 Windows `%TEMP%` copy of the machine the tree was copied off of. Extracted
 `c/coli` (the upstream launcher, byte-for-byte what the clone once carried) at
-`C:\Users\sarit\AppData\Local\Temp\opencode\colibri-recovery\c__coli`, with a
+a temporary restore directory under `%TEMP%` (since cleaned up), with a
 matching `c__coli.cmd`, `c__Makefile`, `docker__Dockerfile.slim`,
 `.github__workflows__release.yml`, `c__tools__clean.py` and `flake.nix`.
 
@@ -252,12 +252,12 @@ matching `c__coli.cmd`, `c__Makefile`, `docker__Dockerfile.slim`,
 (`restore_launcher.py`), applied top-down so that generated names (and the
 42-line command-string generator) only ever see parameters already renamed:
 
-1. URL fixup: `JustVugg/colibri` → `NoirDemons/Syntara`.
+1. URL fixup: the upstream repository URL → `NoirDemons/Syntara`.
 2. `COLI_` → `SYNTARA_` (32 occurrences; engine passes itself the recorded
    `SYNTARA_*` variables, double-dash `--syntara-*` flags and help text).
 3. `:coli build` → `:syntara build` (make tagline).
-4. `Colibri` → `Syntara` (title-case prose), then `colibri` → `syntara`,
-   then bare `coli` → `syntara` (paths and identifiers).
+4. the reference brand → `Syntara` (title-case prose), then the lowercase
+   brand → `syntara`, then bare `coli` → `syntara` (paths and identifiers).
 5. `<snap>/syntara.json`, `c/syntara.c`, `c/syntara.cmd` paths as upstream.
 
 Post-rename fixups (upstream-state drift, byte-faithful otherwise):

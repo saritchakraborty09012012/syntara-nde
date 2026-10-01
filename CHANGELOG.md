@@ -26,9 +26,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Python CLI launcher restored
 
-- **`c/syntara` restored** from the upstream `colibri` source (`c/coli`) with
-  the rename mapping (`COLI_*` → `SYNTARA_*`, `Colibri` → `Syntara`,
-  `colibri`/`coli` → `syntara`) and three engineering fixups: the
+- **`c/syntara` restored** from the upstream reference source (`c/coli`) with
+  the rename mapping (`COLI_*` → `SYNTARA_*`, reference brand → `Syntara`,
+  `coli` → `syntara`) and three engineering fixups: the
   engine-resolution block gained a self-guard (a sibling `syntara` that is this
   very script must never count as an engine) and a POSIX `glm[_EXE]`
   installed-layout fallback; the resumed-KV probe now reads the tree engine's

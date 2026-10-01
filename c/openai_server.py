@@ -2753,7 +2753,7 @@ def generation_options(body, limit):
         raise APIError(400, f"`{maximum_param}` must be a positive integer.", maximum_param)
     if maximum > limit:
         maximum = limit   # clamp to the server's --max-tokens cap instead of 400 (#260): OpenAI
-                          # clients (opencode/ai-sdk) default to large max_tokens; rejecting breaks them.
+                          # clients (agent/ai-sdk) default to large max_tokens; rejecting breaks them.
     if (isinstance(temperature, bool) or not isinstance(temperature, (int, float)) or
             not math.isfinite(temperature) or not 0 <= temperature <= 2):
         raise APIError(400, "`temperature` must be between 0 and 2.", "temperature")
@@ -3219,7 +3219,7 @@ class Engine:
         # stable system prefix. The engine snapshots its attention state at that
         # token boundary during the prefill, so the FIRST request of the first
         # conversation already seeds the shared-prefix checkpoint that every later
-        # conversation (opencode session) restores in seconds; without the hint
+        # conversation (agent session) restores in seconds; without the hint
         # the engine only discovers the boundary on the second fresh prompt.
         # Older engines parse six or seven fields and ignore the eighth.
         prefix_field = ""

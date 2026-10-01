@@ -112,7 +112,7 @@ row names the concrete files that own the behavior.
 
 | Feature | Status | Where |
 | --- | --- | --- |
-| Engine launcher contract (`install/remove/bench/tune/convert/plan/serve/chat`) | ✅ | `c/syntara` (Python CLI, 74 defs) restored from the upstream `colibri.c`-tree launcher via the rename mapping; `engine_for`/`model_arch`/`_EXE` all present; 71 c/ launcher+CLI tests pass (audit 0.4.3) |
+| Engine launcher contract (`install/remove/bench/tune/convert/plan/serve/chat`) | ✅ | `c/syntara` (Python CLI, 74 defs) restored from the upstream reference-tree launcher via the rename mapping; `engine_for`/`model_arch`/`_EXE` all present; 71 c/ launcher+CLI tests pass (audit 0.4.3) |
 | Release/Docker `syntara` launcher contract | ✅ | `release.yml` verify + `Dockerfile.slim` treat `c/syntara` as a Python CLI; restored launcher satisfies them; the GLM engine is name-split (`syntara.exe` on Windows / `glm` on POSIX) so a build can never clobber the launcher path (audit 0.4.3) |
 | C build target | 🟡 | Compilable per docs; no gcc/toolchain available here to re-verify |
 | GPU backends (CUDA/Metal/Vulkan/ROCm/DirectML) + auto-routing | 🔴 | Docs + capability layer; verification requires real hardware |
