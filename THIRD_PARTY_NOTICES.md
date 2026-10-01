@@ -49,6 +49,19 @@ What that checkout contains, and the licences that apply when you build with it:
   that commit @ f3fde58372d33e9a5650ba7b80fc48b3b49d40c8. License text:
   `c/third_party/deepgemm/third-party/cutlass/LICENSE.txt` after the fetch.
 
+## llama.cpp backend binaries (fetched, not vendored: `syntara/runtime/bin/`)
+
+Syntara's GGUF runtime (`syntara/runtime/llama_cpp.py`) spawns the official
+llama.cpp server binary as a subprocess. The binaries are downloaded from the
+project's GitHub releases by `tools/fetch_llama_cpp.ps1` at a pinned release
+(URL + SHA-256 checked in that script) into the gitignored
+`syntara/runtime/bin/`, or located via the `SYNTARA_LLAMA_BIN` environment
+variable. Nothing from llama.cpp is vendored or compiled into this repository.
+
+- llama.cpp / ggml (MIT), Copyright (c) 2023-2026 The ggml authors,
+  https://github.com/ggml-org/llama.cpp — MIT license text:
+  https://github.com/ggml-org/llama.cpp/blob/master/LICENSE
+
 ## Quantum Download Manager (desktop download engine: `desktop/src-tauri/src/qdm/`)
 
 Portions of `desktop/src-tauri/src/qdm/` — the multi-segment HTTP download

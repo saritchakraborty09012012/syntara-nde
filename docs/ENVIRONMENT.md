@@ -4,6 +4,18 @@ Reference for the environment variables read by the Syntara engine.
 
 **Generated from `dev @ def8419`** by scanning every `getenv()` / `getenv_utf8()` site in `c/*.c`, `c/*.h`, `c/*.cu` and `c/*.mm`. Defaults and behavior are taken from the source; see [MAINTAINING-DOCS.md](MAINTAINING-DOCS.md) to regenerate this after the code changes.
 
+## Host / SDK (Python package) — hand-maintained
+
+Read by the Python host (`syntara/`: CLI, gateway, library, runtime adapter),
+not by the engine binaries. The generator above does not scan Python sources.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `SYNTARA_HOME` | unset (`%LOCALAPPDATA%\Syntara`, `$XDG_DATA_HOME/syntara`, or `~/.local/share/syntara`) | Root of the per-user data directory: store, backups and the model library index (`library.json`, `models/`). |
+| `SYNTARA_LLAMA_BIN` | unset (falls back to `syntara/runtime/bin/llama-server`) | Full path to the GGUF backend server binary. Consulted before the bundled location by `syntara/runtime/llama_cpp.py`; `tools/fetch_llama_cpp.ps1` installs the pinned release into the bundled location. |
+| `SYNTARA_GATEWAY_KEY` | unset (gateway accepts unauthenticated loopback requests) | When set, every local gateway request must send `Authorization: Bearer <value>`; mismatched or missing keys get HTTP 401. |
+| `XDG_DATA_HOME` | unset | POSIX fallback root for the data directory when `SYNTARA_HOME` is unset. |
+
 ## Which program reads these?
 
 **There are seven engine binaries, and they do not share a knob set.** The

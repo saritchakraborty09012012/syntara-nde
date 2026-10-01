@@ -399,9 +399,14 @@ def inspect_file(path: str | os.PathLike[str]) -> dict[str, Any]:
               f"quantizations {dominant[:4]} are outside the approved set "
               f"{sorted(_POLICY_QUANTS)}; not validated yet")
 
-    badge("runtime-support", "warn",
-          "the built-in engine loads safetensors only; this GGUF file needs "
-          "the generic dense runtime (Phase 1b) before it can be loaded")
+    if in_scope_arch:
+        badge("runtime-support", "ok",
+              "loadable through the built-in GGUF runtime "
+              "(syntara serve --model <path>)")
+    else:
+        badge("runtime-support", "warn",
+              f"the built-in GGUF runtime targets the approved dense scope; "
+              f"architecture {arch!r} has not been validated for loading")
 
     tokenizer_present = "tokenizer.ggml.tokens" in kvs
     has_chat_template = bool(kvs.get("tokenizer.chat_template"))

@@ -10,6 +10,8 @@ from typing import Any
 
 from ._version import __version__
 from .client import Syntara, SyntaraError
+from .library import LibraryError
+from .runtime import RuntimeError as RuntimeFailure
 
 
 def _client(args: argparse.Namespace) -> Syntara:
@@ -236,12 +238,130 @@ def _cmd_backup(client: Syntara, args: argparse.Namespace) -> int:
 
 
 def _cmd_serve(client: Syntara, args: argparse.Namespace) -> int:
-    if args.json:
-        _emit({"base_url": client.base_url, "root_url": client.root_url}, True)
-    else:
-        print(client.root_url)
-        print(f"OpenAI-compatible base: {client.base_url}")
+    if not args.model:
+        # Informational: where a gateway would be. `--model` starts one.
+        if args.json:
+            _emit({"base_url": client.base_url, "root_url": client.root_url,
+                   "hint": "start a gateway with: syntara serve --model "
+                           "<id-or-path>"}, True)
+        else:
+            print(client.root_url)
+            print(f"OpenAI-compatible base: {client.base_url}")
+            print("No gateway is running in this process; start one with: "
+                  "syntara serve --model <id-or-path>")
+        return 0
+
+    from .gateway import HostGateway, default_api_key
+    from .library import ModelLibrary
+
+    library = ModelLibrary(args.data_dir)
+    entry = library.resolve(args.model)
+    gateway = HostGateway(
+        entry, library=library, host=args.host, port=args.port,
+        context=args.context, api_key=default_api_key())
+    print(f"loading {entry['id']} from {entry['path']} ...", flush=True)
+    gateway.start()
+    print(f"serving model={entry['id']} at {gateway.url} "
+          f"(OpenAI base {gateway.base_url}) - Ctrl-C to stop", flush=True)
+    try:
+        gateway.serve_forever()
+    except KeyboardInterrupt:
+        gateway.stop()
+    print("stopped", flush=True)
     return 0
+
+
+def _cmd_library(args: argparse.Namespace) -> int:
+    from .library import ModelLibrary
+
+    library = ModelLibrary(args.data_dir)
+    action = args.action
+    target = args.target
+
+    if action == "list":
+        entries = library.list()
+        if args.json:
+            _emit(entries, True)
+        elif not entries:
+            print("library is empty - add a GGUF file with: "
+                  "syntara library add <file.gguf>")
+        else:
+            for e in entries:
+                ctx = (e.get("model") or {}).get("context_length") or "?"
+                print(f"{e['id']:<28} {e['status']:<8} "
+                      f"{(e.get('model') or {}).get('architecture', '?'):<10} "
+                      f"ctx={ctx}  {e['path']}")
+        return 0
+
+    if action == "get":
+        entry = library.get(target) if target else None
+        if entry is None:
+            print(f"syntara library get: no model with id {target!r}",
+                  file=sys.stderr)
+            return 1
+        _emit(entry, True)
+        return 0
+
+    if action == "add":
+        if not target:
+            print("syntara library add: a GGUF file path is required",
+                  file=sys.stderr)
+            return 2
+        entry = library.add(target, copy=args.copy)
+        if args.json:
+            _emit(entry, True)
+        else:
+            print(f"added {entry['id']} -> {entry['path']}")
+        return 0
+
+    if action == "scan":
+        result = library.scan(target or ".", copy=args.copy)
+        if args.json:
+            _emit(result, True)
+        else:
+            for model_id in result["added"]:
+                print(f"added {model_id}")
+            for skip in result["skipped"]:
+                print(f"skipped {skip['path']}: {skip['reason']}",
+                      file=sys.stderr)
+            print(f"scanned {result['scanned']} file(s), "
+                  f"added {len(result['added'])}, "
+                  f"skipped {len(result['skipped'])}")
+        return 0
+
+    if action == "remove":
+        if not target:
+            print("syntara library remove: a model id is required",
+                  file=sys.stderr)
+            return 2
+        entry = library.get(target)
+        if entry is None:
+            print(f"syntara library remove: no model with id {target!r}",
+                  file=sys.stderr)
+            return 1
+        if args.delete_file and not args.yes:
+            size_mb = round((entry.get("size") or 0) / (1024 * 1024), 1)
+            print("Refusing to delete the model file without confirmation.\n"
+                  f"  id:   {entry['id']}\n"
+                  f"  file: {entry['path']}\n"
+                  f"  size: {size_mb} MB\n"
+                  "Re-run with --yes to permanently delete this file, or "
+                  "omit --delete-file to only remove it from the library.",
+                  file=sys.stderr)
+            return 2
+        result = library.remove(target, delete_file=args.delete_file,
+                                expect=entry)
+        if args.json:
+            _emit(result, True)
+        else:
+            if result["file_deleted"]:
+                print(f"removed {target} and deleted {result['deleted_path']}")
+            else:
+                print(f"removed {target} from the library "
+                      f"(file kept at {entry['path']})")
+        return 0
+
+    return 2  # unreachable
 
 
 def _cmd_health(client: Syntara, args: argparse.Namespace) -> int:
@@ -359,8 +479,34 @@ def build_parser() -> argparse.ArgumentParser:
     agent.add_argument("--max-steps", type=int, default=3)
     agent.add_argument("--temperature", type=float, default=0.2)
 
-    sub.add_parser("serve", parents=[common],
-                   help="Print the local endpoint the CLI talks to")
+    serve = sub.add_parser(
+        "serve", parents=[common],
+        help="Start the local gateway (--model) or print the endpoint")
+    serve.add_argument("--model", default=None,
+                       help="library id or GGUF path to serve (starts the "
+                            "gateway; without it, prints the endpoint)")
+    serve.add_argument("--host", default="127.0.0.1",
+                       help="bind address (default: loopback only)")
+    serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument("--context", type=int, default=None,
+                       help="context window override (default: min(4096, "
+                            "model context))")
+
+    library = sub.add_parser(
+        "library", parents=[common],
+        help="Manage local GGUF model files (offline catalogue)")
+    library.add_argument("action",
+                         choices=["list", "get", "add", "scan", "remove"])
+    library.add_argument("target", nargs="?",
+                         help="file path (add), directory (scan), or model "
+                              "id (get/remove)")
+    library.add_argument("--copy", action="store_true",
+                         help="(add/scan) copy the file into the library "
+                              "instead of referencing it in place")
+    library.add_argument("--delete-file", action="store_true",
+                         help="(remove) also delete the model file from disk")
+    library.add_argument("--yes", action="store_true",
+                         help="(remove --delete-file) confirm deletion")
 
     inspect = sub.add_parser("inspect", parents=[common],
                              help="Inspect a local GGUF file (metadata, quants, compatibility)")
@@ -412,6 +558,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_agents(client, args)
         if args.command == "serve":
             return _cmd_serve(client, args)
+        if args.command == "library":
+            return _cmd_library(args)
         if args.command == "inspect":
             return _cmd_inspect(args)
         if args.command == "health":
@@ -423,8 +571,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "backup":
             return _cmd_backup(client, args)
         return 0
-    except (SyntaraError, ValueError, OSError) as exc:
+    except (SyntaraError, LibraryError, RuntimeFailure, ValueError, OSError) as exc:
         print(f"syntara: {exc}", file=sys.stderr)
+        detail = getattr(exc, "detail", "")
+        if detail:
+            print("syntara: backend detail (last lines):", file=sys.stderr)
+            print("\n".join(str(detail).splitlines()[-12:]), file=sys.stderr)
         if getattr(exc, "code", None):
             print(f"syntara: error code: {exc.code}", file=sys.stderr)
         return 1

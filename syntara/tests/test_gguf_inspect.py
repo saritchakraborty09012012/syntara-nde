@@ -1,9 +1,9 @@
 """Tests for the GGUF inspector (syntara.gguf_inspect).
 
-Fixtures are built byte-by-byte from the documented GGUF layout (synthetic,
-no network, no model download). The builder is independent from the parser
-only in structure - both follow the spec, and a wrong constant in either
-direction shows up as a failed assertion below.
+Fixtures come from syntara.tests.gguf_fixtures (synthetic, no network, no
+model download); the builders follow the documented layout independently of
+the parser, so a wrong constant in either direction shows up as a failed
+assertion below.
 """
 
 from __future__ import annotations
@@ -17,97 +17,16 @@ import tempfile
 import unittest
 
 from syntara.gguf_inspect import GgufError, inspect_file
-
-T_STR, T_U32, T_ARR = 8, 4, 9
-GGUF_MAGIC = 0x46554747
-
-
-def _s(text: str) -> bytes:
-    raw = text.encode("utf-8")
-    return struct.pack("<Q", len(raw)) + raw
-
-
-def _kv_str(key: str, value: str):
-    return key, T_STR, _s(value)
-
-
-def _kv_u32(key: str, value: int):
-    return key, T_U32, struct.pack("<I", value)
-
-
-def _kv_str_array(key: str, values: list[str]):
-    payload = struct.pack("<I", T_STR) + struct.pack("<Q", len(values))
-    payload += b"".join(_s(v) for v in values)
-    return key, T_ARR, payload
-
-
-def _tensor(name: str, shape: list[int], type_id: int, nbytes: int, offset: int):
-    return {"name": name, "shape": shape, "type_id": type_id,
-            "nbytes": nbytes, "offset": offset}
-
-
-def _tensor_bytes(shape: list[int], type_id: int) -> int:
-    """Payload bytes for the types the tests use (block sizes per spec)."""
-    if type_id == 1:      # f16
-        n = 1
-        for d in shape:
-            n *= d
-        return n * 2
-    if type_id == 12:     # q4_k: 144 bytes per 256-weight block
-        rows = 1
-        for d in shape[1:]:
-            rows *= d
-        return (shape[0] // 256) * 144 * rows
-    raise AssertionError(f"builder lacks size rule for type {type_id}")
-
-
-def build_gguf(path: str, *, version: int = 3, kvs: list | None = None,
-               tensors: list | None = None, truncate: int = 0,
-               override_counts: tuple[int, int] | None = None) -> None:
-    kvs = kvs or []
-    tensors = tensors or []
-    n_tensors, n_kvs = override_counts if override_counts else (len(tensors), len(kvs))
-
-    head = bytearray()
-    head += struct.pack("<I", GGUF_MAGIC)
-    head += struct.pack("<I", version)
-    head += struct.pack("<Q", n_tensors)
-    head += struct.pack("<Q", n_kvs)
-    for key, vtype, value in kvs:
-        head += _s(key) + struct.pack("<I", vtype) + value
-    for t in tensors:
-        head += _s(t["name"])
-        head += struct.pack("<I", len(t["shape"]))
-        for d in t["shape"]:
-            head += struct.pack("<Q", d)
-        head += struct.pack("<I", t["type_id"])
-        head += struct.pack("<Q", t["offset"])
-    pad = (-len(head)) % 32
-    head += b"\x00" * pad
-
-    end = 0
-    for t in tensors:
-        end = max(end, t["offset"] + t["nbytes"])
-    payload = bytes(end)
-
-    blob = bytes(head) + payload
-    if truncate:
-        blob = blob[: len(blob) - truncate]
-    with open(path, "wb") as fh:
-        fh.write(blob)
-
-
-def _standard_kvs(arch: str = "llama", *, chat_template: bool = True) -> list:
-    kvs = [
-        _kv_str("general.architecture", arch),
-        _kv_str("general.name", "tiny-test"),
-        _kv_u32("general.file_type", 15),
-        _kv_u32(f"{arch}.context_length", 4096),
-    ]
-    if chat_template:
-        kvs.append(_kv_str("tokenizer.chat_template",
-                           "{{ messages }}"))
-    return kvs
+from syntara.tests.gguf_fixtures import (
+    GGUF_MAGIC,
+    build_gguf,
+    kv_str as _kv_str,
+    kv_str_array as _kv_str_array,
+    kv_u32 as _kv_u32,
+    standard_kvs as _standard_kvs,
+    tensor as _tensor,
+    tensor_bytes as _tensor_bytes,
+)
 
 
 class InspectValidFileTest(unittest.TestCase):

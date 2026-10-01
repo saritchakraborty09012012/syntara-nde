@@ -102,9 +102,16 @@ syntara chat "ask me anything" # one-shot
 syntara chat --model qwen "..."
 
 syntara agents run "<task>"    # or: syntara agent "<task>"
-syntara serve
+syntara serve --model <id-or-path>   # load a GGUF and serve the local API
+syntara serve                 # print the endpoint (or --json)
 syntara health
 syntara profile
+
+syntara library list                  # catalogue of local GGUF files
+syntara library add model.gguf [--copy]
+syntara library scan <directory>      # discover *.gguf and register them
+syntara library get <id>              # full JSON entry
+syntara library remove <id> [--delete-file --yes]
 
 syntara project list
 syntara project create my-project --description "..."
@@ -144,21 +151,65 @@ or corrupt file produces a clear structural error on stderr (exit `1`)
 naming what failed and where. Use `--json` for the full machine-readable
 report (large arrays are summarised, not dumped).
 
+### Serving a local model
+
+`syntara serve --model <id-or-path>` starts the local gateway: it resolves
+the target (a library id, or a file path which is auto-registered), spawns
+the GGUF runtime backend, waits until the model is healthy, and serves the
+OpenAI-compatible API plus the host endpoints on **127.0.0.1** by default:
+
+```bash
+syntara library add ~/models/qwen.gguf
+syntara serve --model qwen              # or pass the .gguf path directly
+syntara serve --model qwen --port 9000 --context 8192
+```
+
+- `GET /health` - process alive, model loaded, scheduler counters, hardware
+  info; `GET /profile` - recent per-turn wall time and token usage;
+  `GET /v1/models` and `GET /v1/chat/completions` (streaming supported) are
+  the OpenAI-compatible surface.
+- Endpoints the host does not implement yet (`/v1/completions`,
+  `/v1/messages`, `/v1/brio`, `/experts`) answer HTTP 501 with
+  `code: not_implemented` rather than pretending.
+- The runtime backend is the pinned llama.cpp server binary, fetched by
+  `tools/fetch_llama_cpp.ps1` (URL + SHA-256 checked) or located via
+  `SYNTARA_LLAMA_BIN`; without it, `serve --model` exits `1` with install
+  instructions. Requests with `enable_thinking`/`cache_slot` (engine-only
+  keys) are translated before they reach the backend.
+- `SYNTARA_GATEWAY_KEY` (optional) requires `Authorization: Bearer <key>`
+  on every gateway request. Binding beyond `127.0.0.1` is opt-in via
+  `--host`; do not expose the gateway to a network unintentionally.
+
+### Managing the local library
+
+The library is an offline catalogue of GGUF files already on disk - it never
+downloads anything. `add` registers a file **in place** (metadata only, the
+original is never moved); `--copy` duplicates it under the data directory.
+`list` shows a status per entry (`ok` / `modified` / `missing`), `scan`
+registers every `*.gguf` under a directory and reports what was skipped and
+why. `remove` drops the entry but keeps the file; deleting the file itself
+additionally requires `--delete-file --yes`, and the CLI prints exactly
+which file and size would be destroyed before asking.
+
 ### What the CLI does not do (and why)
 
-Model **download, deletion, benchmarking and optimization** are engine-side
-operations (`./syntara bench|tune|convert` on the engine build, or the desktop
+Model **download, benchmarking and optimization** are engine-side operations
+(`./syntara bench|tune|convert` on the engine build, or the desktop
 Downloads view). The local control/API surface does not expose them, so the
 CLI's `models install|remove|benchmark|optimize` verbs exit `2` with a pointer
-to the right tool instead of pretending a backend exists.
+to the right tool instead of pretending a backend exists. (Local *file*
+management of models you already have is `syntara library ...` above.)
 
 ## Tests
 
-The suite is stdlib-only and needs no runtime or network:
+The suite is stdlib-only and needs no network:
 
 ```bash
 py -m unittest discover -s syntara/tests -t . -v
 ```
 
 `mock_gateway.py` is a mini implementation of the gateway endpoints used by
-the SDK/CLI tests.
+the SDK/CLI tests. Tests for the real GGUF backend skip themselves unless the
+pinned binary is installed (`tools/fetch_llama_cpp.ps1`); when installed they
+drive an actual server process against a synthetic tiny model, still without
+any network beyond loopback.
