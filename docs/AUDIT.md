@@ -133,25 +133,44 @@ vitest tests pass after the family rename, and the Python SDK
 
 ## 5. Phase plan (exit criteria per phase)
 
-| Phase | Deliverable | Exit criterion |
-|---|---|---|
-| **0 — Audit & gate** (this doc) | audit docs, name gate + tests + CI, licence records, purge | name gate green locally **and** tests pass; committed |
-| **1 — Engine bring-up** | **1d: embedded-CPython packaging verified on Windows first (done — `docs/experiments/phase1d-embed-cpython.md`)** → **1a: GGUF inspector (done — `syntara/gguf_inspect.py`, `syntara inspect`)** → **1b: host library + gateway + GGUF runtime (done — `syntara/library.py`, `syntara/gateway.py`, `syntara/runtime/`, `syntara serve --model`, `syntara library`)** → 1c: scheduler | a local GGUF file can be inspected, loaded and streamed through the host on Windows, via a packaged build |
-| **2 — Chat product** | unified chat UX over the host (streaming, cancel, model picker, lifecycle states with a real producer) | chat works offline against the packaged app end-to-end |
-| **3 — Agent product** | real tool loop (file/shell/git) behind explicit permissions, sharing the chat session store | one product: Chat and Agent modes share conversations/state; agent tools run and are gated |
-| **4 — Integrations** | OpenAI-compatible surface documentation + Python SDK against the real host; integration thinness check | SDK + endpoint tests pass against the packaged host |
-| **5 — Polish & release** | lifecycle observability, error-recovery copy, cross-platform pass, docs sync | checklist from `AGENTS.md` §115 satisfied |
+Tracks 1a–1i are the approved plan order; "done" rows cite the commit that
+delivered them. Earlier commits used interim labels (host work landed as
+"Phase 1b/1c"); the mapping is recorded here so the history stays readable.
 
-Phase 1 order note: **1d (packaging verification) was executed first, before
-1a/1b/1c**, so the host is only built on a proven embedding strategy.
+| Phase | Deliverable | Status / Exit criterion |
+|---|---|---|
+| **0 — Audit & gate** (this doc) | audit docs, name gate + tests + CI, licence records, purge | **done `f028c30`** — gate green locally and tests pass |
+| **1 — Adaptive Engine** | see track table below | a local GGUF file can be inspected, loaded and streamed through the host on Windows, via a packaged build |
+| **2 — Chat mode** | rewire to host API; picker = local models only + badges, no key fields; resume/queue/throttled-markdown lessons; no workspace concept in chat | chat works offline against the packaged app end-to-end |
+| **3 — Mode toggle** | single `Chat \| Agent` toggle replacing workspaces; per-mode history, shared picker, no reload, existing theme tokens | mode switch preserves context; no full reload |
+| **4 — Agent mode** | TS loop (`web/src/lib/agent/`), tools as Tauri commands, permission system (once/always/deny, per-project), local-model tool-call layer (schema-constrained JSON + repair), tool cards/diffs/todo UI | agent tools run and are gated; parser/repair/compaction unit tests + integration test vs mock gateway |
+| **5 — Polish & hardening** | startup/memory/shutdown hygiene, child-process cleanup, in-app logs, first-run hardware scan → starter-model suggestion, final name-purge + full test matrix + production builds, docs/README sync | checklist from `AGENTS.md` §115 satisfied |
+
+### Phase 1 tracks
+
+| Track | Deliverable | Status |
+|---|---|---|
+| 1a Inspector | GGUF/safetensors/sharded inspection without loading weights; arch, params, GQA/MQA, MoE, tokenizer, ctx, quant, chat template, tool-calling | **done `64b8469`** — GGUF header path only (`syntara/gguf_inspect.py`, `syntara inspect`); safetensors/sharded detection still open (badged, not claimed) |
+| 1b Profiler | `doctor.py` extended: ISA, RAM, GPU/VRAM, quick disk bench, battery; cached + pressure re-profile | **pending** |
+| 1c Planner | `resource_plan.py` extended: strategy, quant, offload, KV quant, ctx clamp, threads/batch, predicted mem + tok/s, human summary | **pending** |
+| 1d Host | gateway → full host: library registry, bounded-queue scheduler, OOM ladder + reload predicate, engine supervision, localhost+token, health states, `/v1/models`, chat/completions, stop; Tauri spawns embedded pythonw hidden at app start | **partial** — packaging verified first `5d00f56`; library/gateway/runtime `7d5ac4c`; bounded-FIFO scheduler (this commit); remaining: OOM ladder, reload predicate, supervision, health states beyond ok/degraded, stop, Tauri embedded spawn + desktop smoke |
+| 1e Library UX | QDM completion → auto-inspect → badge → one-click load w/ progress; partial/sharded handling | **pending** |
+| 1f Streaming runtime | 9 existing engines fully planner-driven (env injection), fallback + honest status | **pending** |
+| 1g Standard runtime (GGUF-dense) | generic GGUF path: parser + decode for mainstream dense archs, BPE reuse, metadata-driven chat template | **delivered by decision** — decode delegated to the pinned llama.cpp subprocess adapter (`7d5ac4c`); no in-tree decoder, honest badge; real-model smoke opt-in, not yet run |
+| 1h Resilience | first-run micro-bench calibration, memory guard pre-OOM, retry-lighter-plan, warm keep/idle unload, crash isolation | **pending** |
+| 1i Conversion | streaming/resumable/cancellable/cached wrappers over per-family converters; auto-trigger on planner choice | **pending** |
+
+Phase 1 order note: **packaging verification (1d's riskiest piece) was
+executed first**, before the host was built, so the host is only built on a
+proven embedding strategy (adjustment to the plan, as agreed).
 
 ---
 
-## 6. Verification ledger (Phase 0 + 1d + 1a + 1b)
+## 6. Verification ledger (Phase 0 + Phase 1 tracks so far)
 
 | Check | Result |
 |---|---|
-| `python tools/check_names.py` (whole tree, incl. dist) | **ran — clean (1009 files; 1013 after Phase 1a; 1075 after Phase 1b)** |
+| `python tools/check_names.py` (whole tree, incl. dist) | **ran — clean (1009 files; 1013 after Phase 1a; 1075 after host library/gateway/runtime)** |
 | `python -m unittest syntara.tests.test_name_purge` | **ran — 4/4 pass** |
 | `npm --prefix web run build` (`tsc -b && vite build`) | **ran — exit 0** |
 | `npm --prefix site run build` | **ran — exit 0** |
@@ -173,6 +192,9 @@ Phase 1 order note: **1d (packaging verification) was executed first, before
 | Phase 1b: CLI e2e — `syntara library add/list/get`, `remove --delete-file` without `--yes` | **ran — as documented; deletion guard exits 2 and names file + size** |
 | Phase 1b: gateway e2e — `syntara serve --model <tiny.gguf> --port 8123` (real CLI, real llama.cpp) | **ran — `/health` ok/backend `llama.cpp`; non-stream chat usage 56/15; SSE stream 8 frames incl. `[DONE]`; `/profile` seq=2; `/v1/models` id correct; backend process cleaned up afterwards** |
 | Phase 1b: `python -m py_compile` over all new modules | **ran — exit 0** |
+| Host scheduler: unit suite (`syntara.tests.test_scheduler`) | **ran — 8/8 pass (FIFO order, queue-full rejection, queue timeout + recovery, slot-handover invariant, capacity > 1, snapshot shape)** |
+| Host scheduler: gateway integration (concurrent chats, 429 + `Retry-After`, 504 wait report) | **ran — gateway suite 21/21 pass** |
+| Host scheduler: full suite `python -m unittest discover -s syntara/tests -t .` | **ran — 131/131 pass, 2 skipped (quant-oracle, venv-only)** |
 | Engine build (`make -C c check`) | **not run in this pass** (unchanged by Phase 0 edits except three comments) |
 | Real-model inference smoke (user-scale GGUF) | **not run** — the full path is proven with a synthetic tiny model; a user-scale model lands with Phase 1c/2 |
 

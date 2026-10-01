@@ -6,6 +6,8 @@ The real-backend path is covered by test_runtime_llamacpp (opt-in).
 from __future__ import annotations
 
 import json
+import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -23,10 +25,11 @@ class FakeRuntime:
     """Implements the Runtime protocol without any real backend."""
 
     def __init__(self, entry: dict, *, context: int = 4096,
-                 threads=None, **_kw) -> None:
+                 threads=None, chat_delay: float = 0.0, **_kw) -> None:
         self.entry = entry
         self.context = context
         self.threads = threads
+        self.chat_delay = chat_delay
         self._loaded = False
         self.chats: list[dict] = []
         self.fail_with: str | None = None
@@ -48,6 +51,8 @@ class FakeRuntime:
         if self.fail_with:
             raise RuntimeError(self.fail_with)
         self.chats.append(body)
+        if self.chat_delay:
+            time.sleep(self.chat_delay)
         return {"id": "chatcmpl-fake", "object": "chat.completion",
                 "model": body.get("model", "fake-model"),
                 "choices": [{"index": 0,
@@ -249,6 +254,103 @@ class GatewayTest(unittest.TestCase):
         body = json.loads(raw)
         self.assertEqual(body["scheduler"]["active"], 0)
         self.assertEqual(body["scheduler"]["admitted"], 1)
+
+    # ------------------------------------------------------------ scheduling
+
+    def _wait_for(self, predicate, timeout: float = 5.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            time.sleep(0.01)
+        return predicate()
+
+    def _async_chat(self, gw: HostGateway, body: dict):
+        result: dict = {}
+
+        def run():
+            result["resp"] = self.post_json(gw, "/v1/chat/completions", body)
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        return thread, result
+
+    def test_concurrent_chats_serialise_and_queue_is_visible(self):
+        gw = self.start_gateway()
+        gw.runtime.chat_delay = 0.4
+        body = {"model": "fake-model",
+                "messages": [{"role": "user", "content": "hi"}]}
+
+        t1, r1 = self._async_chat(gw, body)
+        self.assertTrue(self._wait_for(
+            lambda: gw.health_body()["scheduler"]["active"] == 1),
+            "first request never became active")
+
+        t2, r2 = self._async_chat(gw, body)
+        self.assertTrue(self._wait_for(
+            lambda: gw.health_body()["scheduler"]["queued"] == 1),
+            "second request never queued")
+
+        # Mid-flight: exactly one active (capacity), one queued, honest.
+        snap = gw.health_body()["scheduler"]
+        self.assertEqual(snap["active"], 1)
+        self.assertEqual(snap["queued"], 1)
+        self.assertEqual(snap["capacity"], 1)
+
+        t1.join(timeout=15.0)
+        t2.join(timeout=15.0)
+        self.assertEqual(r1["resp"][0], 200)
+        self.assertEqual(r2["resp"][0], 200)
+
+        snap = gw.health_body()["scheduler"]
+        self.assertEqual(snap["active"], 0)
+        self.assertEqual(snap["queued"], 0)
+        self.assertEqual(snap["admitted"], 2)
+        self.assertEqual(json.loads(self.get(gw, "/profile")[2])["seq"], 2)
+
+    def test_full_queue_answers_429_with_retry_after(self):
+        gw = self.start_gateway(max_queue=0)
+        gw.runtime.chat_delay = 0.5
+        body = {"model": "fake-model",
+                "messages": [{"role": "user", "content": "hi"}]}
+
+        t1, r1 = self._async_chat(gw, body)
+        self.assertTrue(self._wait_for(
+            lambda: gw.health_body()["scheduler"]["active"] == 1))
+
+        status, headers, raw = self.post_json(gw, "/v1/chat/completions", body)
+        self.assertEqual(status, 429)
+        err = json.loads(raw)["error"]
+        self.assertEqual(err["code"], "queue_full")
+        self.assertEqual(err["type"], "rate_limit_error")
+        self.assertIn("busy", err["message"])
+        self.assertEqual(headers.get("Retry-After"), "1")
+        self.assertEqual(gw.health_body()["scheduler"]["rejected"], 1)
+
+        t1.join(timeout=15.0)
+        self.assertEqual(r1["resp"][0], 200)  # the in-flight one still ran
+
+    def test_queue_timeout_answers_504_with_wait_report(self):
+        gw = self.start_gateway(queue_timeout=0.3)
+        gw.runtime.chat_delay = 1.0
+        body = {"model": "fake-model",
+                "messages": [{"role": "user", "content": "hi"}]}
+
+        t1, r1 = self._async_chat(gw, body)
+        self.assertTrue(self._wait_for(
+            lambda: gw.health_body()["scheduler"]["active"] == 1))
+
+        status, _, raw = self.post_json(gw, "/v1/chat/completions", body)
+        self.assertEqual(status, 504)
+        err = json.loads(raw)["error"]
+        self.assertEqual(err["code"], "queue_timeout")
+        self.assertIn("waited", err["message"])
+        self.assertIn("host queue", err["message"])
+        self.assertEqual(gw.health_body()["scheduler"]["timed_out"], 1)
+
+        t1.join(timeout=15.0)
+        self.assertEqual(r1["resp"][0], 200)
+        self.assertEqual(gw.health_body()["scheduler"]["active"], 0)
 
     # ------------------------------------------------------- unimplemented
 

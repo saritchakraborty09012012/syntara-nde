@@ -24,6 +24,8 @@ from typing import Any, Callable
 from urllib.parse import unquote
 
 from .library import ModelLibrary
+from .scheduler import (DEFAULT_MAX_QUEUE, DEFAULT_QUEUE_TIMEOUT, QueueFull,
+                        QueueTimeout, Scheduler)
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
@@ -101,7 +103,10 @@ class HostGateway:
                  api_key: str | None = None,
                  cors_origins: tuple[str, ...] | None = None,
                  runtime_factory: RuntimeFactory | None = None,
-                 startup_timeout: float = 120.0) -> None:
+                 startup_timeout: float = 120.0,
+                 scheduler: Scheduler | None = None,
+                 max_queue: int = DEFAULT_MAX_QUEUE,
+                 queue_timeout: float = DEFAULT_QUEUE_TIMEOUT) -> None:
         self.entry = dict(entry)
         self.library = library
         self.host = host
@@ -114,12 +119,12 @@ class HostGateway:
         self._threads = threads
         self._startup_timeout = startup_timeout
         self._runtime_factory = runtime_factory
+        self.scheduler = scheduler or Scheduler(max_queue=max_queue,
+                                                queue_timeout=queue_timeout)
         self.runtime: Any | None = None
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._state_lock = threading.Lock()
-        self._active = 0
-        self._admitted = 0
         self._seq = 0
         self._turns: list[dict[str, Any]] = []
         self.last_error: str | None = None
@@ -213,14 +218,11 @@ class HostGateway:
 
     def health_body(self) -> dict[str, Any]:
         runtime_alive = self.runtime is not None and self.runtime.loaded
-        with self._state_lock:
-            active, admitted = self._active, self._admitted
         status = "ok" if runtime_alive else "degraded"
         body: dict[str, Any] = {
             "status": status,
             "model": self.served_model_id,
-            "scheduler": {"capacity": 1, "active": active, "queued": 0,
-                          "admitted": admitted},
+            "scheduler": self.scheduler.snapshot(),
             "hwinfo": _hwinfo(),
         }
         if self.runtime is not None:
@@ -258,18 +260,17 @@ class HostGateway:
                           "server_error", "runtime_not_ready")
             return
 
-        with self._state_lock:
-            self._active += 1
-            self._admitted += 1
-        started = time.monotonic()
+        # Admission control: capacity/queue policy lives in the scheduler, so
+        # a saturated host answers 429 (queue full) or 504 (waited too long)
+        # instead of stalling a socket until the client gives up.
         try:
-            if body.get("stream"):
-                respond.stream(self.runtime.stream(body))
-            else:
-                result = self.runtime.chat(body)
-                self._record_turn(time.monotonic() - started,
-                                  result.get("usage") if isinstance(result, dict) else None)
-                respond.json(200, result)
+            with self.scheduler.admit():
+                self._run_chat(body, respond)
+        except QueueFull as exc:
+            respond.error(429, str(exc), "rate_limit_error", "queue_full",
+                          extra_headers={"Retry-After": "1"})
+        except QueueTimeout as exc:
+            respond.error(504, str(exc), "server_error", "queue_timeout")
         except Exception as exc:  # noqa: BLE001 - mapped to an honest error
             self.last_error = str(exc)
             if not respond.streaming:
@@ -281,9 +282,18 @@ class HostGateway:
                     pass  # the client vanished; nothing left to tell it
             # Once streaming started, the connection is already committed;
             # respond.stream() has handled the failure itself.
-        finally:
-            with self._state_lock:
-                self._active -= 1
+
+    def _run_chat(self, body: dict[str, Any], respond: "_Responder") -> None:
+        """Execute one admitted request (scheduler slot already held)."""
+        started = time.monotonic()
+        if body.get("stream"):
+            respond.stream(self.runtime.stream(body))
+        else:
+            result = self.runtime.chat(body)
+            self._record_turn(time.monotonic() - started,
+                              result.get("usage") if isinstance(result, dict)
+                              else None)
+            respond.json(200, result)
 
     def models_list(self) -> dict[str, Any]:
         return {
@@ -321,22 +331,26 @@ class _Responder:
             self.h.send_header("Access-Control-Allow-Headers",
                                "content-type, authorization, x-request-id")
 
-    def json(self, status: int, obj: Any) -> None:
+    def json(self, status: int, obj: Any, *,
+             extra_headers: dict[str, str] | None = None) -> None:
         payload = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.h.send_response(status)
         self.h.send_header("Content-Type", "application/json")
         self.h.send_header("Content-Length", str(len(payload)))
+        for key, value in (extra_headers or {}).items():
+            self.h.send_header(key, value)
         self._cors()
         self.h.end_headers()
         self.h.wfile.write(payload)
 
     def error(self, status: int, message: str, err_type: str, code: str,
-              *, detail: str = "") -> None:
+              *, detail: str = "",
+              extra_headers: dict[str, str] | None = None) -> None:
         err: dict[str, Any] = {"message": message, "type": err_type,
                                "code": code}
         if detail:
             err["detail"] = detail
-        self.json(status, {"error": err})
+        self.json(status, {"error": err}, extra_headers=extra_headers)
 
     def stream(self, frames: Any) -> None:
         """Write SSE frames from the runtime; close the connection at the end."""

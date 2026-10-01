@@ -171,6 +171,12 @@ syntara serve --model qwen --port 9000 --context 8192
 - Endpoints the host does not implement yet (`/v1/completions`,
   `/v1/messages`, `/v1/brio`, `/experts`) answer HTTP 501 with
   `code: not_implemented` rather than pretending.
+- One generation runs at a time (one backend process); extra requests wait
+  FIFO for up to 16 slots and at most 20 s. A full queue answers `429`
+  (`code: queue_full`, `Retry-After: 1`); an exceeded wait answers `504`
+  (`code: queue_timeout`) saying how long it waited. `GET /health` reports
+  the real counters: `capacity`, `active`, `queued`, `admitted`,
+  `rejected`, `timed_out`.
 - The runtime backend is the pinned llama.cpp server binary, fetched by
   `tools/fetch_llama_cpp.ps1` (URL + SHA-256 checked) or located via
   `SYNTARA_LLAMA_BIN`; without it, `serve --model` exits `1` with install

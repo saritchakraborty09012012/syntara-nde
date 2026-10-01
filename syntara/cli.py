@@ -373,7 +373,11 @@ def _cmd_health(client: Syntara, args: argparse.Namespace) -> int:
         scheduler = body.get("scheduler")
         if isinstance(scheduler, dict):
             print(f"scheduler: capacity={scheduler.get('capacity')} "
-                  f"queued={scheduler.get('queued')} admitted={scheduler.get('admitted')}")
+                  f"active={scheduler.get('active')} "
+                  f"queued={scheduler.get('queued')} "
+                  f"admitted={scheduler.get('admitted')} "
+                  f"rejected={scheduler.get('rejected')} "
+                  f"timed_out={scheduler.get('timed_out')}")
         hwinfo = body.get("hwinfo")
         if isinstance(hwinfo, dict):
             print(f"hardware: {hwinfo.get('cpu', '?')} / {hwinfo.get('gpu', '?')} "
