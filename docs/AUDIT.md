@@ -136,27 +136,30 @@ vitest tests pass after the family rename, and the Python SDK
 | Phase | Deliverable | Exit criterion |
 |---|---|---|
 | **0 — Audit & gate** (this doc) | audit docs, name gate + tests + CI, licence records, purge | name gate green locally **and** tests pass; committed |
-| **1 — Engine bring-up** | 1a: GGUF inspector (metadata/quants/compat) → **1d: embedded-CPython packaging verified on Windows first** → 1b: host library + gateway → 1c: scheduler | a local GGUF file can be inspected, loaded and streamed through the host on Windows, via a packaged build |
+| **1 — Engine bring-up** | **1d: embedded-CPython packaging verified on Windows first (done — `docs/experiments/phase1d-embed-cpython.md`)** → 1a: GGUF inspector (metadata/quants/compat) → 1b: host library + gateway → 1c: scheduler | a local GGUF file can be inspected, loaded and streamed through the host on Windows, via a packaged build |
 | **2 — Chat product** | unified chat UX over the host (streaming, cancel, model picker, lifecycle states with a real producer) | chat works offline against the packaged app end-to-end |
 | **3 — Agent product** | real tool loop (file/shell/git) behind explicit permissions, sharing the chat session store | one product: Chat and Agent modes share conversations/state; agent tools run and are gated |
 | **4 — Integrations** | OpenAI-compatible surface documentation + Python SDK against the real host; integration thinness check | SDK + endpoint tests pass against the packaged host |
 | **5 — Polish & release** | lifecycle observability, error-recovery copy, cross-platform pass, docs sync | checklist from `AGENTS.md` §115 satisfied |
 
-Phase 1 order note: **1d (packaging verification) precedes 1b/1c** so the
-host is only built once the embedding strategy is proven.
+Phase 1 order note: **1d (packaging verification) was executed first, before
+1a/1b/1c**, so the host is only built on a proven embedding strategy.
 
 ---
 
-## 6. Verification ledger (Phase 0)
+## 6. Verification ledger (Phase 0 + 1d)
 
 | Check | Result |
 |---|---|
-| `python tools/check_names.py` (whole tree, incl. dist) | **ran — clean (1007 files)** |
+| `python tools/check_names.py` (whole tree, incl. dist) | **ran — clean (1009 files)** |
 | `python -m unittest syntara.tests.test_name_purge` | **ran — 4/4 pass** |
 | `npm --prefix web run build` (`tsc -b && vite build`) | **ran — exit 0** |
 | `npm --prefix site run build` | **ran — exit 0** |
 | `npm --prefix web run test` (vitest) | **ran — 72/72 pass** |
 | CI `name-purge` job | **added; not run locally** (runs on push/PR) |
+| Phase 1d packaging probe: embeddable `python.exe` + hidden `pythonw.exe`, stripped PATH | **ran — 9/9 checks, exit 0** |
+| Phase 1d packaging probe: embeddable + pip + pure-Python dependency | **ran — dependency resolves from the bundle** |
+| Phase 1d packaging probe: PyInstaller onedir (fallback route) | **ran — exit 0, 20.4 MB bundle** |
 | Engine build (`make -C c check`) | **not run in this pass** (unchanged by Phase 0 edits except three comments) |
 | Real-model inference smoke | **not run** (no model fixture selected yet — Phase 1) |
 
