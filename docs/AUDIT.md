@@ -136,7 +136,7 @@ vitest tests pass after the family rename, and the Python SDK
 | Phase | Deliverable | Exit criterion |
 |---|---|---|
 | **0 — Audit & gate** (this doc) | audit docs, name gate + tests + CI, licence records, purge | name gate green locally **and** tests pass; committed |
-| **1 — Engine bring-up** | **1d: embedded-CPython packaging verified on Windows first (done — `docs/experiments/phase1d-embed-cpython.md`)** → 1a: GGUF inspector (metadata/quants/compat) → 1b: host library + gateway → 1c: scheduler | a local GGUF file can be inspected, loaded and streamed through the host on Windows, via a packaged build |
+| **1 — Engine bring-up** | **1d: embedded-CPython packaging verified on Windows first (done — `docs/experiments/phase1d-embed-cpython.md`)** → **1a: GGUF inspector (done — `syntara/gguf_inspect.py`, `syntara inspect`)** → 1b: host library + gateway → 1c: scheduler | a local GGUF file can be inspected, loaded and streamed through the host on Windows, via a packaged build |
 | **2 — Chat product** | unified chat UX over the host (streaming, cancel, model picker, lifecycle states with a real producer) | chat works offline against the packaged app end-to-end |
 | **3 — Agent product** | real tool loop (file/shell/git) behind explicit permissions, sharing the chat session store | one product: Chat and Agent modes share conversations/state; agent tools run and are gated |
 | **4 — Integrations** | OpenAI-compatible surface documentation + Python SDK against the real host; integration thinness check | SDK + endpoint tests pass against the packaged host |
@@ -147,11 +147,11 @@ Phase 1 order note: **1d (packaging verification) was executed first, before
 
 ---
 
-## 6. Verification ledger (Phase 0 + 1d)
+## 6. Verification ledger (Phase 0 + 1d + 1a)
 
 | Check | Result |
 |---|---|
-| `python tools/check_names.py` (whole tree, incl. dist) | **ran — clean (1009 files)** |
+| `python tools/check_names.py` (whole tree, incl. dist) | **ran — clean (1009 files; 1013 after Phase 1a)** |
 | `python -m unittest syntara.tests.test_name_purge` | **ran — 4/4 pass** |
 | `npm --prefix web run build` (`tsc -b && vite build`) | **ran — exit 0** |
 | `npm --prefix site run build` | **ran — exit 0** |
@@ -160,6 +160,11 @@ Phase 1 order note: **1d (packaging verification) was executed first, before
 | Phase 1d packaging probe: embeddable `python.exe` + hidden `pythonw.exe`, stripped PATH | **ran — 9/9 checks, exit 0** |
 | Phase 1d packaging probe: embeddable + pip + pure-Python dependency | **ran — dependency resolves from the bundle** |
 | Phase 1d packaging probe: PyInstaller onedir (fallback route) | **ran — exit 0, 20.4 MB bundle** |
+| Phase 1a: `syntara.inspect` unit suite (main env, `python -m unittest`) | **ran — 13/13 pass; 2 quant-oracle tests skipped (gguf package not installed there)** |
+| Phase 1a: same suite in a temp venv with the official `gguf` package installed | **ran — 15/15 pass (oracle tests execute there)** |
+| Phase 1a: cross-validation — official `gguf` writer → Syntara reader (shapes, bytes, type ids, counts, KVs) | **ran — 0 mismatches** |
+| Phase 1a: `GGML_QUANT_SIZES` table cross-check | **ran — 0 mismatches after fixing 3 transcription errors the oracle caught (`q8_1` size, missing `tq1_0`/`tq2_0`)** |
+| Phase 1a: `python -m py_compile syntara/gguf_inspect.py syntara/cli.py syntara/tests/test_gguf_inspect.py` | **ran — exit 0** |
 | Engine build (`make -C c check`) | **not run in this pass** (unchanged by Phase 0 edits except three comments) |
 | Real-model inference smoke | **not run** (no model fixture selected yet — Phase 1) |
 

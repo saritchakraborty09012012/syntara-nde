@@ -276,6 +276,35 @@ def _cmd_profile(client: Syntara, args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_inspect(args: argparse.Namespace) -> int:
+    from .gguf_inspect import inspect_file  # deferred: keeps `syntara --help` light
+
+    report = inspect_file(args.path)
+    if args.json:
+        print(json.dumps(report, indent=2, default=str, ensure_ascii=False))
+        return 0
+    fmt = report["format"]
+    model = report["model"]
+    tens = report["tensors"]
+    est = report["estimates"]
+    print(f"GGUF v{fmt['version']}  {report['path']}")
+    print(f"  model        : {model['name'] or '-'}  "
+          f"(arch={model['architecture']}, ctx={model['context_length'] or '?'})")
+    quants = ", ".join(f"{k}x{v}" for k, v in tens["by_type"].items())
+    print(f"  tensors      : {tens['count']}  "
+          f"({est['params_billion']}B params, weights {est['weight_mb']} MB)")
+    print(f"  quantizations: {quants or '-'}")
+    print(f"  file         : {est['file_mb']} MB"
+          + (f", est. RAM >= {est['ram_gb_min']} GB" if est["ram_gb_min"] else ""))
+    if not report["data_complete"]:
+        print("  DATA INCOMPLETE: file is truncated or still downloading")
+    for b in report["compatibility"]["badges"]:
+        print(f"  [{b['level']:5}] {b['id']}: {b['message']}")
+    for w in report["warnings"]:
+        print(f"  warning: {w}")
+    return 0
+
+
 def _common_options() -> argparse.ArgumentParser:
     # default=argparse.SUPPRESS so a subparser can never clobber a value the
     # main parser already parsed from the command line (argparse re-applies
@@ -333,6 +362,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("serve", parents=[common],
                    help="Print the local endpoint the CLI talks to")
 
+    inspect = sub.add_parser("inspect", parents=[common],
+                             help="Inspect a local GGUF file (metadata, quants, compatibility)")
+    inspect.add_argument("path", help="path to a .gguf model file")
+
     sub.add_parser("health", parents=[common], help="Read local runtime health")
     sub.add_parser("profile", parents=[common], help="Read per-turn runtime telemetry")
 
@@ -379,6 +412,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_agents(client, args)
         if args.command == "serve":
             return _cmd_serve(client, args)
+        if args.command == "inspect":
+            return _cmd_inspect(args)
         if args.command == "health":
             return _cmd_health(client, args)
         if args.command == "profile":

@@ -94,6 +94,9 @@ syntara models get qwen
 syntara models search qwen
 syntara models run qwen        # confirm the model is served right now
 
+syntara inspect model.gguf     # metadata, quants, size estimate, badges
+syntara inspect model.gguf --json
+
 syntara chat                   # interactive (streaming REPL)
 syntara chat "ask me anything" # one-shot
 syntara chat --model qwen "..."
@@ -114,10 +117,32 @@ syntara backup restore <archive> [--include chats,projects] [--no-merge]
 ```
 
 Add `--json` anywhere for machine-readable output. Exit codes: `0` success,
-`1` runtime/connection error, `2` usage error or unsupported verb.
+`1` runtime/connection or file-format error, `2` usage error or unsupported
+verb.
 
 Global flags: `--base-url`, `--api-key`, `--data-dir`, `--json`,
 `--version`.
+
+### Inspecting a model file
+
+`syntara inspect <file.gguf>` reads only the GGUF header (key-value metadata
+and tensor information) plus bounded slices of the data section, so a
+multi-gigabyte model is reported in milliseconds without loading it. It needs
+no runtime and makes no network calls. The report includes:
+
+- format (version, alignment), architecture, name, context length;
+- tensor count, parameters, bytes per quantization type;
+- a rough minimum-RAM estimate (weights × 1.25, documented in the report);
+- tokenizer size and chat-template presence;
+- compatibility badges that distinguish `ok` / `warn` / `error` for:
+  format integrity, data completeness, the Phase-1 dense policy
+  (architecture and quantization), runtime support, and chat template.
+
+Badges never overstate: an architecture outside the current policy scope is
+reported as `warn` ("not in the approved scope"), not as broken. A truncated
+or corrupt file produces a clear structural error on stderr (exit `1`)
+naming what failed and where. Use `--json` for the full machine-readable
+report (large arrays are summarised, not dumped).
 
 ### What the CLI does not do (and why)
 
