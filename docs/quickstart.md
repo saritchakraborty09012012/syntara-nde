@@ -194,7 +194,7 @@ SYNTARA_MODEL=/d/glm52_i4 ./syntara chat
 Useful first commands:
 
 ```bash
-SYNTARA_MODEL=/nvme/glm52_i4 ./syntara doctor   # read-only check: is everything ready?
+SYNTARA_MODEL=/nvme/glm52_i4 ./syntara doctor   # read-only apart from its own hardware profile cache
 SYNTARA_MODEL=/nvme/glm52_i4 ./syntara plan     # shows where the model will live (RAM/disk/GPU)
 SYNTARA_MODEL=/nvme/glm52_i4 ./syntara chat --topp 0.85   # faster: reads less from disk, same quality
 ```

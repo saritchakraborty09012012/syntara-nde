@@ -21,7 +21,7 @@ Flags may also be given **after** the subcommand. Most flags map onto an engine 
 | `build` | Build/prepare the engine. |
 | `info` | Print model / build info. |
 | `plan` | Show the computed RAM/VRAM placement plan (`--json` for machine-readable). |
-| `doctor` | Environment/health check (`--json` report, `--deep` strict preflight). |
+| `doctor` | Environment/health check (`--json` report, `--deep` strict preflight, `--reprofile` fresh hardware probe). |
 | `tune` | Measure and save the fastest quality-preserving execution profile for this machine/model. |
 | `run "<prompt>"` | One-shot generation for the given prompt (positional, may be multi-word). |
 | `chat` | Interactive REPL chat. |
@@ -87,6 +87,11 @@ and tail-latency gates prevent a decode-only win from degrading real chat.
 layout, filename-declared shard completeness, required core tensors, an
 optional model index, and runtime-equivalent size/header admission for
 `SYNTARA_MODEL_MIRROR`. It does not hash tensor payloads or load the engine.
+Every report also carries a `hardware` profile — CPU model/cores, ISA flags,
+installed and available RAM, GPUs, battery/AC state, and a bounded disk
+bench — cached at `LOCALAPPDATA\syntara\profile.json` (Windows) or
+`~/.config/syntara/profile.json` and re-probed after 7 days, under memory
+pressure (free RAM below 15% of total), or with `--reprofile`.
 
 ---
 

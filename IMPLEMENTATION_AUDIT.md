@@ -358,14 +358,14 @@ Downstreams follow:
 - `test_family_registry.py::test_the_site_shows_the_version_and_every_family` —
   `site/index.html` no longer contains the `Currently shipping <b>v…</b>`
   marker. Both are documentation/site contracts unrelated to the launcher.
-- 7 errors, all host-only and absent on CI (UTF-8 locale / enough disk):
-  `test_glm53_cap_launch_source` (whole module) and
-  `test_openai_tools_v41_e2e` (2 cases) call `.read_text()` without an
-  encoding, so cp1252 chokes on the tree's UTF-8 files — in particular the
-  first now reads the restored `c/syntara` and, under UTF-8, validates the
-  glm53 `cap_for_launch` launch form it contains; `test_resource_plan`
+- 7 errors, all host-only and absent on CI (UTF-8 locale / enough disk) —
+  re-verified during the scheduler/profiler work: `test_rans_repack` fails
+  with a cp1252 byte (0x97) in a captured subprocess stream breaking the
+  UTF-8 reader thread, byte-identical on a clean checkout; `test_resource_plan`
   (3 cases) hits `OSError [Errno 28] No space left on device` writing
-  safetensors fixtures to TEMP on this host.
+  safetensors fixtures to TEMP on C: (redirect TEMP to D: and they pass).
+  The previously listed `test_glm53_cap_launch_source` /
+  `test_openai_tools_v41_e2e` locale errors now pass under `-X utf8`.
 
 ### NOT RUN (host is Windows, no make/gcc/clang/rust/Docker/nix)
 

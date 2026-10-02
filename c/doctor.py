@@ -5,13 +5,18 @@ import os
 import sys
 import json
 import re
+import platform
+import ctypes
 import subprocess
+import tempfile
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from family_registry import (FamilyConfigError, PlannerUnsupportedError, UnknownFamilyError,
                              public_metadata, resolve_model)
-from resource_plan import (GB, SSD_PROBE_PENDING, build_plan, discover_gpus, format_plan,
-                           memory_available)
+from resource_plan import (GB, SSD_PROBE_PENDING, build_plan, discover_gpus, format_bytes,
+                           format_plan, memory_available, physical_cpu_count)
 
 SAFETENSORS_MAX_HEADER = 512 << 20
 MODEL_INDEX_MAX_BYTES = SAFETENSORS_MAX_HEADER
@@ -539,10 +544,433 @@ def missing_shared_libraries(engine_path):
                    for line in result.stdout.splitlines() if "not found" in line})
 
 
+# --- hardware profile (plan track 1b): cached machine probes -------------------
+# The profile answers "what machine is this running on?" once and remembers it.
+# It is re-probed on TTL expiry, on demand (--reprofile), and under memory
+# pressure, where cached disk/battery numbers no longer describe the machine
+# as it behaves right now.
+
+PROFILE_SCHEMA = 1
+PROFILE_TTL_SECONDS = 7 * 24 * 3600
+#: Free-RAM fraction below which a cached profile is considered stale: under
+#: contention, disk timing and availability move, so describe the machine now.
+PROFILE_PRESSURE_RATIO = 0.15
+
+
+def profile_cache_path(profile_dir=None):
+    """Machine profile location; mirrors autotune's config-root rule."""
+    if profile_dir:
+        root = Path(profile_dir).expanduser()
+    elif os.name == "nt":
+        root = Path(os.environ.get("LOCALAPPDATA", "~/AppData/Local")).expanduser() / "syntara"
+    else:
+        root = Path(os.environ.get("XDG_CONFIG_HOME", "~/.config")).expanduser() / "syntara"
+    return root / "profile.json"
+
+
+def probe_isa():
+    """CPU instruction-set features, honest about how each one was learned.
+
+    Every branch is best-effort: an unreadable source yields `error` on the
+    result instead of raising, because a broken probe must not break doctor."""
+    machine = (platform.machine() or "").lower()
+    if machine in ("aarch64", "arm64", "armv7l", "armv8l"):
+        arch = "arm"
+    elif machine in ("x86_64", "amd64", "i386", "i686"):
+        arch = "x86"
+    else:
+        arch = machine or "unknown"
+    result = {"arch": arch}
+    try:
+        if sys.platform == "win32":
+            result["method"] = "windows-api"
+            k32 = ctypes.windll.kernel32
+            feature_ids = {"sse": 6, "sse2": 10, "sse3": 13,
+                           "avx": 39, "avx2": 40, "avx512f": 41}
+            if arch == "arm":
+                feature_ids = {"neon": 29}  # PF_ARM_V8_INSTRUCTIONS_AVAILABLE
+            for name, feature in feature_ids.items():
+                result[name] = bool(k32.IsProcessorFeaturePresent(feature))
+        elif sys.platform == "darwin":
+            if arch == "arm":
+                # NEON/ASIMD is architecturally mandatory on AArch64; Apple has
+                # shipped no SVE part, but absence of evidence stays None.
+                result["method"] = "arm64-baseline"
+                result["neon"] = True
+            else:
+                result["method"] = "sysctl"
+                tokens = set()
+                for key in ("machdep.cpu.features", "machdep.cpu.leaf7_features"):
+                    run = subprocess.run(["sysctl", "-n", key], capture_output=True,
+                                         text=True, timeout=5, check=False)
+                    if run.returncode == 0:
+                        tokens.update(run.stdout.split())
+                if not tokens:
+                    raise OSError("sysctl returned no feature words")
+                for name in ("SSE", "SSE2", "SSE3", "AVX", "AVX2", "AVX512F"):
+                    key = name.lower()
+                    result[key] = name in tokens
+        else:
+            result["method"] = "proc-cpuinfo"
+            tokens = set()
+            for line in Path("/proc/cpuinfo").read_text(errors="replace").splitlines():
+                key, _, value = line.partition(":")
+                if key.strip().lower() in ("flags", "features"):
+                    tokens.update(value.split())
+            if arch == "arm":
+                result["neon"] = ("asimd" in tokens) or ("neon" in tokens)
+                result["sve"] = "sve" in tokens
+            else:
+                for name in ("sse", "sse2", "sse3", "avx", "avx2", "avx512f"):
+                    result[name] = name in tokens
+    except Exception as error:
+        result.setdefault("method", "unknown")
+        result["error"] = f"{type(error).__name__}: {error}"
+    return result
+
+
+def probe_ram_total():
+    """Installed RAM in bytes; None when the platform will not say."""
+    if sys.platform == "win32":
+        try:
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+
+            status = MEMORYSTATUSEX()
+            status.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return int(status.ullTotalPhys)
+        except Exception:
+            return None
+        return None
+    try:
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
+    except (OSError, ValueError, AttributeError, TypeError):
+        return None
+
+
+def probe_battery():
+    """Battery and AC state; unknown fields stay None instead of guessing."""
+    result = {"method": None, "present": None, "on_ac": None,
+              "percent": None, "charging": None}
+    try:
+        if sys.platform == "win32":
+            result["method"] = "windows-api"
+
+            class SYSTEM_POWER_STATUS(ctypes.Structure):
+                _fields_ = [("ACLineStatus", ctypes.c_ubyte), ("BatteryFlag", ctypes.c_ubyte),
+                            ("BatteryLifePercent", ctypes.c_ubyte), ("SystemStatusFlag", ctypes.c_ubyte),
+                            ("BatteryLifeTime", ctypes.c_uint), ("BatteryFullLifeTime", ctypes.c_uint)]
+
+            status = SYSTEM_POWER_STATUS()
+            if not ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(status)):
+                raise OSError("GetSystemPowerStatus failed")
+            result["on_ac"] = {0: False, 1: True}.get(status.ACLineStatus)
+            result["percent"] = (None if status.BatteryLifePercent == 255
+                                 else int(status.BatteryLifePercent))
+            if status.BatteryFlag != 255:
+                result["present"] = not bool(status.BatteryFlag & 128)
+                if result["present"]:
+                    result["charging"] = bool(status.BatteryFlag & 8)
+        elif sys.platform == "darwin":
+            result["method"] = "pmset"
+            run = subprocess.run(["pmset", "-g", "batt"], capture_output=True,
+                                 text=True, timeout=5, check=False)
+            if run.returncode != 0:
+                raise OSError(f"pmset exited {run.returncode}")
+            head = run.stdout.splitlines()[0] if run.stdout else ""
+            result["on_ac"] = (True if "AC Power" in head else
+                               False if "Battery Power" in head else None)
+            result["present"] = "InternalBattery" in run.stdout
+            match = re.search(r"(\d+)%", run.stdout)
+            result["percent"] = int(match.group(1)) if match else None
+        else:
+            result["method"] = "sysfs"
+            supply = Path("/sys/class/power_supply")
+            try:
+                entries = sorted(supply.iterdir())
+            except OSError as error:
+                result["error"] = str(error)
+                entries = []
+            for entry in entries:
+                try:
+                    kind = (entry / "type").read_text().strip()
+                except OSError:
+                    continue
+                if kind == "Battery":
+                    result["present"] = True
+                    try:
+                        result["percent"] = int((entry / "capacity").read_text().strip())
+                    except (OSError, ValueError):
+                        pass
+                    try:
+                        state = (entry / "status").read_text().strip()
+                        result["charging"] = state == "Charging"
+                        if state == "Discharging":
+                            result["on_ac"] = False
+                    except OSError:
+                        pass
+                elif kind == "Mains":
+                    try:
+                        result["on_ac"] = (entry / "online").read_text().strip() == "1"
+                    except OSError:
+                        pass
+            if result["present"] is None and not entries:
+                result["present"] = False  # no supply entries at all: AC-only box
+    except Exception as error:
+        result.setdefault("method", "unknown")
+        result["error"] = f"{type(error).__name__}: {error}"
+    return result
+
+
+def disk_bench(directory=None, size_mb=16):
+    """Bounded write/read sample; reports the file size it actually measured."""
+    target = Path(directory).expanduser() if directory else Path(tempfile.gettempdir())
+    size = max(1, int(size_mb)) << 20
+    # Non-zero pattern: filesystems that could store this sparsely must not.
+    chunk = b"\xa5" * (1 << 20)
+    path = target / f"syntara_bench_{os.getpid()}_{time.time_ns()}.bin"
+    result = {"method": "file-sample", "bytes": 0,
+              "sample_mb": round(size / (1 << 20), 1),
+              "write_mbps": None, "read_mbps": None}
+    try:
+        written = 0
+        start = time.perf_counter()
+        with open(path, "wb") as stream:
+            while written < size:
+                block = chunk[:min(len(chunk), size - written)]
+                stream.write(block)
+                written += len(block)
+            stream.flush()
+            os.fsync(stream.fileno())
+        elapsed = time.perf_counter() - start
+        result["bytes"] = written
+        if elapsed > 0:
+            result["write_mbps"] = round(written / 1e6 / elapsed, 1)
+        start = time.perf_counter()
+        read = 0
+        with open(path, "rb") as stream:
+            while True:
+                block = stream.read(1 << 20)
+                if not block:
+                    break
+                read += len(block)
+        elapsed = time.perf_counter() - start
+        if elapsed > 0:
+            result["read_mbps"] = round(read / 1e6 / elapsed, 1)
+    except OSError as error:
+        result["error"] = f"{type(error).__name__}: {error}"
+    finally:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+    return result
+
+
+def _probe_hardware_profile(available, gpus, bench_dir, bench_mb):
+    try:
+        cores = physical_cpu_count()
+    except Exception:
+        cores = None
+    return {
+        "schema": PROFILE_SCHEMA,
+        "probed_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "cpu": {"model": platform.processor() or platform.machine() or "unknown",
+                "machine": platform.machine() or None,
+                "physical_cores": cores},
+        "isa": probe_isa(),
+        "ram": {"total_bytes": probe_ram_total(), "available_bytes": available},
+        "gpus": [{"index": gpu.get("index"), "name": gpu.get("name"),
+                  "total_bytes": gpu.get("total_bytes")}
+                 for gpu in (gpus or [])],
+        "battery": probe_battery(),
+        "disk": {"bench": disk_bench(bench_dir, bench_mb)},
+    }
+
+
+def _iso_epoch(stamp):
+    try:
+        return datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def _write_profile(path, profile):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            json.dump(profile, stream, indent=2, sort_keys=True)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+
+
+def machine_profile(*, cache_path=None, force=False, available=None, gpus=None,
+                    now=None, ttl=PROFILE_TTL_SECONDS, bench_dir=None, bench_mb=16):
+    """Machine profile, cached on disk and re-probed under TTL/force/pressure.
+
+    cache_path=None uses the default location; cache_path=False disables
+    persistence entirely (pure read-only callers). The returned dict is
+    JSON-serializable and carries `source` plus, on refresh, `refresh_reason`."""
+    if cache_path is False:
+        path = None
+    elif cache_path:
+        path = Path(cache_path).expanduser()
+    else:
+        path = profile_cache_path()
+    cached = None
+    if path is not None:
+        try:
+            candidate = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(candidate, dict) and candidate.get("schema") == PROFILE_SCHEMA:
+                cached = candidate
+        except (OSError, ValueError):
+            cached = None
+    if gpus is None:
+        try:
+            gpus = discover_gpus()
+        except Exception:
+            gpus = []
+    if available is None:
+        available = memory_available()
+    total = probe_ram_total()
+    moment = time.time() if now is None else now
+    cached_epoch = None if cached is None else _iso_epoch(cached.get("probed_at"))
+    age = None if cached_epoch is None else moment - cached_epoch
+    pressure = (total not in (None, 0) and available is not None
+                and available < total * PROFILE_PRESSURE_RATIO)
+    if cached is not None and age is not None and age <= ttl and not pressure and not force:
+        served = dict(cached)
+        served["source"] = "cache"
+        # The refresh reason belongs to the probe event; a cache hit did not
+        # re-profile, and saying so would contradict "profile cache" above it.
+        served.pop("refresh_reason", None)
+        served["age_seconds"] = round(max(0.0, age), 1)
+        if available is not None:
+            served.setdefault("ram", {})
+            served["ram"]["available_bytes"] = available  # volatile; always current
+        return served
+    profile = _probe_hardware_profile(available, gpus, bench_dir, bench_mb)
+    profile["source"] = "fresh"
+    if cached is not None and cached_epoch is not None:
+        profile["refresh_reason"] = ("forced" if force else
+                                     "memory-pressure" if pressure else "ttl-expired")
+    if path is None:
+        profile["cache"] = "disabled"
+    else:
+        try:
+            _write_profile(path, profile)
+            profile["cache"] = "written"
+        except OSError as error:
+            profile["cache"] = f"failed: {type(error).__name__}: {error}"
+    return profile
+
+
+def _isa_label(isa):
+    if not isinstance(isa, dict):
+        return None
+    for label, key in (("AVX-512", "avx512f"), ("AVX2", "avx2"), ("AVX", "avx")):
+        if isa.get(key):
+            return label
+    if isa.get("sve"):
+        return "SVE"
+    if isa.get("neon"):
+        return "NEON"
+    if isa.get("sse2"):
+        return "SSE2"
+    if isa.get("error") or isa.get("method") == "unknown":
+        return "ISA unknown"
+    return None
+
+
+def _battery_label(battery):
+    if not isinstance(battery, dict):
+        return None
+    if battery.get("present") is False:
+        return "no battery · AC power" if battery.get("on_ac") else "no battery"
+    if battery.get("percent") is not None:
+        label = f"battery {battery['percent']}%"
+        if battery.get("charging"):
+            label += " (charging)"
+        elif battery.get("on_ac") is True:
+            label += " · AC power"
+        elif battery.get("on_ac") is False:
+            label += " · on battery"
+        return label
+    if battery.get("present"):
+        return "battery present · state unknown"
+    if battery.get("error") or battery.get("method") == "unknown":
+        return "battery state unavailable"
+    return None
+
+
+def format_hardware(profile):
+    """Compact human view of the hardware profile block (lines)."""
+    cpu = profile.get("cpu") or {}
+    head = cpu.get("model") or "unknown CPU"
+    if cpu.get("physical_cores"):
+        head += f" · {cpu['physical_cores']} cores"
+    isa = _isa_label(profile.get("isa") or {})
+    if isa:
+        head += f" · {isa}"
+    if profile.get("source"):
+        head += f" · profile {profile['source']}"
+    lines = [f"hardware  {head}"]
+    pieces = []
+    ram = profile.get("ram") or {}
+    total, available = ram.get("total_bytes"), ram.get("available_bytes")
+    if total or available:
+        piece = "RAM " + ("unknown" if total is None else format_bytes(total))
+        if available is not None:
+            piece += f" ({format_bytes(available)} free)"
+        pieces.append(piece)
+    gpus = profile.get("gpus") or []
+    if gpus:
+        first = gpus[0]
+        label = first.get("name") or f"GPU {first.get('index')}"
+        if first.get("total_bytes"):
+            label += f" {format_bytes(first['total_bytes'])}"
+        if len(gpus) > 1:
+            label += f" +{len(gpus) - 1} more"
+        pieces.append(f"GPU {label}")
+    elif "gpus" in profile:
+        pieces.append("no supported GPU detected")
+    battery = _battery_label(profile.get("battery"))
+    if battery:
+        pieces.append(battery)
+    bench = (profile.get("disk") or {}).get("bench")
+    if isinstance(bench, dict):
+        if bench.get("read_mbps") is not None and bench.get("write_mbps") is not None:
+            pieces.append(f"disk {bench['read_mbps']:.0f}/{bench['write_mbps']:.0f} MB/s "
+                          f"read/write ({bench.get('sample_mb', '?')} MB sample)")
+        elif bench.get("error"):
+            pieces.append("disk bench unavailable")
+    if profile.get("refresh_reason"):
+        pieces.append(f"re-profiled: {profile['refresh_reason']}")
+    if pieces:
+        lines.append("          " + " · ".join(pieces))
+    if profile.get("source") == "error":
+        lines.append(f"          {profile.get('error', 'unknown error')}")
+    return lines
+
+
 def run_doctor(model, ram_gb=0, context=4096, gpu_indices=None, vram_gb=0, *,
                engine_path, available_memory=None, available_disk=None, gpus=None,
                linkage=None, deep=False, mirror_dir=None, kv_slots=1,
-               engine_error=None):
+               engine_error=None, profile=None, profile_cache=None, reprofile=False):
     """Collect a complete report. No model payload, engine, or CUDA context is loaded."""
     model = Path(model).expanduser().resolve()
     checks = []
@@ -636,6 +1064,20 @@ def run_doctor(model, ram_gb=0, context=4096, gpu_indices=None, vram_gb=0, *,
                              devices=[gpu["index"] for gpu in selected_gpus]))
     else:
         checks.append(_check("accelerator.gpu", "skip", "no supported GPU detected; CPU path is available"))
+
+    if profile is None:
+        try:
+            profile = machine_profile(cache_path=profile_cache, force=reprofile,
+                                      available=available_memory, gpus=detected_gpus)
+        except Exception as error:
+            profile = {"schema": PROFILE_SCHEMA, "source": "error",
+                       "error": f"{type(error).__name__}: {error}"}
+    if profile.get("source") == "error":
+        checks.append(_check("hardware.profile", "warn",
+                             f"hardware profile unavailable: {profile.get('error')}"))
+    else:
+        checks.append(_check("hardware.profile", "pass",
+                             f"hardware profile {profile.get('source', 'injected')}"))
 
     try:
         if resolved is None:
@@ -749,7 +1191,8 @@ def run_doctor(model, ram_gb=0, context=4096, gpu_indices=None, vram_gb=0, *,
     statuses = {item["status"] for item in checks}
     status = "error" if "fail" in statuses else "warning" if "warn" in statuses else "ok"
     return {"schema_version": 1, "status": status, "model": str(model),
-            "mode": "deep" if deep else "standard", "checks": checks, "plan": plan}
+            "mode": "deep" if deep else "standard", "checks": checks, "plan": plan,
+            "hardware": profile}
 
 
 def format_doctor(report):
@@ -760,6 +1203,10 @@ def format_doctor(report):
         lines.append(f"[{icons[check['status']]:>4}] {check['id']:<18} {check['summary']}")
     if report["plan"]:
         lines.extend(["", format_plan(report["plan"])])
+    hardware = report.get("hardware")
+    if hardware:
+        lines.append("")
+        lines.extend(format_hardware(hardware))
     lines.extend(["", f"result {report['status']}"])
     return "\n".join(lines)
 

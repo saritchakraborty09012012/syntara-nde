@@ -1289,6 +1289,7 @@ def cmd_doctor(a):
         kv_slots=requested_kv_slots(a,os.environ),
         engine_error=engine_error,
         mirror_dir=os.environ.get("SYNTARA_MODEL_MIRROR"),
+        reprofile=getattr(a,"reprofile",False),
     )
     print(json.dumps(report,indent=2) if a.json else format_doctor(report))
     return exit_code(report)
@@ -2594,6 +2595,8 @@ def main():
     pd.add_argument("--json",action="store_true",help="emit a versioned JSON report")
     pd.add_argument("--deep",action="store_true",
                     help="strictly check every tensor layout, model index, and configured mirror")
+    pd.add_argument("--reprofile",action="store_true",
+                    help="re-probe hardware now instead of serving the cached machine profile")
     pt=sub.add_parser("tune",parents=[common],
                       description="measure and save the fastest quality-preserving execution profile",
                       help="measure and save the fastest quality-preserving execution profile")

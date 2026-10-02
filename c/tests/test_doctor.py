@@ -5,16 +5,22 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
 from doctor import (
     _tensor_layout,
     deep_container_report,
+    disk_bench,
+    format_doctor,
+    format_hardware,
+    machine_profile,
     missing_core_roles,
     cuda_linkage,
     exit_code,
-    format_doctor,
+    probe_battery,
+    probe_isa,
     run_doctor,
 )
 from resource_plan import GB
@@ -306,6 +312,45 @@ class DoctorTest(unittest.TestCase):
         self.assertIn("disk   0.0 GB cold experts", output)
         self.assertTrue(output.endswith("result ok"))
 
+    def test_hardware_profile_is_probed_and_json_safe(self):
+        report = self.report(profile_cache=str(self.root / "profile.json"))
+        checks = self.checks_by_id(report)
+
+        self.assertIn("hardware", report)
+        self.assertEqual(checks["hardware.profile"]["status"], "pass")
+        self.assertIn(report["hardware"]["source"], ("fresh", "cache"))
+        self.assertIn("method", report["hardware"]["isa"])
+        self.assertIn("total_bytes", report["hardware"]["ram"])
+        json.dumps(report, indent=2, allow_nan=False)
+
+    def test_hardware_profile_text_appears_before_result(self):
+        output = format_doctor(self.report(profile_cache=str(self.root / "profile.json")))
+
+        self.assertIn("hardware", output)
+        self.assertTrue(output.endswith("result ok"))
+
+    def test_injected_hardware_profile_is_reported_verbatim(self):
+        profile = {"source": "injected", "isa": {"method": "test", "avx2": True}}
+        report = self.report(profile=profile)
+
+        self.assertEqual(report["hardware"], profile)
+        check = self.checks_by_id(report)["hardware.profile"]
+        self.assertEqual(check["status"], "pass")
+        self.assertIn("injected", check["summary"])
+
+    def test_hardware_profile_builder_failure_warns_but_never_fails(self):
+        with mock.patch("doctor.machine_profile", side_effect=RuntimeError("probe broke")):
+            report = self.report()
+        checks = self.checks_by_id(report)
+
+        self.assertEqual(checks["hardware.profile"]["status"], "warn")
+        self.assertEqual(report["hardware"]["source"], "error")
+        self.assertIn("probe broke", checks["hardware.profile"]["summary"])
+        # A broken hardware probe degrades the report, never the exit contract:
+        # every model/engine check still passed, so this is a warning, not an error.
+        self.assertEqual(report["status"], "warning")
+        self.assertEqual(exit_code(report), 0)
+
     def test_cli_json_is_machine_readable_without_loading_model(self):
         cli = Path(__file__).parents[1] / "syntara"
         run = subprocess.run([
@@ -520,6 +565,141 @@ class DoctorTest(unittest.TestCase):
         checks = self.checks_by_id(report)
         self.assertEqual(report["mode"], "deep")
         self.assertIn("model.container", checks)
+
+
+class HardwareProfileTest(unittest.TestCase):
+    """Plan track 1b: cached machine profile with TTL and pressure refresh."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.cache = self.root / "profile.json"
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_probe_isa_reports_honest_flags(self):
+        isa = probe_isa()
+
+        self.assertIsInstance(isa, dict)
+        self.assertTrue(isa.get("method"))
+        for key in ("sse", "sse2", "sse3", "avx", "avx2", "avx512f", "neon", "sve"):
+            if key in isa:
+                self.assertIsInstance(isa[key], bool, key)
+
+    def test_probe_battery_shape(self):
+        battery = probe_battery()
+
+        self.assertIsInstance(battery, dict)
+        self.assertTrue(battery.get("method"))
+        self.assertIn(battery.get("on_ac"), (True, False, None))
+        self.assertIn(battery.get("percent"), (None,) + tuple(range(0, 101)))
+
+    def test_disk_bench_measures_and_cleans_up(self):
+        bench = disk_bench(self.root, size_mb=1)
+
+        self.assertNotIn("error", bench)
+        self.assertEqual(bench["bytes"], 1 << 20)
+        self.assertGreater(bench["write_mbps"], 0)
+        self.assertGreater(bench["read_mbps"], 0)
+        self.assertEqual(list(self.root.glob("syntara_bench_*")), [])
+
+    def test_disk_bench_reports_missing_directory(self):
+        bench = disk_bench(self.root / "absent")
+
+        self.assertIn("error", bench)
+        self.assertIsNone(bench["write_mbps"])
+        self.assertIsNone(bench["read_mbps"])
+
+    def test_machine_profile_fresh_then_cached(self):
+        first = machine_profile(cache_path=self.cache, bench_mb=1)
+
+        self.assertEqual(first["source"], "fresh")
+        self.assertEqual(first["cache"], "written")
+        self.assertTrue(self.cache.is_file())
+
+        second = machine_profile(cache_path=self.cache, bench_mb=1)
+
+        self.assertEqual(second["source"], "cache")
+        self.assertEqual(second["isa"], first["isa"])
+        self.assertIn("age_seconds", second)
+        json.dumps(second, allow_nan=False)
+
+    def test_cached_profile_reports_current_availability(self):
+        machine_profile(cache_path=self.cache, bench_mb=1)
+        served = machine_profile(cache_path=self.cache, available=123456789, bench_mb=1)
+
+        self.assertEqual(served["ram"]["available_bytes"], 123456789)
+
+    def test_force_reprofiles_with_reason(self):
+        machine_profile(cache_path=self.cache, bench_mb=1)
+        again = machine_profile(cache_path=self.cache, force=True, bench_mb=1)
+
+        self.assertEqual(again["source"], "fresh")
+        self.assertEqual(again["refresh_reason"], "forced")
+
+    def test_memory_pressure_reprofiles(self):
+        machine_profile(cache_path=self.cache, bench_mb=1)
+        pressed = machine_profile(cache_path=self.cache, available=1, bench_mb=1)
+
+        self.assertEqual(pressed["source"], "fresh")
+        self.assertEqual(pressed["refresh_reason"], "memory-pressure")
+
+    def test_ttl_expiry_reprofiles(self):
+        first = machine_profile(cache_path=self.cache, bench_mb=1)
+        probed = datetime.strptime(first["probed_at"], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc).timestamp()
+
+        later = machine_profile(cache_path=self.cache, now=probed + 8 * 24 * 3600,
+                                bench_mb=1)
+
+        self.assertEqual(later["source"], "fresh")
+        self.assertEqual(later["refresh_reason"], "ttl-expired")
+
+    def test_cache_path_false_disables_persistence(self):
+        profile = machine_profile(cache_path=False, bench_mb=1)
+
+        self.assertEqual(profile["source"], "fresh")
+        self.assertEqual(profile["cache"], "disabled")
+
+    def test_corrupt_cache_falls_back_to_fresh_probe(self):
+        self.cache.write_text("{not json", encoding="utf-8")
+        profile = machine_profile(cache_path=self.cache, bench_mb=1)
+
+        self.assertEqual(profile["source"], "fresh")
+        self.assertNotIn("refresh_reason", profile)
+
+    def test_format_hardware_renders_full_profile(self):
+        profile = {
+            "source": "fresh", "refresh_reason": "memory-pressure",
+            "cpu": {"model": "TestCPU", "physical_cores": 8},
+            "isa": {"method": "test", "avx2": True},
+            "ram": {"total_bytes": 16 * GB, "available_bytes": 8 * GB},
+            "gpus": [],
+            "battery": {"method": "test", "present": True, "on_ac": True,
+                        "percent": 87, "charging": False},
+            "disk": {"bench": {"method": "file-sample", "bytes": 1 << 20,
+                               "sample_mb": 1.0, "write_mbps": 90.0,
+                               "read_mbps": 100.0}},
+        }
+        text = "\n".join(format_hardware(profile))
+
+        self.assertIn("TestCPU", text)
+        self.assertIn("8 cores", text)
+        self.assertIn("AVX2", text)
+        self.assertIn("16.0 GB", text)
+        self.assertIn("8.0 GB free", text)
+        self.assertIn("no supported GPU", text)
+        self.assertIn("battery 87%", text)
+        self.assertIn("AC power", text)
+        self.assertIn("disk 100/90 MB/s read/write", text)
+        self.assertIn("re-profiled: memory-pressure", text)
+
+    def test_format_hardware_survives_partial_profiles(self):
+        text = "\n".join(format_hardware({"source": "error", "error": "probe broke"}))
+
+        self.assertIn("hardware", text)
+        self.assertIn("probe broke", text)
 
 
 class CoreTensorRoleTest(unittest.TestCase):
