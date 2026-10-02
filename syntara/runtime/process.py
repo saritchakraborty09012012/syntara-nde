@@ -142,15 +142,23 @@ def _release_job(handle: int | None) -> None:
 
 
 class ManagedProcess:
-    """A spawned backend process with a bounded stderr tail."""
+    """A spawned backend process with a bounded stderr tail.
+
+    ``merge_streams=True`` puts the child's stdout and stderr on a single
+    pipe (``proc.stdout``) for callers that stream the child's own output,
+    such as the conversion wrapper. Default behavior is unchanged: stdout is
+    discarded and only stderr is drained for diagnostics.
+    """
 
     TAIL_LINES = 200
 
     def __init__(self, argv: list[str], *, cwd: str | None = None,
-                 env: dict[str, str] | None = None) -> None:
+                 env: dict[str, str] | None = None,
+                 merge_streams: bool = False) -> None:
         self.argv = list(argv)
         self.cwd = cwd
         self.env = env
+        self.merge_streams = merge_streams
         self.proc: subprocess.Popen[bytes] | None = None
         self._tail: collections.deque[str] = collections.deque(maxlen=self.TAIL_LINES)
         self._reader: threading.Thread | None = None
@@ -163,8 +171,8 @@ class ManagedProcess:
             self.proc = subprocess.Popen(  # noqa: S603 - argv is built from trusted parts
                 self.argv,
                 stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
+                stdout=subprocess.PIPE if self.merge_streams else subprocess.DEVNULL,
+                stderr=subprocess.STDOUT if self.merge_streams else subprocess.PIPE,
                 cwd=self.cwd,
                 env=self.env,
                 **_hidden_popen_kwargs(),
@@ -221,11 +229,15 @@ class ManagedProcess:
         if self._reader is not None:
             self._reader.join(timeout=2.0)
             self._reader = None
-        if self.proc.stderr:
-            try:
-                self.proc.stderr.close()
-            except OSError:
-                pass
+        # Close our pipe ends (stderr, and stdout in merge mode). The child
+        # is already reaped above, so a reader thread sees EOF, never a
+        # close racing a live read on a running process.
+        for pipe in (self.proc.stderr, self.proc.stdout):
+            if pipe is not None:
+                try:
+                    pipe.close()
+                except OSError:
+                    pass
         # Child is reaped: the kill-on-close job has served its purpose.
         _release_job(self._job)
         self._job = None

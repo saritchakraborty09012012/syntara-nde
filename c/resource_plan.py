@@ -1222,6 +1222,24 @@ def build_plan(model, ram_gb=0, context=4096, gpu_indices=None, vram_gb=0,
                     "source": source, "fits_ram_budget": cap >= 1,
                     "reason": quant_reason}
 
+    # Conversion proposal (advisory, like everything else above): the plan
+    # still converts nothing -- it names *how* to convert when the policy
+    # choice makes it worth doing, so `syntara convert --plan` can trigger
+    # the family's converter without the user re-specifying script/flags.
+    converter = getattr(resolved.descriptor, "converter", None)
+    if preserve:
+        conversion = {"applicable": False, "script": None,
+                      "reason": "the policy keeps the stored weights as they are"}
+    elif converter:
+        conversion = {"applicable": True, "script": converter,
+                      "reason": ("experimental-fast policy allows repacked weights; "
+                                 "run syntara convert to repack this checkpoint "
+                                 "(this plan does not convert anything)")}
+    else:
+        conversion = {"applicable": False, "script": None,
+                      "reason": "no converter is registered for this family"}
+    quantization["conversion"] = conversion
+
     # KV-cache quantization: advisory only. KV8/KV_TQ live in syntara.c (the
     # syntara-core engine) and only buy anything for an MLA latent cache, so
     # the recommendation names both conditions instead of promising them.
@@ -1438,6 +1456,10 @@ def format_plan(plan):
     quant = plan.get("quantization") or {}
     if quant.get("action"):
         lines.append(f"quant    {quant['action']} · {quant.get('source')}")
+    conversion = quant.get("conversion") or {}
+    if conversion.get("applicable"):
+        lines.append(f"convert  {conversion['script']} · allowed by policy "
+                     f"(run syntara convert --plan)")
     kv = plan.get("kv_cache") or {}
     if kv.get("quant"):
         kv_line = (f"kv       {kv['quant']} · {format_bytes(kv.get('bytes', 0))} "

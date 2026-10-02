@@ -1112,6 +1112,30 @@ class PlannerDecisionTest(unittest.TestCase):
         self.assertEqual(fast["quantization"]["action"], "repack-allowed")
         self.assertIn("does not convert", fast["quantization"]["reason"])
 
+    def test_conversion_proposal_follows_the_policy_choice(self):
+        # The proposal is advisory: preserve policy never asks for a
+        # conversion, experimental-fast names the family's converter, and
+        # the planner still converts nothing by itself (1i).
+        info = analyze_model(self.model)
+        descriptor = info["resolved_family"].descriptor
+
+        quality = self.plan()
+        quality_conv = quality["quantization"]["conversion"]
+        self.assertFalse(quality_conv["applicable"])
+        self.assertIsNone(quality_conv["script"])
+        self.assertTrue(quality_conv["reason"])
+
+        fast = self.plan(policy="experimental-fast")
+        fast_conv = fast["quantization"]["conversion"]
+        if descriptor.converter:
+            self.assertTrue(fast_conv["applicable"])
+            self.assertEqual(fast_conv["script"], descriptor.converter)
+            self.assertIn("does not convert", fast_conv["reason"])
+            self.assertIn("convert", format_plan(fast))
+        else:
+            self.assertFalse(fast_conv["applicable"])
+            self.assertIsNone(fast_conv["script"])
+
     def test_kv_cache_advises_kv8_when_the_share_is_material(self):
         def big_geometry(resolved, context):
             return PlannerGeometry(context_state_bytes=context * (1 << 20),

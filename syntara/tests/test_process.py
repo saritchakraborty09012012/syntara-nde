@@ -67,5 +67,35 @@ class KillOnCloseJobTest(unittest.TestCase):
             proc.terminate()
 
 
+class MergeStreamsTest(unittest.TestCase):
+    _CHATTER = [sys.executable, "-c",
+                "import sys; print('to-stdout'); "
+                "print('to-stderr', file=sys.stderr)"]
+
+    def test_default_keeps_stdout_discarded(self) -> None:
+        proc = ManagedProcess(self._CHATTER)
+        proc.spawn()
+        try:
+            self.assertIsNone(proc.proc.stdout)
+            self.assertIsNotNone(proc.proc.stderr)
+            self.assertEqual(proc.wait(timeout=15), 0)
+        finally:
+            proc.terminate()
+
+    def test_merged_streams_put_both_streams_on_one_pipe(self) -> None:
+        proc = ManagedProcess(self._CHATTER, merge_streams=True)
+        proc.spawn()
+        try:
+            self.assertIsNotNone(proc.proc.stdout)
+            self.assertIsNone(proc.proc.stderr,
+                              "merged mode must not leave a second pipe")
+            data = proc.proc.stdout.read().decode("utf-8", errors="replace")
+            self.assertEqual(proc.wait(timeout=15), 0)
+        finally:
+            proc.terminate()
+        self.assertIn("to-stdout", data)
+        self.assertIn("to-stderr", data)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

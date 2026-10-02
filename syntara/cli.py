@@ -10,6 +10,8 @@ from typing import Any
 
 from ._version import __version__
 from .client import Syntara, SyntaraError
+from .conversion import (ConversionError, ConversionService, normalize_extra,
+                         plan_conversion)
 from .library import LibraryError
 from .runtime import RuntimeError as RuntimeFailure
 
@@ -434,6 +436,109 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_convert(args: argparse.Namespace) -> int:
+    """Stream, resume, cancel and cache a checkpoint conversion.
+
+    With ``--plan`` this is the auto-trigger: the planner's advisory
+    ``quantization.conversion`` block picks the converter and the plan's
+    model path becomes ``--repo`` (AGENTS §114: the feature includes its
+    CLI surface, not just the core function).
+    """
+    repo = args.repo
+    outdir = args.outdir
+    if args.plan:
+        try:
+            if args.plan == "-":
+                plan = json.load(sys.stdin)
+            else:
+                with open(args.plan, encoding="utf-8") as handle:
+                    plan = json.load(handle)
+        except (OSError, ValueError) as exc:
+            print(f"syntara: cannot read plan {args.plan!r}: {exc}",
+                  file=sys.stderr)
+            return 2
+        if not isinstance(plan, dict):
+            print(f"syntara: plan {args.plan!r} is not a plan JSON object",
+                  file=sys.stderr)
+            return 2
+        proposal = plan_conversion(plan)
+        if not proposal["applicable"]:
+            if args.json:
+                print(json.dumps({"type": "result", **proposal},
+                                 ensure_ascii=False))
+            else:
+                print(f"no conversion called for by this plan: "
+                      f"{proposal['reason']}")
+            return 0
+        repo = repo or proposal["repo"]
+        if not repo:
+            print("syntara: the plan carries no model path; pass "
+                  "--repo <source checkpoint>", file=sys.stderr)
+            return 2
+        if not outdir:
+            print("syntara: this plan allows a conversion; pass a fresh "
+                  "--outdir <dir>, e.g.:", file=sys.stderr)
+            print(f"  syntara convert --repo {repo} "
+                  f"--outdir {repo}-converted", file=sys.stderr)
+            return 2
+    if not repo or not outdir:
+        print("syntara: convert needs --repo <source> and --outdir <fresh "
+              "dir> (or --plan <file>); see `syntara convert --help`",
+              file=sys.stderr)
+        return 2
+
+    as_json = args.json
+
+    def show(event: dict) -> None:
+        if as_json:
+            print(json.dumps(event, ensure_ascii=False), flush=True)
+        elif event["type"] == "line":
+            print(event["text"], flush=True)
+        elif event["type"] == "step" and event["total"] > 1:
+            print(f"step {event['step']}/{event['total']}: converter",
+                  flush=True)
+
+    service = ConversionService(data_dir=args.data_dir)
+    job = None
+    try:
+        job = service.start(repo, outdir,
+                            extra_flags=normalize_extra(args.extra),
+                            force=args.force, on_event=show)
+        job = service.wait(job.id)
+    except ConversionError as exc:
+        print(f"syntara: {exc}", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        if job is not None:
+            try:
+                service.cancel(job.id)
+                service.wait(job.id, timeout=15.0)
+            except ConversionError:
+                pass
+        print("syntara: conversion cancelled - rerun to resume "
+              "(already-written shards are kept)", file=sys.stderr)
+        return 130
+
+    if job.status == "completed":
+        if not as_json:
+            if job.cached:
+                print(f"already converted (cache hit): {job.outdir}")
+            else:
+                print(f"conversion completed: {job.outdir}")
+        return 0
+    if job.status == "failed":
+        print(f"syntara: conversion failed ({job.error or 'error'}):",
+              file=sys.stderr)
+        if job.error_detail:
+            print(job.error_detail, file=sys.stderr)
+        print("rerun the same command to resume from the last written shard.",
+              file=sys.stderr)
+        return 1
+    print("syntara: conversion cancelled - rerun to resume "
+          "(already-written shards are kept)", file=sys.stderr)
+    return 130
+
+
 def _common_options() -> argparse.ArgumentParser:
     # default=argparse.SUPPRESS so a subparser can never clobber a value the
     # main parser already parsed from the command line (argparse re-applies
@@ -521,6 +626,25 @@ def build_parser() -> argparse.ArgumentParser:
                              help="Inspect a local GGUF file (metadata, quants, compatibility)")
     inspect.add_argument("path", help="path to a .gguf model file")
 
+    convert = sub.add_parser(
+        "convert", parents=[common],
+        help="Convert a checkpoint with the family's converter "
+             "(streaming, resumable, cancellable, cached)")
+    convert.add_argument("--repo", default=None,
+                         help="source checkpoint: local directory or HF repo id")
+    convert.add_argument("--outdir", default=None,
+                         help="fresh output directory (the engine refuses one "
+                              "that already holds a checkpoint)")
+    convert.add_argument("--plan", default=None, metavar="FILE",
+                         help="plan JSON ('-' for stdin): take the converter "
+                              "and --repo from the planner's choice")
+    convert.add_argument("--force", action="store_true",
+                         help="run again even if this exact conversion already "
+                              "completed")
+    convert.add_argument("extra", nargs=argparse.REMAINDER,
+                         help="after --: passed through to the engine's "
+                              "convert (e.g. -- --ebits 4)")
+
     sub.add_parser("health", parents=[common], help="Read local runtime health")
     sub.add_parser("profile", parents=[common], help="Read per-turn runtime telemetry")
 
@@ -571,6 +695,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_library(args)
         if args.command == "inspect":
             return _cmd_inspect(args)
+        if args.command == "convert":
+            return _cmd_convert(args)
         if args.command == "health":
             return _cmd_health(client, args)
         if args.command == "profile":

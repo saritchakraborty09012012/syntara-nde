@@ -2645,7 +2645,13 @@ def convert_output_refusal(out_dir):
     return head + "\n  To convert into a fresh directory: syntara convert --repo <hf repo> --model <new dir>"
 
 def cmd_convert(a):
-    banner("convert")
+    # --print-argv is a dry run for the host conversion wrapper: it answers
+    # "which converter commands would run?" so the wrapper can spawn the
+    # converter itself (one process, exact cancellation, streamed progress)
+    # without duplicating family routing. Banner and progress prints are
+    # suppressed so stdout stays machine-readable.
+    if not getattr(a, "print_argv", False):
+        banner("convert")
     # here --model is the DESTINATION the converted weights are written to, not an
     # existing snapshot, so it needs its own wording rather than need_model's.
     if not a.model:
@@ -2683,7 +2689,8 @@ def cmd_convert(a):
         if getattr(a, name) is None:
             setattr(a, name, value)
     if family:
-        print(f"  {C.dim}checkpoint: {family.display_name} -> tools/{script}{C.r}")
+        if not getattr(a, "print_argv", False):
+            print(f"  {C.dim}checkpoint: {family.display_name} -> tools/{script}{C.r}")
         written = [_CONVERT_PRECISION_FLAGS[name] for name in written_names
                    if name not in family.converter_accepts]
         if written and family.converter:
@@ -2708,6 +2715,17 @@ def cmd_convert(a):
 
     mtp_pass = family.converter_mtp_pass if family and family.converter else True
     steps = 2 if (mtp_pass and not a.no_mtp) else 1
+    if getattr(a, "print_argv", False):
+        # Same construction as the real run below, byte for byte: the wrapper
+        # executes exactly these argv lists, so a dry run cannot drift.
+        plan_steps = [list(base)]
+        if steps == 2:
+            mtp_cmd = list(base)
+            i = mtp_cmd.index("--ebits")
+            mtp_cmd[i + 1] = str(max(8, a.ebits))
+            plan_steps.append(mtp_cmd + ["--mtp"])
+        print("__SYNTARA_ARGV__ " + json.dumps({"steps": plan_steps}))
+        sys.exit(0)
     print(f"  {C.dim}[1/{steps}] model: {' '.join(base)}{C.r}")
     rc = subprocess.call(base)
     if rc != 0: sys.exit(rc)
@@ -2887,6 +2905,10 @@ def main():
     pc.add_argument("--group-size",type=int,default=None,
         help="int4 scale group size: 64 (default, group-scaled quality) or 0 (legacy per-row)")
     pc.add_argument("--no-mtp",action="store_true",help="skip the MTP head (no speculative drafts)")
+    pc.add_argument("--print-argv",action="store_true",
+        help="print the exact converter command(s) as one JSON line "
+             "(__SYNTARA_ARGV__ prefix) and exit without running them; the "
+             "host wrapper uses this so routing stays in one place")
     a=ap.parse_args()
     handler={"build":cmd_build,"info":cmd_info,"plan":cmd_plan,"mirror":cmd_mirror,
              "doctor":cmd_doctor,"tune":cmd_tune,

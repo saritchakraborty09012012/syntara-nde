@@ -26,8 +26,10 @@ What the tests below hold:
   old command is used unchanged, so a working conversion never fails because a
   5 KB metadata fetch did.
 """
+import contextlib
 import importlib.machinery
 import importlib.util
+import io
 import json
 import tempfile
 import unittest
@@ -131,6 +133,40 @@ class ConvertRoutingTest(unittest.TestCase):
         self.assertIn("--mtp", calls[1])
         index = calls[1].index("--ebits")
         self.assertEqual(calls[1][index + 1], "8", "the MTP head is always int8")
+
+    def test_print_argv_prints_the_commands_and_runs_nothing(self):
+        """--print-argv is the host wrapper's dry run (1i): identical routing,
+        zero subprocesses, stdout carries exactly one machine-readable
+        __SYNTARA_ARGV__ line, and the int8 MTP second pass is spelled out."""
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        out = io.StringIO()
+        with mock.patch.object(self.cli, "subprocess") as subprocess_module, \
+             mock.patch.object(self.cli, "project_python", return_value="python3"), \
+             mock.patch.object(self.cli, "sys") as system, \
+             mock.patch.object(self.cli, "checkpoint_family",
+                               return_value=family_by_id("glm")):
+            subprocess_module.call = lambda command: self.fail(
+                "a dry run must not spawn the converter")
+            system.exit.side_effect = SystemExit
+            with contextlib.redirect_stdout(out):
+                try:
+                    self.cli.cmd_convert(Args(directory.name, print_argv=True))
+                except (SystemExit, TypeError):
+                    pass
+        system.exit.assert_called_once_with(0)
+        lines = [line for line in out.getvalue().splitlines()
+                 if line.startswith("__SYNTARA_ARGV__ ")]
+        self.assertEqual(len(lines), 1, "stdout must be machine-readable")
+        steps = json.loads(lines[0][len("__SYNTARA_ARGV__ "):])["steps"]
+        self.assertEqual(len(steps), 2)
+        self.assertEqual(self.script_of(steps[0]), "convert_fp8_to_int4.py")
+        self.assertEqual(self.script_of(steps[1]), "convert_fp8_to_int4.py")
+        self.assertEqual(steps[0][steps[0].index("--ebits") + 1], "4")
+        self.assertEqual(steps[1][steps[1].index("--ebits") + 1], "8",
+                         "the MTP pass must ask for int8 exactly as the real run does")
+        self.assertIn("--mtp", steps[1])
+        self.assertNotIn("--mtp", steps[0])
 
     def test_no_mtp_still_skips_the_second_pass_for_glm52(self):
         calls = self.run_convert("glm", no_mtp=True)

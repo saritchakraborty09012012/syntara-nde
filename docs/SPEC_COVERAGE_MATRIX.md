@@ -92,8 +92,9 @@ row names the concrete files that own the behavior.
 | Auth optional, disabled by default; localhost-only bind | ✅ | `syntara/client.py` `_headers`/`api_key` |
 | SDK env overrides (`SYNTARA_BASE_URL`, `SYNTARA_API_KEY`), explicit args win | ✅ | `syntara/client.py` (this iteration) |
 | Structured errors (status + code + body) | ✅ | `syntara/client.py` `SyntaraError` |
-| CLI: models/chat/agents/serve/health/profile/project/backup, `--json`, stable exit codes | ✅ | `syntara/cli.py`, tests |
+| CLI: models/chat/agents/serve/health/profile/project/backup/library/inspect/convert, `--json`, stable exit codes | ✅ | `syntara/cli.py`, tests |
 | CLI engine delegation (`SYNTARA_ENGINE`, no PATH guessing to avoid recursion) | ✅ | `syntara/cli.py` (this iteration), tests |
+| Conversion wrappers: streaming/resumable/cancellable/cached + planner auto-trigger (`syntara convert --plan`) | ✅ | `syntara/conversion.py`, `syntara/cli.py` (this iteration), plan proposal in `c/resource_plan.py`, `--print-argv` in `c/syntara`, tests |
 
 ## Integrations
 

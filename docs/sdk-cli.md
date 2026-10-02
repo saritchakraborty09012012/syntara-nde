@@ -113,6 +113,10 @@ syntara library scan <directory>      # discover *.gguf and register them
 syntara library get <id>              # full JSON entry
 syntara library remove <id> [--delete-file --yes]
 
+syntara convert --repo <dir-or-hf-id> --outdir <fresh-dir>  # convert a checkpoint
+syntara convert --plan plan.json --outdir <fresh-dir>       # converter + repo from the plan
+syntara convert ... -- --ebits 4       # after --: passed to the engine's convert
+
 syntara project list
 syntara project create my-project --description "..."
 syntara project get my-project
@@ -125,7 +129,7 @@ syntara backup restore <archive> [--include chats,projects] [--no-merge]
 
 Add `--json` anywhere for machine-readable output. Exit codes: `0` success,
 `1` runtime/connection or file-format error, `2` usage error or unsupported
-verb.
+verb, `130` cancelled (`syntara convert`).
 
 Global flags: `--base-url`, `--api-key`, `--data-dir`, `--json`,
 `--version`.
@@ -150,6 +154,37 @@ reported as `warn` ("not in the approved scope"), not as broken. A truncated
 or corrupt file produces a clear structural error on stderr (exit `1`)
 naming what failed and where. Use `--json` for the full machine-readable
 report (large arrays are summarised, not dumped).
+
+### Converting a checkpoint
+
+`syntara convert --repo <source> --outdir <fresh dir>` runs the family's
+converter through the engine launcher and wraps it with what a long
+conversion needs:
+
+- **streaming** - converter output streams live; progress lines are also
+  parsed into `progress` / `resume` / `wrote` events (`--json` emits one
+  event object per line for automation);
+- **resumable** - rerun the same command after a failure or cancel: each
+  converter keeps its own shard manifest, so finished shards are skipped;
+- **cancellable** - Ctrl-C stops the whole converter process and reports
+  what was kept (exit `130`);
+- **cached** - an already-completed conversion (same commands, output still
+  on disk) returns immediately; `--force` reruns it. One conversion runs at
+  a time.
+
+`--plan <file>` (or `-` for stdin) is the auto-trigger: the planner's
+advisory `quantization.conversion` block names the converter and the plan's
+model path becomes `--repo`, so `syntara convert --plan plan.json --outdir
+<fresh dir>` performs exactly the conversion the plan allows. A plan whose
+policy keeps the stored weights reports that no conversion is called for
+and exits `0`.
+
+The engine launcher must be set (`SYNTARA_ENGINE`, e.g.
+`SYNTARA_ENGINE="python <repo>/c/syntara"`). Family routing, precision-flag
+acceptance and the refusal to write into a directory that already holds a
+checkpoint all live engine-side — the wrapper asks with
+`syntara convert --print-argv` and runs exactly the printed commands — so a
+conversion can never overwrite an existing checkpoint.
 
 ### Serving a local model
 
