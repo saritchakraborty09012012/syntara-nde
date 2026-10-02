@@ -35,6 +35,112 @@ def _hidden_popen_kwargs() -> dict:
     return {}
 
 
+if sys.platform == "win32":  # pragma: no cover - exercised on Windows CI
+    import ctypes
+    from ctypes import wintypes
+
+    _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+    _JobObjectExtendedLimitInformation = 9
+    _PROCESS_SET_QUOTA_TERMINATE = 0x0101  # PROCESS_SET_QUOTA | PROCESS_TERMINATE
+
+    class _IoCounters(ctypes.Structure):
+        _fields_ = [(name, ctypes.c_uint64) for name in (
+            "ReadOperationCount", "WriteOperationCount", "OtherOperationCount",
+            "ReadTransferCount", "WriteTransferCount", "OtherTransferCount")]
+
+    class _BasicLimitInformation(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_int64),
+            ("PerJobUserTimeLimit", ctypes.c_int64),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class _ExtendedLimitInformation(ctypes.Structure):
+        # Matches winnt.h: BasicLimitInformation + IO_COUNTERS + four
+        # SIZE_T memory fields (verified: sizeof == 144 on x64).
+        _fields_ = [
+            ("BasicLimitInformation", _BasicLimitInformation),
+            ("IoInfo", _IoCounters),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+
+def bind_lifetime_to_parent(proc: subprocess.Popen[bytes]) -> int | None:
+    """Windows: kill the child when *this* interpreter goes away.
+
+    A job object with JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE terminates every
+    member process once the last handle to the job closes - which happens
+    when this parent dies for any reason, including TerminateProcess,
+    which no ``atexit`` hook survives (AGENTS §27: no orphan backends).
+
+    Best effort by design: nesting is allowed since Windows 8, but a
+    sandboxed or Win7-style parent can reject the assignment; we then
+    fall back to the cooperative terminate() path only.
+    """
+    if sys.platform != "win32" or proc.pid is None:
+        return None
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateJobObjectW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    k32.CreateJobObjectW.restype = wintypes.HANDLE
+    k32.SetInformationJobObject.argtypes = [
+        wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD]
+    k32.SetInformationJobObject.restype = wintypes.BOOL
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    k32.AssignProcessToJobObject.restype = wintypes.BOOL
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    k32.CloseHandle.restype = wintypes.BOOL
+
+    job = k32.CreateJobObjectW(None, None)
+    if not job:
+        return None
+    info = _ExtendedLimitInformation()
+    info.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    if not k32.SetInformationJobObject(
+            job, _JobObjectExtendedLimitInformation,
+            ctypes.byref(info), ctypes.sizeof(info)):
+        k32.CloseHandle(job)
+        return None
+    child = k32.OpenProcess(_PROCESS_SET_QUOTA_TERMINATE, False, proc.pid)
+    if not child:
+        k32.CloseHandle(job)
+        return None
+    assigned = k32.AssignProcessToJobObject(job, child)
+    k32.CloseHandle(child)
+    if not assigned:
+        k32.CloseHandle(job)
+        return None
+    # The handle must stay open for the parent's whole life: its closure
+    # is what kills the child. terminate() closes it once the child is
+    # already reaped; a parent crash closes it implicitly.
+    return int(job)
+
+
+def _close_handle(handle: int) -> None:  # pragma: no cover - Windows only
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    k32.CloseHandle.restype = wintypes.BOOL
+    k32.CloseHandle(handle)
+
+
+def _release_job(handle: int | None) -> None:
+    """Close the kill-on-close job handle (no-op off Windows / already done)."""
+    if handle is None:
+        return
+    if sys.platform == "win32":
+        _close_handle(handle)
+
+
 class ManagedProcess:
     """A spawned backend process with a bounded stderr tail."""
 
@@ -48,6 +154,7 @@ class ManagedProcess:
         self.proc: subprocess.Popen[bytes] | None = None
         self._tail: collections.deque[str] = collections.deque(maxlen=self.TAIL_LINES)
         self._reader: threading.Thread | None = None
+        self._job: int | None = None
 
     def spawn(self) -> None:
         if self.proc is not None:
@@ -65,6 +172,7 @@ class ManagedProcess:
         except OSError as exc:
             raise RuntimeError(
                 f"could not start {self.argv[0]!r}: {exc}") from exc
+        self._job = bind_lifetime_to_parent(self.proc)
 
     @property
     def alive(self) -> bool:
@@ -101,6 +209,8 @@ class ManagedProcess:
     def terminate(self, *, grace: float = 5.0) -> None:
         """Terminate cleanly: terminate() -> wait(grace) -> kill(). No orphans."""
         if self.proc is None:
+            _release_job(self._job)
+            self._job = None
             return
         if self.proc.poll() is None:
             self.proc.terminate()
@@ -116,6 +226,9 @@ class ManagedProcess:
                 self.proc.stderr.close()
             except OSError:
                 pass
+        # Child is reaped: the kill-on-close job has served its purpose.
+        _release_job(self._job)
+        self._job = None
 
 
 def http_get_status(url: str, timeout: float,
