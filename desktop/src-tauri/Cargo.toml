@@ -8,7 +8,21 @@ rust-version = "1.85"
 
 [lib]
 name = "syntara_desktop_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# No cdylib: the desktop ships an .exe, and MinGW ld cannot link a DLL of
+# this size (auto-export overflows its 65535-ordinal limit). The
+# mobile_entry_point cfg never fires on desktop targets.
+crate-type = ["staticlib", "rlib"]
+# Unit-test harnesses cannot embed the comctl32 v6 manifest (build.rs can only
+# reach `[[test]]` targets with rustc-link-arg-tests, and the harness would
+# die with STATUS_ENTRYPOINT_NOT_FOUND before running a single test). Contract
+# tests live in tests/ as integration targets, which do get the manifest.
+test = false
+
+[[bin]]
+name = "syntara-desktop"
+path = "src/main.rs"
+test = false
+bench = false
 
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }

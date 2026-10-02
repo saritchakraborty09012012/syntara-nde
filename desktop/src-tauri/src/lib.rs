@@ -1,18 +1,32 @@
+// `host` is public so the contract tests in tests/ can exercise it as an
+// integration target (unit-test harnesses cannot embed the comctl32 v6
+// manifest; see build.rs and Cargo.toml `[lib] test`).
+pub mod host;
 mod qdm;
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use tauri::Manager;
 
 /// Shared Tauri state. The download engine is QDM's, see `qdm::mod` for the
-/// port notes and upstream attribution.
+/// port notes and upstream attribution; the local host process is ours
+/// (see `host`).
 pub struct AppState {
     pub engine: Arc<qdm::DownloadEngine>,
+    pub host: Mutex<host::HostProcess>,
 }
+
+// The host commands live in `host` (not here): a `#[tauri::command] pub fn`
+// at the crate root collides with the macro `#[macro_export]` the attribute
+// generates (`E0255: __cmd__* defined multiple times`).
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
+            host::host_status,
+            host::host_start,
+            host::host_stop,
             qdm::commands::download_add,
             qdm::commands::download_start,
             qdm::commands::download_pause,
@@ -40,7 +54,14 @@ pub fn run() {
 
             let config = qdm::commands::load_config(app.handle());
             let engine = qdm::DownloadEngine::new(config, app.handle().clone());
-            app.manage(AppState { engine });
+            // App start: spawn the hidden local host (plan 1d). With no
+            // model configured this records an honest `no_model` status
+            // instead of guessing; `host_start` retries once one is chosen.
+            let host_process = host::start(&app.handle(), None, None);
+            app.manage(AppState {
+                engine,
+                host: Mutex::new(host_process),
+            });
 
             let show = MenuItemBuilder::with_id("show", "Show Syntara").build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "Quit Syntara").build(app)?;
@@ -79,6 +100,17 @@ pub fn run() {
             builder.build(app)?;
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("failed to run the Syntara desktop application");
+        .build(tauri::generate_context!())
+        .expect("failed to build the Syntara desktop app")
+        .run(|app, event| {
+            // No orphan host processes: kill the python child whenever the
+            // app exits (window close, tray quit, crash-window teardown).
+            if let tauri::RunEvent::Exit = event {
+                if let Some(state) = app.try_state::<AppState>() {
+                    if let Ok(mut host) = state.host.lock() {
+                        host.shutdown();
+                    }
+                }
+            }
+        })
 }
