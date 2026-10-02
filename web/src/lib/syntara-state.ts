@@ -51,6 +51,14 @@ export interface AgentConfig {
   updatedAt: number
 }
 
+/* One compatibility verdict from the local GGUF inspector (`syntara inspect`),
+   shown as a chip on the model card. Levels mirror the Python badge levels. */
+export interface InspectBadge {
+  id: string
+  level: "ok" | "warn" | "error"
+  message: string
+}
+
 export interface ModelMeta {
   id: string
   name: string
@@ -67,9 +75,17 @@ export interface ModelMeta {
   recommendedRam: string
   recommendedVram: string
   disk: string
-  status: "available" | "installed" | "detached"
+  /* `partial` = the file on disk is truncated (local inspector verdict);
+     it must never be offered for loading until the download is completed. */
+  status: "available" | "installed" | "detached" | "partial"
   localPath?: string
   installedAt?: number
+  /* Filled in by the shell's auto-inspect after a download completes (or
+     on first load): inspector badges, offline library id and the
+     completeness verdict. Absent = never inspected - honest placeholders. */
+  badges?: InspectBadge[]
+  libraryId?: string
+  dataComplete?: boolean
 }
 
 export interface DownloadTask {
@@ -90,6 +106,10 @@ export interface DownloadTask {
   /* A completed row whose file no longer exists at the storage location
      (verified against disk): shown struck through, but never auto-removed. */
   fileMissing?: boolean
+  /* Absolute path of the finished file, learned when the desktop engine
+     reports completion (save path + file name). Browser sessions never
+     get one - inspect and load only run inside the desktop shell. */
+  filePath?: string
 }
 
 /* A finished download this workspace has seen before. Kept separately from the

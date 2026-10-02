@@ -32,6 +32,12 @@ row names the concrete files that own the behavior.
 | Cancel download; cancel releases the file handle | ✅ | `web/src/App.tsx` |
 | Model removal (desktop/engine-gated) | 🟡 | CLI delegates via `SYNTARA_ENGINE` → engine `remove` (`syntara/cli.py`) |
 | Import existing local model files (drag-and-drop / picker) | ✅ | `web/src/App.tsx` |
+| Group-aware completion (shard siblings installed together; partial groups stay downloading) | ✅ | `web/src/App.tsx` (`onCompleted`), `web/src/lib/inspect.ts` (`groupComplete`, `pickInspectTarget`) |
+| Auto-inspect after install → real arch/params/tokens/quant/ctx/RAM on the card | ✅ | `web/src/lib/inspect.ts` (`metaFromInspect`), `desktop/src-tauri/src/library.rs` (`library_inspect` → `syntara library add` / `syntara inspect`) |
+| Partial/truncated model verdict (`partial` status, refusal reason, load blocked) | ✅ | `web/src/lib/inspect.ts`, `web/src/App.tsx` (Load guard), contract + e2e tests |
+| Verdict badge chips on model cards | ✅ | `web/src/App.tsx`, `web/src/index.css` (`.inspect-badge`) |
+| One-click load with health-poll progress (card + Installed tab) | ✅ | `web/src/lib/host-bridge.ts` (`waitHostReady`), `web/src/App.tsx` (`loadModel`) |
+| Legacy local entries repaired once per session (badge backfill) | ✅ | `web/src/App.tsx` (auto-inspect effect) |
 | Universal conversion/quantization, every-safetensors architecture | 🔴 | `docs/`, engine (`docs/tuning.md`) — native toolchain + weights required |
 | Download queue / bandwidth scheduling | 🔴 | Architecture/extension point |
 

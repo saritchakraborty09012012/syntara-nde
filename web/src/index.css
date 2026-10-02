@@ -304,6 +304,16 @@ a { color: inherit; text-decoration: none; }
 /* Model quantization tags + context metadata. */
 .quant-tag { border-color: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--accent); }
 
+/* Local inspector verdicts on model cards (levels mirror the design
+   tokens; the full sentence rides in the chip's title tooltip). */
+.inspect-badge.ok { color: var(--success); border-color: rgba(95,241,174,.28); background: rgba(95,241,174,.07); }
+.inspect-badge.warn { color: var(--warn); border-color: rgba(255,200,87,.3); background: rgba(255,200,87,.07); }
+.inspect-badge.error { color: var(--danger); border-color: rgba(255,117,143,.3); background: rgba(255,117,143,.08); }
+
+/* Truncated file: shown instead of the Load button until the download
+   finishes; hover explains why (inspector message). */
+.partial-label { display: inline-flex; align-items: center; color: var(--danger); border: 1px solid rgba(255,117,143,.3); background: rgba(255,117,143,.08); border-radius: 999px; padding: 4px 7px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; cursor: help; }
+
 /* Downloads: live speed + ETA. */
 .download-meta { text-transform: none; letter-spacing: 0; font-size: 13px; }
 

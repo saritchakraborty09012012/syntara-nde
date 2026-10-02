@@ -2,6 +2,9 @@
 // integration target (unit-test harnesses cannot embed the comctl32 v6
 // manifest; see build.rs and Cargo.toml `[lib] test`).
 pub mod host;
+// `library` is public for the same reason as `host`: tests/host_contract.rs
+// pins the inspect argv and the JSON mapping as an integration target.
+pub mod library;
 mod qdm;
 
 use std::sync::{Arc, Mutex};
@@ -27,6 +30,7 @@ pub fn run() {
             host::host_status,
             host::host_start,
             host::host_stop,
+            library::library_inspect,
             qdm::commands::download_add,
             qdm::commands::download_start,
             qdm::commands::download_pause,
