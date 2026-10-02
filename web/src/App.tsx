@@ -7,7 +7,6 @@ import {
   BrainCircuit,
   Boxes,
   Check,
-  ChevronDown,
   CircleHelp,
   Code2,
   Copy,
@@ -92,8 +91,10 @@ import {
   type SyntaraState,
 } from "@/lib/syntara-state"
 import { MODEL_TABS, parseHash, type ModelTab, type View } from "@/lib/routes"
-import { hostStart, libraryInspect, waitHostReady } from "@/lib/host-bridge"
+import { hostBaseFromStatus, hostStart, hostStatus, libraryInspect, waitHostReady } from "@/lib/host-bridge"
 import { badgeLabel, groupComplete, metaFromInspect, pickInspectTarget } from "@/lib/inspect"
+import { mergePickerOptions, type PickerRow } from "@/lib/picker"
+import { ModelPicker } from "@/components/ModelPicker"
 import { cn } from "@/lib/utils"
 
 const message = (role: ChatMessage["role"], content: string, images?: string[]): ChatMessage => {
@@ -212,7 +213,6 @@ export default function App() {
     const label = NAV.find((item) => item.id === route.view)?.label
     document.title = label && route.view !== "chat" ? `${label} · Syntara` : "Syntara"
   }, [route, state.models])
-  const [apiKey, setApiKey] = useState("")
   const [connected, setConnected] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const [health, setHealth] = useState<HealthResponse | null>(null)
@@ -352,24 +352,26 @@ export default function App() {
   }
 
   /* Connects the UI to a gateway base URL and returns the model ids it
-     serves. `connect` (topbar button, health refresh) uses the stored
-     setting; `loadModel` points it at the URL the freshly started host
-     reports, so the two can never disagree about where runtime lives. */
-  const connectTo = async (base: string): Promise<string[]> => {
+      serves. `connect` (topbar button, health refresh) uses the stored
+      setting; `loadModel` points it at the URL the freshly started host
+      reports, so the two can never disagree about where runtime lives.
+      `quiet` is for the automatic probe on mount: a browser with no
+      server yet is a normal starting state, not an error to shout about. */
+  const connectTo = async (base: string, quiet = false): Promise<string[]> => {
     if (!base) return []
     setConnecting(true)
-    setRuntimeError("")
+    if (!quiet) setRuntimeError("")
     try {
-      const found = await listModels(base, apiKey)
+      const found = await listModels(base)
       setModels(found)
       if (!state.settings.model && found[0]) updateSettings({ model: found[0] })
-      setHealth(await getHealth(base, apiKey))
+      setHealth(await getHealth(base))
       setConnected(true)
       setRuntimeError("")
       return found
     } catch (error) {
       setConnected(false)
-      setRuntimeError(error instanceof Error ? error.message : "Runtime unavailable")
+      if (!quiet) setRuntimeError(error instanceof Error ? error.message : "Runtime unavailable")
       return []
     } finally {
       setConnecting(false)
@@ -461,13 +463,54 @@ export default function App() {
     }
   }
 
+  /* Track 2a - chat toolbar picker: local-only rows (gateway-served ids
+     merged with installed library entries), and selecting an installed
+     model that is not served yet loads it through the same one-click
+     path the Models view uses. */
+  const pickerRows = useMemo(
+    () => mergePickerOptions({ served: models, installed: state.models, loading: loadingModel }),
+    [models, state.models, loadingModel],
+  )
+  const pickModel = (row: PickerRow) => {
+    updateSettings({ model: row.id })
+    if (activeConversation) saveConversation({ ...activeConversation, model: row.id })
+    if (!row.loaded && row.loadable && row.meta) void loadModel(row.meta)
+  }
+
   useEffect(() => {
     if (!connected) return
     const timer = window.setInterval(async () => {
-      try { setHealth(await getHealth(state.settings.baseUrl, apiKey)) } catch { setConnected(false) }
+      try { setHealth(await getHealth(state.settings.baseUrl)) } catch { setConnected(false) }
     }, 5000)
     return () => window.clearInterval(timer)
-  }, [connected, state.settings.baseUrl, apiKey])
+  }, [connected, state.settings.baseUrl])
+
+  /* Track 2a - chat rewired to the host: connect on mount instead of
+     waiting for a manual click. On desktop the shell is the source of
+     truth (a running host is auto-connected; `no_model` is a normal,
+     quiet starting state until the picker loads one). In a browser we
+     quietly probe the stored local endpoint - a server that is not up
+     yet stays a silent "not connected", not an error. */
+  useEffect(() => {
+    let disposed = false
+    const autoConnect = async () => {
+      if (qdmAvailable()) {
+        try {
+          const status = await hostStatus()
+          const base = hostBaseFromStatus(status)
+          if (!disposed && base) await connectTo(base, true)
+        } catch {
+          /* A shell without the host commands falls back to the manual
+             Connect button rather than failing at startup. */
+        }
+        return
+      }
+      if (!disposed) await connectTo(state.settings.baseUrl, true)
+    }
+    void autoConnect()
+    return () => { disposed = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -755,7 +798,6 @@ export default function App() {
     try {
       const result: StreamChatResult = await streamChat({
         baseUrl: state.settings.baseUrl,
-        apiKey,
         model,
         messages: requestMessages,
         temperature,
@@ -976,7 +1018,6 @@ export default function App() {
     try {
       const result: StreamChatResult = await streamChat({
         baseUrl: state.settings.baseUrl,
-        apiKey,
         model,
         messages: [message("system", agent?.systemPrompt || defaultAgent.systemPrompt), message("user", text)],
         temperature: 0.2,
@@ -1361,17 +1402,7 @@ export default function App() {
                 <button className="icon-btn" onClick={() => updateSettings({ historyCollapsed: !state.settings.historyCollapsed })} title={state.settings.historyCollapsed ? "Show conversation history" : "Hide conversation history"} aria-label={state.settings.historyCollapsed ? "Show conversation history" : "Hide conversation history"} aria-expanded={!state.settings.historyCollapsed}>
                   <PanelLeft size={16} />
                 </button>
-                <div className="model-selector">
-                <Package size={15} />
-                <select value={effectiveModel} onChange={(event) => { updateSettings({ model: event.target.value }); if (activeConversation) saveConversation({ ...activeConversation, model: event.target.value }) }}>
-                  <option value="">Select a model</option>
-                  {models.map((item) => <option key={item} value={item}>{item}</option>)}
-                  {/* Installed entries select by their offline library id:
-                      that is the id the gateway actually serves. */}
-                  {state.models.filter((item) => item.status === "installed").map((item) => <option key={item.id} value={item.libraryId ?? item.id}>{item.name}</option>)}
-                </select>
-                  <ChevronDown size={14} />
-                </div>
+                <ModelPicker rows={pickerRows} value={effectiveModel} loading={loadingModel} onSelect={pickModel} />
               </div>
               <div className="chat-tools">
                 <button className={cn("tool-pill", thinking && "selected")} onClick={() => setThinking((value) => !value)}><Sparkles size={14} /> Reasoning</button>

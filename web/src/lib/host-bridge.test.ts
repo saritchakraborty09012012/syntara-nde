@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { waitHostReady, type HostStatus } from "./host-bridge"
+import { hostBaseFromStatus, waitHostReady, type HostStatus } from "./host-bridge"
 
 const status = (over: Partial<HostStatus> = {}): HostStatus => ({
   state: "running",
@@ -51,5 +51,21 @@ describe("waitHostReady", () => {
     await expect(
       waitHostReady({ tries: 3, intervalMs: 1, getStatus: async () => status() }),
     ).rejects.toThrow(/still loading after .*check the host log/)
+  })
+})
+
+describe("hostBaseFromStatus", () => {
+  it("points a running host at its gateway base URL", () => {
+    expect(hostBaseFromStatus({ state: "running", url: "http://127.0.0.1:8000" })).toBe("http://127.0.0.1:8000/v1")
+  })
+
+  it("tolerates a trailing slash on the host URL", () => {
+    expect(hostBaseFromStatus({ state: "running", url: "http://127.0.0.1:8000/" })).toBe("http://127.0.0.1:8000/v1")
+  })
+
+  it("returns null when there is nothing to connect to yet", () => {
+    expect(hostBaseFromStatus({ state: "no_model", url: null })).toBeNull()
+    expect(hostBaseFromStatus({ state: "exited", url: "http://127.0.0.1:8000" })).toBeNull()
+    expect(hostBaseFromStatus({ state: "running", url: null })).toBeNull()
   })
 })

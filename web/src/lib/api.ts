@@ -91,7 +91,7 @@ export function serverEndpoint(baseUrl: string, path: string) {
   return endpoint(baseUrl.replace(/\/v1\/?$/, ""), path)
 }
 
-function headers(apiKey: string) {
+function headers(apiKey = "") {
   return {
     "Content-Type": "application/json",
     ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
@@ -108,7 +108,7 @@ async function responseError(response: Response) {
   }
 }
 
-export async function listModels(baseUrl: string, apiKey: string, signal?: AbortSignal) {
+export async function listModels(baseUrl: string, apiKey = "", signal?: AbortSignal) {
   const response = await fetch(endpoint(baseUrl, "models"), { headers: headers(apiKey), signal })
   if (!response.ok) throw new Error(await responseError(response))
   const body = (await response.json()) as { data?: Array<{ id: string }> }
@@ -141,7 +141,9 @@ export function extractSSE(buffer: string) {
 
 export interface StreamChatOptions {
   baseUrl: string
-  apiKey: string
+  /* Optional bearer token for gateways that enable auth; the packaged
+     localhost host runs without one, so the UI never asks for a key. */
+  apiKey?: string
   model: string
   messages: ChatMessage[]
   temperature: number

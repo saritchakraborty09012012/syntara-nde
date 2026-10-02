@@ -37,6 +37,15 @@ export const hostStart = (model: string, port?: number | null): Promise<HostStat
 
 export const hostStatus = (): Promise<HostStatus> => invoke("host_status")
 
+/* The gateway base URL a host status can be auto-connected to, or null
+   when there is nothing to connect to yet (no model chosen, process not
+   running). Track 2a: chat uses this on mount instead of a manual
+   Connect click. */
+export function hostBaseFromStatus(status: Pick<HostStatus, "state" | "url">): string | null {
+  if (status.state !== "running" || !status.url) return null
+  return `${status.url.replace(/\/+$/, "")}/v1`
+}
+
 /* Inspect (and register when complete) one local file through the Python
    package - badges, quants and the partial verdict come from the same
    inspector the `syntara inspect` CLI uses. */
