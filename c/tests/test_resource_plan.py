@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from family_registry import PlannerGeometry
 from resource_plan import (
     GB,
     analyze_model,
@@ -1024,6 +1025,270 @@ memInfo.free:                     23.50 GB (97%)
                           available_disk=1, gpus=[])
         self.assertEqual(plan["bottleneck_class"], "compute")
         self.assertEqual(plan["next_actions"][0]["id"], "measure-kernels")
+
+
+class PlannerDecisionTest(unittest.TestCase):
+    """Plan track 1c: execution strategy, quant/KV/batch advice, context
+    clamp, and the labelled throughput estimate."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.model = Path(self.tmp.name)
+        (self.model / "config.json").write_text(json.dumps({
+            "model_type": "glm_moe_dsa",
+            "num_hidden_layers": 2,
+            "n_routed_experts": 2,
+            "kv_lora_rank": 4,
+            "qk_rope_head_dim": 2,
+            "qk_nope_head_dim": 3,
+            "v_head_dim": 5,
+            "num_attention_heads": 2,
+        }))
+        write_shard(self.model / "model.safetensors", [
+            ("model.embed_tokens.weight", 100),
+            ("model.layers.0.self_attn.q_a_proj.weight", 200),
+            ("model.layers.1.mlp.experts.0.gate_proj.weight", 30),
+            ("model.layers.1.mlp.experts.0.up_proj.weight", 30),
+            ("model.layers.1.mlp.experts.1.gate_proj.weight", 30),
+            ("model.layers.1.mlp.experts.1.up_proj.weight", 30),
+        ])
+        self.gpu = {"index": 0, "name": "test-gpu",
+                    "total_bytes": 16 * GB, "free_bytes": 6 * GB}
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def plan(self, **overrides):
+        arguments = {"ram_gb": 16, "available_memory": 16 * GB,
+                     "available_disk": 100 * GB, "gpus": [],
+                     "physical_cpus": 8, "cpu_sockets": 1}
+        arguments.update(overrides)
+        return build_plan(self.model, **arguments)
+
+    def test_execution_strategy_cpu_resident_without_gpu(self):
+        plan = self.plan()
+        self.assertEqual(plan["execution"]["strategy"], "cpu-resident")
+        self.assertTrue(plan["execution"]["reason"])
+        offload = plan["execution"]["offload"]
+        self.assertEqual(
+            offload["hot_expert_bytes"] + offload["warm_expert_bytes"] +
+            offload["cold_expert_bytes"], plan["model"]["expert_bytes"])
+
+    def test_execution_strategy_gpu_offload_when_experts_fit_vram(self):
+        plan = self.plan(gpus=[self.gpu])
+        self.assertEqual(plan["execution"]["strategy"], "gpu-offload")
+        self.assertGreater(plan["tiers"]["vram"]["budget_bytes"], 0)
+        self.assertEqual(plan["execution"]["offload"]["warm_expert_bytes"], 0)
+        self.assertEqual(plan["execution"]["offload"]["cold_expert_bytes"], 0)
+
+    def test_execution_strategy_hybrid_when_expert_tail_remains(self):
+        info = analyze_model(self.model)
+        info.update(expert_bytes=40 * GB, typical_expert_bytes=1 * GB,
+                    max_expert_bytes=1 * GB, per_cap_bytes=2 * GB)
+        with mock.patch("resource_plan.analyze_model", return_value=info), \
+             mock.patch("resource_plan.ssd_probe_state",
+                        return_value=("missing", None)):
+            plan = self.plan(ram_gb=8, available_memory=8 * GB,
+                             gpus=[self.gpu])
+        self.assertEqual(plan["execution"]["strategy"], "hybrid")
+        offload = plan["execution"]["offload"]
+        self.assertGreater(offload["warm_expert_bytes"] +
+                           offload["cold_expert_bytes"], 0)
+
+    def test_quantization_follows_policy_and_names_the_source(self):
+        info = analyze_model(self.model)
+        expected_source = ("requantized-at-load"
+                           if callable(getattr(info["resolved_family"].descriptor,
+                                               "dense_load_ratio", None))
+                           else "as-stored")
+        quality = self.plan()
+        self.assertTrue(quality["quantization"]["preserve"])
+        self.assertEqual(quality["quantization"]["action"], "keep")
+        self.assertEqual(quality["quantization"]["source"], expected_source)
+        self.assertTrue(quality["quantization"]["fits_ram_budget"])
+
+        fast = self.plan(policy="experimental-fast")
+        self.assertFalse(fast["quantization"]["preserve"])
+        self.assertEqual(fast["quantization"]["action"], "repack-allowed")
+        self.assertIn("does not convert", fast["quantization"]["reason"])
+
+    def test_kv_cache_advises_kv8_when_the_share_is_material(self):
+        def big_geometry(resolved, context):
+            return PlannerGeometry(context_state_bytes=context * (1 << 20),
+                                   fixed_state_bytes=0, workspace_bytes=0,
+                                   configured_experts=8)
+
+        with mock.patch("resource_plan.planner_geometry", side_effect=big_geometry):
+            plan = self.plan()
+        kv = plan["kv_cache"]
+        self.assertEqual(kv["quant"], "f16")
+        self.assertGreaterEqual(kv["share_of_ram_budget"], 0.10)
+        self.assertEqual(kv["recommended_env"], {"KV8": "1"})
+        self.assertIn("MLA", kv["reason"])
+        # Advisory: the plan never exports KV8 itself.
+        self.assertNotIn("KV8", environment_for_plan(plan, {}))
+
+    def test_kv_cache_stays_silent_when_kv_is_a_small_share(self):
+        plan = self.plan()
+        kv = plan["kv_cache"]
+        self.assertIsNone(kv["recommended_env"])
+        self.assertEqual(kv["reason"], "KV is a small share of the RAM budget")
+
+    def test_context_clamps_to_the_largest_fitting_size(self):
+        def big_geometry(resolved, context):
+            return PlannerGeometry(context_state_bytes=context * (1 << 20),
+                                   fixed_state_bytes=0, workspace_bytes=0,
+                                   configured_experts=8)
+
+        with mock.patch("resource_plan.planner_geometry", side_effect=big_geometry):
+            plan = self.plan(ram_gb=7, available_memory=8 * GB)
+        context = plan["context"]
+        self.assertTrue(context["clamped"])
+        self.assertEqual(context["requested"], 4096)
+        self.assertEqual(context["granted"], 2048)
+        self.assertGreaterEqual(plan["tiers"]["ram"]["cache_slots_per_layer"], 1)
+        self.assertNotIn("RAM budget cannot hold one expert slot per sparse layer",
+                         plan["warnings"])
+        self.assertTrue(any("context was reduced" in warning
+                            for warning in plan["warnings"]))
+        # The granted geometry priced every tier: sequence state is the
+        # clamped context's, not the requested one's.
+        self.assertEqual(plan["tiers"]["ram"]["sequence_state_bytes"],
+                         2048 * (1 << 20))
+        self.assertIn("clamped to fit", format_plan(plan))
+
+    def test_context_is_not_clamped_when_it_already_fits(self):
+        plan = self.plan()
+        self.assertFalse(plan["context"]["clamped"])
+        self.assertEqual(plan["context"]["granted"], plan["context"]["requested"])
+        self.assertFalse(any("context was reduced" in warning
+                             for warning in plan["warnings"]))
+
+    def test_batch_advice_varies_by_strategy_and_is_not_exported(self):
+        cpu = self.plan()
+        self.assertEqual(cpu["batch"]["prefill_chunk"], 128)
+        gpu = self.plan(gpus=[self.gpu])
+        self.assertEqual(gpu["batch"]["prefill_chunk"], 512)
+        self.assertTrue(cpu["batch"]["advisory"])
+        self.assertEqual(cpu["batch"]["env"], "SYNTARA_PREFILL_CHUNK")
+        self.assertNotIn("SYNTARA_PREFILL_CHUNK", environment_for_plan(cpu, {}))
+
+    def test_throughput_is_labelled_and_orders_strategies(self):
+        cpu = self.plan()
+        gpu = self.plan(gpus=[self.gpu])
+        for plan in (cpu, gpu):
+            speed = plan["throughput"]
+            self.assertEqual(speed["method"], "heuristic-v1")
+            self.assertEqual(speed["confidence"], "low")
+            self.assertTrue(speed["basis"])
+            self.assertLess(speed["tok_per_s"]["low"], speed["tok_per_s"]["high"])
+        self.assertGreater(gpu["throughput"]["tok_per_s"]["low"],
+                           cpu["throughput"]["tok_per_s"]["high"])
+
+    def test_plan_json_is_safe_and_format_shows_new_decisions(self):
+        plan = self.plan(gpus=[self.gpu])
+        json.dumps(plan, allow_nan=False)
+        text = format_plan(plan)
+        self.assertIn("strategy gpu-offload", text)
+        self.assertIn("quant    keep", text)
+        self.assertIn("prefill chunk 512", text)
+        self.assertIn("tok/s", text)
+        self.assertIn("heuristic-v1", text)
+
+
+class MachineMatrixTest(unittest.TestCase):
+    """The four machine classes from the plan: 4 GB/no-GPU, 8 GB/no-GPU,
+    16 GB + 6 GB VRAM, and a low-disk (HDD-like) box. Real geometry, real
+    analyze; only memory/disk/GPU inputs are injected."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.model = Path(self.tmp.name)
+        (self.model / "config.json").write_text(json.dumps({
+            "model_type": "glm_moe_dsa",
+            "num_hidden_layers": 2,
+            "n_routed_experts": 2,
+            "kv_lora_rank": 4,
+            "qk_rope_head_dim": 2,
+            "qk_nope_head_dim": 3,
+            "v_head_dim": 5,
+            "num_attention_heads": 2,
+        }))
+        write_shard(self.model / "model.safetensors", [
+            ("model.embed_tokens.weight", 100),
+            ("model.layers.0.self_attn.q_a_proj.weight", 200),
+            ("model.layers.1.mlp.experts.0.gate_proj.weight", 30),
+            ("model.layers.1.mlp.experts.0.up_proj.weight", 30),
+            ("model.layers.1.mlp.experts.1.gate_proj.weight", 30),
+            ("model.layers.1.mlp.experts.1.up_proj.weight", 30),
+        ])
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def matrix_plan(self, available_memory, ram_gb, gpus, available_disk=100 * GB):
+        return build_plan(self.model, ram_gb=ram_gb,
+                          available_memory=available_memory,
+                          available_disk=available_disk, gpus=gpus,
+                          physical_cpus=8, cpu_sockets=1)
+
+    @staticmethod
+    def fits(plan):
+        """Whatever the geometry, the plan must explain itself: a viable cap,
+        a clamp that bought one, or the honest warning."""
+        return (plan["tiers"]["ram"]["cache_slots_per_layer"] >= 1
+                or plan["context"]["clamped"]
+                or any("cannot hold one expert slot" in warning
+                       for warning in plan["warnings"]))
+
+    def test_4gb_no_gpu(self):
+        plan = self.matrix_plan(4 * GB, 4, [])
+        self.assertEqual(plan["execution"]["strategy"], "cpu-resident")
+        self.assertEqual(plan["tiers"]["vram"]["budget_bytes"], 0)
+        self.assertLessEqual(plan["tiers"]["ram"]["budget_bytes"], 4 * GB)
+        self.assertTrue(self.fits(plan))
+        self.assertLessEqual(plan["throughput"]["tok_per_s"]["high"], 15 * 4)
+        json.dumps(plan, allow_nan=False)
+
+    def test_8gb_no_gpu(self):
+        plan = self.matrix_plan(8 * GB, 8, [])
+        self.assertEqual(plan["execution"]["strategy"], "cpu-resident")
+        self.assertEqual(plan["tiers"]["vram"]["budget_bytes"], 0)
+        self.assertTrue(self.fits(plan))
+        json.dumps(plan, allow_nan=False)
+
+    def test_16gb_with_6gb_vram(self):
+        gpu = {"index": 0, "name": "test-gpu",
+               "total_bytes": 16 * GB, "free_bytes": 6 * GB}
+        plan = self.matrix_plan(16 * GB, 16, [gpu])
+        self.assertIn(plan["execution"]["strategy"],
+                      ("gpu-offload", "hybrid"))
+        self.assertGreater(plan["tiers"]["vram"]["budget_bytes"], 0)
+        self.assertGreater(plan["tiers"]["vram"]["expert_capacity"], 0)
+        self.assertTrue(self.fits(plan))
+
+    def test_low_disk_box_spills_to_disk(self):
+        info = analyze_model(self.model)
+        info.update(expert_bytes=40 * GB, typical_expert_bytes=1 * GB,
+                    max_expert_bytes=1 * GB, per_cap_bytes=2 * GB)
+        with mock.patch("resource_plan.analyze_model", return_value=info), \
+             mock.patch("resource_plan.ssd_probe_state",
+                        return_value=("missing", None)):
+            plan = self.matrix_plan(8 * GB, 8, [], available_disk=1 * GB)
+        self.assertEqual(plan["bottleneck_class"], "disk")
+        self.assertEqual(plan["execution"]["strategy"], "cpu-resident")
+        self.assertEqual(plan["tiers"]["disk"]["available_bytes"], 1 * GB)
+        self.assertGreater(plan["tiers"]["disk"]["cold_expert_bytes"], 0)
+        self.assertLessEqual(plan["throughput"]["tok_per_s"]["high"], 10)
+        json.dumps(plan, allow_nan=False)
+
+    def test_gpu_class_outpaces_cpu_class_in_the_estimate(self):
+        cpu_plan = self.matrix_plan(8 * GB, 8, [])
+        gpu = {"index": 0, "name": "test-gpu",
+               "total_bytes": 16 * GB, "free_bytes": 6 * GB}
+        gpu_plan = self.matrix_plan(16 * GB, 16, [gpu])
+        self.assertGreater(gpu_plan["throughput"]["tok_per_s"]["low"],
+                           cpu_plan["throughput"]["tok_per_s"]["high"])
 
 
 class PhysicalCpuCountTest(unittest.TestCase):

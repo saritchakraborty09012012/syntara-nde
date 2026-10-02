@@ -934,6 +934,32 @@ POLICIES = {
 }
 
 
+def _estimate_throughput(strategy, bottleneck_class, projected_hit, physical_cores):
+    """Coarse decode-speed range, with its method on display.
+
+    A heuristic over bottleneck class, placement strategy and core count so
+    plans can be compared against each other -- not a benchmark, and labelled
+    as low confidence everywhere it surfaces. Real numbers come from
+    `syntara tune`."""
+    cores = max(1, int(physical_cores or 1))
+    if bottleneck_class == "disk":
+        hit = max(0.0, float(projected_hit))
+        low, high = 1.0 * hit, 10.0 * hit
+        basis = "disk-bound expert misses scale with projected residency"
+    elif strategy == "gpu-offload":
+        low, high = 50.0, 150.0
+        basis = "GPU-resident experts, compute-bound decode"
+    elif strategy == "hybrid":
+        low, high = 20.0, 80.0
+        basis = "GPU hot tier plus CPU warm tail"
+    else:
+        scale = min(cores, 32) / 8.0
+        low, high = 3.0 * scale, 15.0 * scale
+        basis = f"CPU-resident decode scaled over {min(cores, 32)} cores"
+    return {"tok_per_s": {"low": round(low, 1), "high": round(high, 1)},
+            "method": "heuristic-v1", "confidence": "low", "basis": basis}
+
+
 def build_plan(model, ram_gb=0, context=4096, gpu_indices=None, vram_gb=0,
                available_memory=None, available_disk=None, gpus=None,
                policy="quality", physical_cpus=None, cpu_sockets=None,
@@ -983,16 +1009,7 @@ def build_plan(model, ram_gb=0, context=4096, gpu_indices=None, vram_gb=0,
     unified = placement_unified or _host_unified_memory()
     typical = info["typical_expert_bytes"]
     max_expert = info["max_expert_bytes"] or typical
-    kv_bytes = (geometry.context_state_bytes + geometry.fixed_state_bytes) * kv_slots
-    kv_buffer = geometry.workspace_bytes
-    # expert_fixed_bytes is retained once per model (currently Qwen3.8's
-    # normalized FP8 scale bank), unlike per_cap_bytes which is paid for
-    # every cache slot. Include it in the resident runtime reservation so the
-    # selected capacity cannot overrun the model's actual allocation.
-    runtime_bytes = int(1.2 * GB + 2.5 * GB + 64 * max_expert +
-                        info["expert_fixed_bytes"] + kv_bytes + kv_buffer)
     per_cap = info["per_cap_bytes"]
-    configured_experts = geometry.configured_experts
 
     reserve = 2 * GB
     gpu_plan = []
@@ -1013,40 +1030,110 @@ def build_plan(model, ram_gb=0, context=4096, gpu_indices=None, vram_gb=0,
     requested_vram = max(0, requested_vram - trunk_placed)
     safe_vram = max(0, safe_vram - trunk_placed)
     requested_vram_before_clamp = requested_vram
-    unified_pool = max(0, available_memory - info["dense_bytes"] - runtime_bytes)
-    if placement_unified:
-        # Unified devices expose one physical pool to CUDA and the host. Do not
-        # let an expert tier consume pages that the RAM tier also believes are
-        # available. Dense/runtime reservations are shared exactly once below.
-        requested_vram = min(requested_vram, unified_pool)
-    vram_limit = unified_pool if placement_unified else safe_vram
-    vram_budget = min(requested_vram, vram_limit, info["expert_bytes"])
-    vram_experts = int(vram_budget // typical) if typical else 0
-    hot_bytes = min(info["expert_bytes"], vram_experts * typical)
-    warnings = []
-    if placement_unified:
-        requested_ram = int(ram_gb * GB) if ram_gb > 0 else int(available_memory * 0.88)
-        requested_ram_experts = max(0, requested_ram - info["dense_bytes"] - runtime_bytes)
-        ram_expert_bytes = min(requested_ram_experts,
-                               max(0, unified_pool - vram_budget))
-        ram_budget = info["dense_bytes"] + runtime_bytes + ram_expert_bytes
-        if requested_ram_experts > ram_expert_bytes:
-            warnings.append(
-                f"RAM budget clamped from {format_bytes(requested_ram)} to "
-                f"{format_bytes(ram_budget)} because the GPU shares physical memory")
-    else:
-        ram_budget = int(ram_gb * GB) if ram_gb > 0 else int(available_memory * 0.88)
-    if ram_budget < 4 * GB:
-        ram_budget = 8 * GB if not placement_unified else max(0, ram_budget)
-    cache_bytes = max(0, ram_budget - info["dense_bytes"] - runtime_bytes)
-    cap = int(cache_bytes // per_cap) if per_cap else 0
-    if configured_experts:
-        cap = min(cap, configured_experts)
-    warm_bytes = min(max(0, info["expert_bytes"] - hot_bytes), cache_bytes)
-    cold_bytes = max(0, info["expert_bytes"] - hot_bytes - warm_bytes)
 
+    # The context-dependent half of the plan lives in place() so the clamp
+    # below can re-price every tier at a smaller context before committing.
+    # Everything given to place() above is context-free; everything it returns
+    # scales with the geometry it was handed.
+    def place(geom):
+        kv_bytes = (geom.context_state_bytes + geom.fixed_state_bytes) * kv_slots
+        kv_buffer = geom.workspace_bytes
+        # expert_fixed_bytes is retained once per model (currently Qwen3.8's
+        # normalized FP8 scale bank), unlike per_cap_bytes which is paid for
+        # every cache slot. Include it in the resident runtime reservation so
+        # the selected capacity cannot overrun the model's actual allocation.
+        runtime_bytes = int(1.2 * GB + 2.5 * GB + 64 * max_expert +
+                            info["expert_fixed_bytes"] + kv_bytes + kv_buffer)
+        unified_pool = max(0, available_memory - info["dense_bytes"] - runtime_bytes)
+        local_requested_vram = requested_vram
+        if placement_unified:
+            # Unified devices expose one physical pool to CUDA and the host. Do
+            # not let an expert tier consume pages that the RAM tier also
+            # believes are available. Dense/runtime reservations are shared
+            # exactly once below.
+            local_requested_vram = min(local_requested_vram, unified_pool)
+        vram_limit = unified_pool if placement_unified else safe_vram
+        vram_budget = min(local_requested_vram, vram_limit, info["expert_bytes"])
+        vram_experts = int(vram_budget // typical) if typical else 0
+        hot_bytes = min(info["expert_bytes"], vram_experts * typical)
+        requested_ram = None
+        requested_ram_experts = None
+        ram_expert_bytes = 0
+        if placement_unified:
+            requested_ram = int(ram_gb * GB) if ram_gb > 0 else int(available_memory * 0.88)
+            requested_ram_experts = max(0, requested_ram - info["dense_bytes"] - runtime_bytes)
+            ram_expert_bytes = min(requested_ram_experts,
+                                   max(0, unified_pool - vram_budget))
+            ram_budget = info["dense_bytes"] + runtime_bytes + ram_expert_bytes
+        else:
+            ram_budget = int(ram_gb * GB) if ram_gb > 0 else int(available_memory * 0.88)
+        if ram_budget < 4 * GB:
+            ram_budget = 8 * GB if not placement_unified else max(0, ram_budget)
+        cache_bytes = max(0, ram_budget - info["dense_bytes"] - runtime_bytes)
+        cap = int(cache_bytes // per_cap) if per_cap else 0
+        if geom.configured_experts:
+            cap = min(cap, geom.configured_experts)
+        warm_bytes = min(max(0, info["expert_bytes"] - hot_bytes), cache_bytes)
+        cold_bytes = max(0, info["expert_bytes"] - hot_bytes - warm_bytes)
+        return {"kv_bytes": kv_bytes, "runtime_bytes": runtime_bytes,
+                "vram_budget": vram_budget, "vram_experts": vram_experts,
+                "hot_bytes": hot_bytes, "requested_ram": requested_ram,
+                "requested_ram_experts": requested_ram_experts,
+                "ram_expert_bytes": ram_expert_bytes, "ram_budget": ram_budget,
+                "cache_bytes": cache_bytes, "cap": cap,
+                "warm_bytes": warm_bytes, "cold_bytes": cold_bytes}
+
+    final = place(geometry)
+    context_info = {"requested": context, "granted": context,
+                    "clamped": False, "reason": None}
+    if final["cap"] < 1:
+        # Prefer a smaller context over declaring the machine too small: the
+        # KV/workspace share of runtime scales with context, so halving can
+        # buy back an expert slot. Floor at 512 tokens -- below that chat is
+        # useless and the original "cannot hold" warning is the honest answer.
+        candidate = context
+        while candidate > 512:
+            candidate = max(512, candidate // 2)
+            try:
+                smaller = planner_geometry(resolved, candidate)
+            except ValueError:
+                break
+            trial = place(smaller)
+            if trial["cap"] >= 1:
+                geometry = smaller
+                final = trial
+                context_info = {
+                    "requested": context, "granted": candidate, "clamped": True,
+                    "reason": (f"context {context} leaves no expert slot in the "
+                               f"RAM budget; {candidate} does")}
+                break
+    kv_bytes = final["kv_bytes"]
+    runtime_bytes = final["runtime_bytes"]
+    vram_budget = final["vram_budget"]
+    vram_experts = final["vram_experts"]
+    hot_bytes = final["hot_bytes"]
+    requested_ram = final["requested_ram"]
+    requested_ram_experts = final["requested_ram_experts"]
+    ram_expert_bytes = final["ram_expert_bytes"]
+    ram_budget = final["ram_budget"]
+    cache_bytes = final["cache_bytes"]
+    cap = final["cap"]
+    warm_bytes = final["warm_bytes"]
+    cold_bytes = final["cold_bytes"]
+    configured_experts = geometry.configured_experts
+
+    warnings = []
+    if (placement_unified and requested_ram_experts is not None
+            and requested_ram_experts > ram_expert_bytes):
+        warnings.append(
+            f"RAM budget clamped from {format_bytes(requested_ram)} to "
+            f"{format_bytes(ram_budget)} because the GPU shares physical memory")
     if cap < 1:
         warnings.append("RAM budget cannot hold one expert slot per sparse layer")
+    if context_info["clamped"]:
+        warnings.append(
+            f"context was reduced from {context} to {context_info['granted']} tokens "
+            "so the RAM budget holds one expert slot per layer")
     if gpu_indices is not None and len(gpus) != len(set(gpu_indices)):
         warnings.append("one or more requested GPUs were not detected")
     if planning_gpus and vram_budget < requested_vram_before_clamp:
@@ -1104,6 +1191,63 @@ def build_plan(model, ram_gb=0, context=4096, gpu_indices=None, vram_gb=0,
     actions = _next_actions(bottleneck_class, projected_hit, probe_state,
                             probe_gbs, planning_gpus)
 
+    # Explicit execution strategy: what the tiers above mean in verbs.
+    if not planning_gpus or vram_budget <= 0:
+        strategy, strategy_reason = "cpu-resident", "no placement-qualified GPU budget"
+    elif warm_bytes == 0 and cold_bytes == 0:
+        strategy, strategy_reason = "gpu-offload", "every expert fits the VRAM tier"
+    elif cold_bytes:
+        strategy, strategy_reason = "hybrid", "cold experts spill to disk beyond RAM and VRAM"
+    else:
+        strategy, strategy_reason = "hybrid", "the warm expert tail stays in RAM"
+    execution = {"strategy": strategy, "reason": strategy_reason,
+                 "offload": {"trunk_bytes": trunk_placed,
+                             "hot_expert_bytes": hot_bytes,
+                             "warm_expert_bytes": warm_bytes,
+                             "cold_expert_bytes": cold_bytes}}
+
+    # Quantization decision: what this plan does with the weights it was given.
+    # The planner never converts anything -- it says what the policy allows.
+    load_ratio = getattr(resolved.descriptor, "dense_load_ratio", None)
+    source = "requantized-at-load" if callable(load_ratio) else "as-stored"
+    preserve = bool(POLICIES[policy]["preserve_quantization"])
+    if preserve:
+        quant_action, quant_reason = "keep", "policy preserves the model's stored quantization"
+    else:
+        quant_action = "repack-allowed"
+        quant_reason = ("experimental-fast policy allows repacked weights; "
+                        "this plan does not convert anything by itself")
+    quantization = {"preserve": preserve, "action": quant_action,
+                    "source": source, "fits_ram_budget": cap >= 1,
+                    "reason": quant_reason}
+
+    # KV-cache quantization: advisory only. KV8/KV_TQ live in syntara.c (the
+    # syntara-core engine) and only buy anything for an MLA latent cache, so
+    # the recommendation names both conditions instead of promising them.
+    mla = bool(resolved.family_config.get("kv_lora_rank"))
+    kv_share = (kv_bytes / ram_budget) if ram_budget else 0.0
+    recommended_env = None
+    if not mla:
+        kv_reason = "family has no MLA latent KV cache to quantize"
+    elif resolved.descriptor.engine_group != "syntara-core":
+        kv_reason = "this family's engine does not expose KV8/KV_TQ today"
+    elif ram_budget and kv_bytes >= 0.10 * ram_budget:
+        recommended_env = {"KV8": "1"}
+        kv_reason = (f"KV is {kv_share:.0%} of the RAM budget; the engine's MLA "
+                     "latent KV8 stores it ~3.9x smaller")
+    else:
+        kv_reason = "KV is a small share of the RAM budget"
+    kv_cache = {"quant": "f16", "bytes": kv_bytes,
+                "share_of_ram_budget": round(kv_share, 4),
+                "recommended_env": recommended_env, "reason": kv_reason}
+
+    batch = {"prefill_chunk": {"gpu-offload": 512, "hybrid": 256}.get(strategy, 128),
+             "env": "SYNTARA_PREFILL_CHUNK", "advisory": True,
+             "reason": "suggested prompt-chunk width; engines with a "
+                       "family-specific chunk environment keep their own default"}
+    throughput = _estimate_throughput(strategy, bottleneck_class, projected_hit,
+                                      _resolve_physical_cores(physical_cpus))
+
     return {
         "version": 2,
         "policy": {"name": policy, **POLICIES[policy],
@@ -1137,6 +1281,12 @@ def build_plan(model, ram_gb=0, context=4096, gpu_indices=None, vram_gb=0,
         "expected_bottleneck": bottleneck,
         "bottleneck_class": bottleneck_class,
         "projected_hit_rate": round(projected_hit, 4),
+        "execution": execution,
+        "context": context_info,
+        "quantization": quantization,
+        "kv_cache": kv_cache,
+        "batch": batch,
+        "throughput": throughput,
         "tune": tune,
         "next_actions": actions,
         # Un motore solo-CPU non ha un tier VRAM: annunciarlo comunque fa
@@ -1260,6 +1410,34 @@ def format_plan(plan):
     lines.append(f"limit  {plan['expected_bottleneck']}")
     hit = plan.get("projected_hit_rate", 0)
     lines.append(f"hit    {hit:.0%} projected expert residency")
+    execution = plan.get("execution") or {}
+    if execution.get("strategy"):
+        lines.append(f"strategy {execution['strategy']}")
+    quant = plan.get("quantization") or {}
+    if quant.get("action"):
+        lines.append(f"quant    {quant['action']} · {quant.get('source')}")
+    kv = plan.get("kv_cache") or {}
+    if kv.get("quant"):
+        kv_line = (f"kv       {kv['quant']} · {format_bytes(kv.get('bytes', 0))} "
+                   f"({kv.get('share_of_ram_budget', 0):.0%} of RAM budget)")
+        if kv.get("recommended_env"):
+            kv_line += " · " + ",".join(f"{key}={value}"
+                                        for key, value in kv["recommended_env"].items()) + " recommended"
+        lines.append(kv_line)
+    batch = plan.get("batch") or {}
+    if batch.get("prefill_chunk"):
+        lines.append(f"batch    prefill chunk {batch['prefill_chunk']} suggested "
+                     f"({batch.get('env')}, advisory)")
+    throughput = plan.get("throughput") or {}
+    speed = throughput.get("tok_per_s") or {}
+    if speed:
+        lines.append(f"speed    ~{speed.get('low', 0):g}-{speed.get('high', 0):g} tok/s · "
+                     f"{throughput.get('method', 'estimate')} estimate "
+                     f"(confidence: {throughput.get('confidence', 'low')})")
+    context = plan.get("context") or {}
+    if context.get("clamped"):
+        lines.append(f"context  {context['granted']} of {context['requested']} requested · "
+                     "clamped to fit the RAM budget")
     tune = plan.get("tune", {})
     if tune:
         lines.append("")
