@@ -8,6 +8,7 @@ import {
   Boxes,
   Check,
   CircleHelp,
+  Clock,
   Code2,
   Copy,
   Cpu,
@@ -94,6 +95,7 @@ import { MODEL_TABS, parseHash, type ModelTab, type View } from "@/lib/routes"
 import { hostBaseFromStatus, hostStart, hostStatus, libraryInspect, waitHostReady } from "@/lib/host-bridge"
 import { badgeLabel, groupComplete, metaFromInspect, pickInspectTarget } from "@/lib/inspect"
 import { mergePickerOptions, type PickerRow } from "@/lib/picker"
+import { retryAfterOf, retryDecision, statusOf } from "@/lib/send"
 import { ModelPicker } from "@/components/ModelPicker"
 import { cn } from "@/lib/utils"
 
@@ -223,6 +225,14 @@ export default function App() {
   const [models, setModels] = useState<string[]>([])
   const [draft, setDraft] = useState("")
   const [loading, setLoading] = useState(false)
+  /* Track 2b - queue while busy: the ref is the synchronous source of
+     truth for the flush paths, the state mirrors it for the chips. */
+  type QueuedSend = { id: string; text: string; images: string[]; docs: Array<{ name: string; content: string }>; conversationId: string | null }
+  const [queued, setQueued] = useState<QueuedSend[]>([])
+  const queuedRef = useRef<QueuedSend[]>([])
+  /* What the send path is doing while it waits (retry notices, queued
+     during a model load); cleared the moment a send starts or ends. */
+  const [retryNote, setRetryNote] = useState("")
   const [thinking, setThinking] = useState(false)
   const [maxTokens, setMaxTokens] = useState(4096)
   const [temperature, setTemperature] = useState(0.7)
@@ -462,6 +472,34 @@ export default function App() {
       setLoadingModel(null)
     }
   }
+
+  /* Track 2b - the message queue: typed during a generation or a model
+     load, sent FIFO when the current work finishes. The ref is written
+     synchronously (so enqueue can never race a render); the flush runs
+     from an effect, after commit, so it resolves the conversation and
+     history from fresh state instead of a stale closure. */
+  const enqueue = (text: string, images: string[], docs: Array<{ name: string; content: string }>) => {
+    if (!text && !images.length && !docs.length) return
+    queuedRef.current = [...queuedRef.current, { id: createId("q"), text, images, docs, conversationId: activeConversation?.id ?? null }]
+    setQueued(queuedRef.current)
+  }
+  const dequeue = (): QueuedSend | undefined => {
+    const [next, ...rest] = queuedRef.current
+    queuedRef.current = rest
+    setQueued(rest)
+    return next
+  }
+  const removeFromQueue = (id: string) => {
+    queuedRef.current = queuedRef.current.filter((item) => item.id !== id)
+    setQueued(queuedRef.current)
+  }
+  useEffect(() => {
+    if (loading || loadingModel) return
+    if (!queuedRef.current.length) return
+    const next = dequeue()
+    if (next) void sendAs(next.text, next.images, undefined, next.docs, next.conversationId)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, loadingModel, queued])
 
   /* Track 2a - chat toolbar picker: local-only rows (gateway-served ids
      merged with installed library entries), and selecting an installed
@@ -741,9 +779,12 @@ export default function App() {
     setState((current) => ({ ...current, conversations: [next, ...current.conversations] }))
   }
 
-  const sendAs = async (text: string, images: string[], base?: Conversation, docs: Array<{ name: string; content: string }> = pendingDocs) => {
+  const sendAs = async (text: string, images: string[], base?: Conversation, docs: Array<{ name: string; content: string }> = pendingDocs, conversationId?: string | null) => {
     if (loading) return
-    const current = base || activeConversation || state.conversations[0]
+    const current = base
+      || (conversationId ? state.conversations.find((item) => item.id === conversationId) : null)
+      || activeConversation
+      || state.conversations[0]
     if (!current) return
     let textOut = text.trim()
     let imagesOut = images
@@ -789,55 +830,98 @@ export default function App() {
     setDraft("")
     setPendingImages([])
     setPendingDocs([])
+    setRetryNote("")
     setLoading(true)
     const started = performance.now()
     let tokenCount = 0
     let firstTokenAt: number | null = null
+    /* Mirrors the assistant text in the transcript, so the retry policy
+       can refuse to re-send once partial output already landed. */
+    let assistantText = ""
     const controller = new AbortController()
     abortRef.current = controller
+    let attempt = 0
     try {
-      const result: StreamChatResult = await streamChat({
-        baseUrl: state.settings.baseUrl,
-        model,
-        messages: requestMessages,
-        temperature,
-        maxTokens,
-        enableThinking: thinking,
-        cacheSlot: current.cacheSlot,
-        signal: controller.signal,
-        onDelta: (delta) => {
-          if (firstTokenAt === null) firstTokenAt = performance.now()
-          tokenCount += 1
-          setRuntimeError("")
-          saveConversation({
-            ...initial,
-            messages: initial.messages.map((item) => item.id === assistantMessage.id ? { ...item, content: `${item.content}${delta}` } : item),
-            updatedAt: Date.now(),
-          })
-        },
-      })
-      const totalMs = performance.now() - started
-      const tokensPerSec = totalMs > 100 && tokenCount > 0 ? Math.round((tokenCount / (totalMs / 1000)) * 10) / 10 : 0
-      setMetrics({ kind: "chat", tokensPerSec, firstTokenMs: firstTokenAt !== null ? firstTokenAt - started : 0, totalMs, tokens: tokenCount })
-      if (result.usage) {
-        setAgentLog((currentLog) => currentLog.slice(-29).concat(`Last chat: ${result.usage?.completion_tokens ?? 0} completion tokens`))
-      }
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        setRuntimeError(error instanceof Error ? error.message : "Request failed")
-        saveConversation({
-          ...initial,
-          messages: initial.messages.map((item) => item.id === assistantMessage.id ? { ...item, content: "I couldn't reach the local runtime. Check Developer → Runtime or Settings." } : item),
-          updatedAt: Date.now(),
+      for (;;) {
+        try {
+        const result: StreamChatResult = await streamChat({
+          baseUrl: state.settings.baseUrl,
+          model,
+          messages: requestMessages,
+          temperature,
+          maxTokens,
+          enableThinking: thinking,
+          cacheSlot: current.cacheSlot,
+          signal: controller.signal,
+          onDelta: (delta) => {
+            if (firstTokenAt === null) firstTokenAt = performance.now()
+            tokenCount += 1
+            assistantText += delta
+            setRuntimeError("")
+            saveConversation({
+              ...initial,
+              messages: initial.messages.map((item) => item.id === assistantMessage.id ? { ...item, content: `${item.content}${delta}` } : item),
+              updatedAt: Date.now(),
+            })
+          },
         })
+        const totalMs = performance.now() - started
+        const tokensPerSec = totalMs > 100 && tokenCount > 0 ? Math.round((tokenCount / (totalMs / 1000)) * 10) / 10 : 0
+        setMetrics({ kind: "chat", tokensPerSec, firstTokenMs: firstTokenAt !== null ? firstTokenAt - started : 0, totalMs, tokens: tokenCount })
+        if (result.usage) {
+          const wait = result.queueWaitMs && result.queueWaitMs > 0 ? ` · ${result.queueWaitMs}ms in the local queue` : ""
+          setAgentLog((currentLog) => currentLog.slice(-29).concat(`Last chat: ${result.usage?.completion_tokens ?? 0} completion tokens${wait}`))
+        }
+        setRetryNote("")
+        break
+      } catch (error) {
+        if (controller.signal.aborted) break
+        /* Track 2b: 503 while the model loads, a refused connection
+           while the host starts, 502/504 while the runtime restarts -
+           wait and try again, bounded, with the reason on screen. */
+        const decision = retryDecision(statusOf(error), retryAfterOf(error), attempt, assistantText.length > 0)
+        if (!decision.retry) {
+          setRetryNote("")
+          setRuntimeError(error instanceof Error ? error.message : "Request failed")
+          if (!assistantText) {
+            saveConversation({
+              ...initial,
+              messages: initial.messages.map((item) => item.id === assistantMessage.id ? { ...item, content: "I couldn't reach the local runtime. Check Developer → Runtime or Settings." } : item),
+              updatedAt: Date.now(),
+            })
+          }
+          break
+        }
+        attempt += 1
+        setRetryNote(decision.notice)
+        await new Promise((resolve) => { window.setTimeout(resolve, decision.delayMs) })
+        if (controller.signal.aborted) break
+      }
       }
     } finally {
       abortRef.current = null
       setLoading(false)
+      setRetryNote("")
+      /* Queued sends flush from the post-commit effect above, which
+         resolves the conversation from fresh state (track 2b). */
     }
   }
 
-  const send = () => void sendAs(draft.trim(), pendingImages, undefined, pendingDocs)
+  /* Track 2b: Enter during a generation or a model load queues the
+     message instead of dropping it (the composer stays typable). */
+  const send = () => {
+    const text = draft.trim()
+    if (!text && !pendingImages.length && !pendingDocs.length) return
+    if (loading || loadingModel) {
+      enqueue(text, pendingImages, pendingDocs)
+      setDraft("")
+      setPendingImages([])
+      setPendingDocs([])
+      if (loadingModel) setRetryNote("The model is loading — your message is queued.")
+      return
+    }
+    void sendAs(text, pendingImages, undefined, pendingDocs)
+  }
 
   const abortGeneration = () => abortRef.current?.abort()
 
@@ -1394,6 +1478,7 @@ export default function App() {
         </header>
 
         {runtimeError && <div className="error-strip"><span><CircleHelp size={15} /> {runtimeError}</span><button onClick={() => setRuntimeError("")}><X size={14} /></button></div>}
+        {retryNote && !runtimeError ? <div className="info-strip" role="status"><span><LoaderCircle size={15} className="spin" /> {retryNote}</span></div> : null}
 
         {view === "chat" && (
           <section className={cn("view chat-view", state.settings.historyCollapsed && "history-collapsed")}>
@@ -1473,10 +1558,11 @@ export default function App() {
             <div className="composer-area">
               {pendingImages.length ? <div className="pending-strip">{pendingImages.map((url) => <div key={url} className="pending-image"><img src={url} alt="" /><button onClick={() => setPendingImages((items) => items.filter((item) => item !== url))}><X size={12} /></button></div>)}</div> : null}
               {pendingDocs.length ? <div className="pending-strip">{pendingDocs.map((doc) => <div key={doc.name} className="pending-doc"><FileUp size={12} /><span>{doc.name}</span><button onClick={() => setPendingDocs((items) => items.filter((item) => item.name !== doc.name))}><X size={12} /></button></div>)}</div> : null}
+              {queued.length ? <div className="pending-strip queue-strip">{queued.map((item) => <div key={item.id} className="pending-doc queue-chip" title="Sent automatically when the current reply finishes"><Clock size={12} /><span>{item.text.slice(0, 48)}{item.text.length > 48 ? "…" : ""}{!item.text ? `${item.images.length} image(s)` : ""}</span><button onClick={() => removeFromQueue(item.id)} aria-label="Remove from queue"><X size={12} /></button></div>)}</div> : null}
               <div className="composer">
-                <textarea ref={messageRef} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={selectedModel ? "Message Syntara…" : "Choose a model to start"} aria-label="Message" disabled={!selectedModel || loading} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send() } }} />
+                <textarea ref={messageRef} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={selectedModel ? (loading || loadingModel ? "Message Syntara… (queued until this finishes)" : "Message Syntara…") : "Choose a model to start"} aria-label="Message" disabled={!selectedModel} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send() } }} />
                 <div className="composer-foot">
-                  <div className="composer-hint"><SlidersHorizontal size={12} /> {thinking ? "Reasoning on" : "Direct generation"} · {maxTokens.toLocaleString()} max tokens · {temperature.toFixed(2)} temp{metrics && metrics.tokensPerSec > 0 ? ` · ${metrics.tokensPerSec.toFixed(1)} tok/s` : ""}</div>
+                  <div className="composer-hint"><SlidersHorizontal size={12} /> {thinking ? "Reasoning on" : "Direct generation"} · {maxTokens.toLocaleString()} max tokens · {temperature.toFixed(2)} temp{queued.length ? ` · ${queued.length} queued` : ""}{metrics && metrics.tokensPerSec > 0 ? ` · ${metrics.tokensPerSec.toFixed(1)} tok/s` : ""}</div>
                   <button className={cn("send-btn", loading && "stop")} onClick={() => { if (loading) abortGeneration(); else void send() }} disabled={!selectedModel || (!loading && !draft.trim() && !pendingImages.length && !pendingDocs.length)} aria-label={loading ? "Stop generating" : "Send message"}>{loading ? <X size={17} /> : <ArrowUp size={17} />}</button>
                 </div>
               </div>

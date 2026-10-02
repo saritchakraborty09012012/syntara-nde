@@ -98,32 +98,61 @@ function headers(apiKey = "") {
   }
 }
 
-async function responseError(response: Response) {
+/* Structured HTTP failure (track 2b): the status and the server's
+   Retry-After survive as fields so the send path can decide whether a
+   local gateway that is still loading or restarting is worth waiting
+   for, instead of flattening everything into an opaque message. */
+export class ApiError extends Error {
+  readonly status: number
+  readonly retryAfterSeconds: number | null
+
+  constructor(message: string, status: number, retryAfterSeconds: number | null) {
+    super(message)
+    this.name = "ApiError"
+    this.status = status
+    this.retryAfterSeconds = retryAfterSeconds
+  }
+}
+
+/* Retry-After arrives as either seconds or an HTTP date; only the
+   seconds form matters for a localhost gateway, and the result is
+   always bounded so a bad header cannot pin the UI for minutes. */
+export function parseRetryAfter(header: string | null): number | null {
+  if (!header) return null
+  const seconds = Number(header.trim())
+  if (!Number.isFinite(seconds) || seconds < 0) return null
+  return Math.min(seconds, 15)
+}
+
+async function fail(response: Response): Promise<never> {
   const fallback = `${response.status} ${response.statusText}`
+  let message = fallback
   try {
     const body = (await response.json()) as OpenAIError
-    return body.error?.message || fallback
+    message = body.error?.message || fallback
   } catch {
-    return fallback
+    /* Non-JSON error body (proxy page, bare 503): the status line is
+       still useful enough to show. */
   }
+  throw new ApiError(message, response.status, parseRetryAfter(response.headers.get("retry-after")))
 }
 
 export async function listModels(baseUrl: string, apiKey = "", signal?: AbortSignal) {
   const response = await fetch(endpoint(baseUrl, "models"), { headers: headers(apiKey), signal })
-  if (!response.ok) throw new Error(await responseError(response))
+  if (!response.ok) await fail(response)
   const body = (await response.json()) as { data?: Array<{ id: string }> }
   return (body.data || []).map((model) => model.id)
 }
 
 export async function getHealth(baseUrl: string, apiKey = "", signal?: AbortSignal): Promise<HealthResponse> {
   const response = await fetch(serverEndpoint(baseUrl, "health"), { headers: headers(apiKey), signal })
-  if (!response.ok) throw new Error(await responseError(response))
+  if (!response.ok) await fail(response)
   return (await response.json()) as HealthResponse
 }
 
 export async function getProfile(baseUrl: string, apiKey = "", signal?: AbortSignal): Promise<ProfileResponse> {
   const response = await fetch(serverEndpoint(baseUrl, "profile"), { headers: headers(apiKey), signal })
-  if (!response.ok) throw new Error(await responseError(response))
+  if (!response.ok) await fail(response)
   return (await response.json()) as ProfileResponse
 }
 
@@ -178,7 +207,7 @@ export async function streamChat(options: StreamChatOptions): Promise<StreamChat
       stream_options: { include_usage: true },
     }),
   })
-  if (!response.ok) throw new Error(await responseError(response))
+  if (!response.ok) await fail(response)
   if (!response.body) throw new Error("The server returned an empty stream.")
 
   const reader = response.body.getReader()
@@ -254,6 +283,6 @@ export async function askBrio(
     body: JSON.stringify({ model, state, question, options }),
     signal,
   })
-  if (!response.ok) throw new Error(await responseError(response))
+  if (!response.ok) await fail(response)
   return (await response.json()) as BrioResponse
 }

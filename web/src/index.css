@@ -101,6 +101,10 @@ a { color: inherit; text-decoration: none; }
 .error-strip { margin: 12px 22px 0; padding: 10px 12px; border: 1px solid rgba(255,117,143,.24); background: rgba(255,117,143,.05); border-radius: 11px; display: flex; align-items: center; justify-content: space-between; color: #ff9bb0; font-size: 12px; }
 .error-strip span { display: flex; gap: 7px; align-items: center; }
 
+/* Info variant of the strip: queued sends and bounded retries (track 2b). */
+.info-strip { margin: 12px 22px 0; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent); background: color-mix(in srgb, var(--accent) 6%, transparent); border-radius: 11px; display: flex; align-items: center; justify-content: space-between; color: var(--accent); font-size: 12px; }
+.info-strip span { display: flex; gap: 7px; align-items: center; }
+
 .view { flex: 1; min-height: 0; }
 .scroll-view { overflow: auto; padding: 28px; }
 .scroll-view::-webkit-scrollbar { width: 8px; height: 8px; }
