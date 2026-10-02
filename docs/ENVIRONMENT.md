@@ -14,6 +14,8 @@ not by the engine binaries. The generator above does not scan Python sources.
 | `SYNTARA_HOME` | unset (`%LOCALAPPDATA%\Syntara`, `$XDG_DATA_HOME/syntara`, or `~/.local/share/syntara`) | Root of the per-user data directory: store, backups and the model library index (`library.json`, `models/`). |
 | `SYNTARA_LLAMA_BIN` | unset (falls back to `syntara/runtime/bin/llama-server`) | Full path to the GGUF backend server binary. Consulted before the bundled location by `syntara/runtime/llama_cpp.py`; `tools/fetch_llama_cpp.ps1` installs the pinned release into the bundled location. |
 | `SYNTARA_GATEWAY_KEY` | unset (gateway accepts unauthenticated loopback requests) | When set, every local gateway request must send `Authorization: Bearer <value>`; mismatched or missing keys get HTTP 401. |
+| `SYNTARA_IDLE_UNLOAD_S` | `0` (keep the model warm) | Host gateway: unload the model after this many seconds without a request. `0` disables idle unload; after an idle unload the state stays `ready`, and the next chat request reloads on demand (it blocks while loading; a failed reload is HTTP 503 `runtime_not_ready` with `Retry-After: 5`, and requests arriving while another request is reloading get 503 `restarting` with `Retry-After: 2`). |
+| `SYNTARA_CALIBRATE` | `1` (on) | Host gateway: on the first start with a real runtime, run one short local chat turn to measure tokens/s for the loaded model, cache the result, and expose it as `calibration` in `GET /profile`. Set to `0`, `false` or `off` to skip the one-time measurement. |
 | `XDG_DATA_HOME` | unset | POSIX fallback root for the data directory when `SYNTARA_HOME` is unset. |
 
 ## Which program reads these?

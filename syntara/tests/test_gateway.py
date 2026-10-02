@@ -131,7 +131,12 @@ class GatewayTest(unittest.TestCase):
         status, _, raw = self.get(gw, "/profile")
         self.assertEqual(status, 200)
         body = json.loads(raw)
-        self.assertEqual(body, {"seq": 0, "turns": []})
+        self.assertEqual(body["seq"], 0)
+        self.assertEqual(body["turns"], [])
+        # 1h: first-run calibration result (None until one has been measured).
+        self.assertIn("calibration", body)
+        self.assertTrue(body["calibration"] is None
+                        or isinstance(body["calibration"], dict))
 
         self.post_json(gw, "/v1/chat/completions",
                        {"messages": [{"role": "user", "content": "hi"}]})

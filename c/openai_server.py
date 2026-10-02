@@ -2954,6 +2954,18 @@ def _win_kill_on_close_job(pid):
         return None   # never let process bookkeeping break starting the engine
 
 
+class EngineExit(RuntimeError):
+    """The engine process failed to become ready. ``rc`` is its exit code when
+    the caller can classify the death (track 1h: 0xC0000017 STATUS_NO_MEMORY
+    and SIGKILL are the OOM classes a lighter-plan retry can fix). A
+    RuntimeError subclass, so every existing ``except RuntimeError`` and test
+    that matches the old message keeps working."""
+
+    def __init__(self, message, rc=None):
+        super().__init__(message)
+        self.rc = rc
+
+
 class Engine:
     # cap=None = "not explicitly set": a glm-arch model's engine resolves the
     # 0 sentinel (8 historically, 1 on Metal+darwin+fast SSD -- syntara.c
@@ -3005,7 +3017,22 @@ class Engine:
         self.hits_seq = 0                      # latest "TIERS" snapshot from the engine
         self.profile = collections.deque(maxlen=PROFILE_TURNS)  # per-turn phase timings
         self.profile_seq = 0
-        read_engine_turn(self.process.stdout, READY, lambda _: None)
+        try:
+            read_engine_turn(self.process.stdout, READY, lambda _: None)
+        except RuntimeError as exc:
+            # Startup death: surface the exit code so the launcher can
+            # classify OOM (track 1h). A fake/test process without poll/wait
+            # keeps the original bare RuntimeError.
+            rc = None
+            try:
+                rc = self.process.poll()
+                if rc is None:
+                    rc = self.process.wait(timeout=3)
+            except Exception:
+                rc = None
+            if rc is None:
+                raise
+            raise EngineExit(f"{exc} (engine exit code {rc})", rc=rc) from None
         self.dispatcher = threading.Thread(target=self._dispatch_stdout,
                                            name="syntara-stdout", daemon=True)
         self.dispatcher.start()

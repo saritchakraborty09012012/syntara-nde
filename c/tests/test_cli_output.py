@@ -1,4 +1,5 @@
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -165,6 +166,9 @@ class ChatCapForwardingTest(unittest.TestCase):
         class FakeProc:
             def __init__(self, cmd, **_kw):
                 captured["cmd"] = cmd
+                # cmd_chat now opens the child with stderr=PIPE and drains it
+                # for OOM classification (track 1h): model the pipe handle.
+                self.stderr = io.BytesIO(b"")
             def poll(self):
                 return None
             def terminate(self):

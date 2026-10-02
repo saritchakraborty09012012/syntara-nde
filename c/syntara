@@ -436,6 +436,64 @@ def cap_for_launch(explicit_cap, env, fallback):
         planned=0
     return measured if measured>=1 else planned if planned>=1 else fallback
 
+_OOM_TEXT_MARKERS=("out of memory","not enough memory","failed to allocate",
+                   "cannot allocate","unable to allocate","bad_alloc",
+                   "allocation failed")
+_DEFECTIVE_MARKERS=("short read","truncated shard","checksum mismatch",
+                    "shape mismatch","is not a valid")
+_OOM_EXIT_CODES=(0xC0000017,)   # Windows STATUS_NO_MEMORY: the peak RSS/pagefile ran out
+
+def oom_class_failed(text="",rc=None):
+    """True when a dead engine looks out-of-memory -- the one startup-failure
+    class a lighter plan (fewer cache slots / a smaller context) can fix (1h).
+    rc==-9 is the kernel's OOM-killer (engine_diag, #305: the engine never
+    SIGKILLs itself); 0xC0000017 is Windows STATUS_NO_MEMORY. A defective
+    checkpoint vetoes the retry even under an OOM rc: a lighter plan cannot
+    fix a truncated file, and the original error is the honest one to show."""
+    low=(text or "").lower()
+    if any(marker in low for marker in _DEFECTIVE_MARKERS): return False
+    if rc is not None:
+        # -9: the kernel's OOM-killer (SIGKILL has no Windows constant, so
+        # compare the POSIX number directly; engine_diag #305 uses the same rule).
+        if rc<0 and (-rc==9 or -rc==getattr(signal,"SIGKILL",9)): return True
+        if (rc & 0xFFFFFFFF) in _OOM_EXIT_CODES: return True
+    return any(marker in low for marker in _OOM_TEXT_MARKERS)
+
+def lighter_cap(cap):
+    """Halve a cap (cache slots/layer, --cap) for one lighter retry. A
+    sentinel (0), a minimum (1), or a non-number has nothing to halve."""
+    try: value=int(cap)
+    except (TypeError,ValueError): return None
+    if value<2: return None
+    return max(1,value//2)
+
+def lighter_plan(family,env,cap):
+    """Return (env,cap) for ONE lighter retry after an OOM-class load death,
+    or None when nothing can honestly be lightened: halves the family's
+    context env (floor 512) and/or the cap. An absent lever is never
+    invented -- the retry must not claim a value the first attempt never had."""
+    new_cap=lighter_cap(cap)
+    lightened=new_cap is not None
+    new_env=dict(env)
+    key=getattr(getattr(family,"limits",None),"context_env",None)
+    if key:
+        try: current=int(new_env.get(key) or "")
+        except (TypeError,ValueError): current=0
+        if current>512:
+            new_env[key]=str(max(512,current//2)); lightened=True
+    return (new_env,new_cap) if lightened else None
+
+def _drain_tail(box,stream):
+    """Read a child's stderr to EOF into a bounded list. The pipe must be
+    drained for the child's whole life (its engine inherits this stderr, and
+    an unread 64 KiB pipe would freeze both mid-turn), and the list is capped
+    so a chatty child cannot grow memory without bound."""
+    try:
+        for raw in iter(stream.readline,b""):
+            box.append(raw.decode("utf-8","replace"))
+            if len(box)>400: del box[:len(box)-400]
+    except (OSError,ValueError,UnicodeError): pass
+
 def operator_cap(a, arch):
     """Return a real operator cap, including GLM's documented CAP channel."""
     cap=getattr(a,"cap",None)
@@ -1953,22 +2011,52 @@ def cmd_chat(a):
              "--engine",engine,"--arch",arch,"--model-id",model_id,
              "--host","127.0.0.1","--port","8000","--max-tokens",
              str(ngen_for(a,interactive=True,family=family))]
-        if a.cap is not None: cmd+=["--cap",str(a.cap)]
+        attempt_cap=a.cap
+        if attempt_cap is not None: cmd+=["--cap",str(attempt_cap)]
         if a.api_key: cmd+=["--api-key",a.api_key]
-        p=subprocess.Popen(cmd,env=env_for_engine(a,arch))
+        attempt_env=env_for_engine(a,arch)
+        # The child's own default (cap_for_arch: "legacy 8" for a non-glm arch
+        # when --cap is absent, #379) is the baseline the retry halves.
+        base_cap=(attempt_cap if attempt_cap is not None
+                  else openai_server.cap_for_arch(arch,None,attempt_env))
+        p=None
         try:
-            sp=Spinner(f"loading {model_id}…"); sp.start()
-            for _ in range(1800):
-                if p.poll() is not None:
-                    sp.stop(); sys.exit(f"{model_id} server exited while loading")
-                if server_probe("http://127.0.0.1:8000",a.api_key,timeout=1.0):
-                    sp.stop()
-                    chat_attached(a,"http://127.0.0.1:8000",model_id)
-                    return
-                time.sleep(1)
-            sp.stop(); sys.exit(f"timed out loading {model_id}")
+            for _attempt in range(2):
+                p=subprocess.Popen(cmd,env=attempt_env,stderr=subprocess.PIPE)
+                # Drain the single parent-side pipe for the child's whole life
+                # (its engine inherits this stderr; an unread 64 KiB pipe would
+                # freeze both mid-turn). One pipe only -- the two-pipe CPython
+                # read deadlock cannot happen here, chat runs over HTTP.
+                _tail=[]
+                _drain=threading.Thread(target=_drain_tail,args=(_tail,p.stderr),
+                                        daemon=True)
+                _drain.start()
+                sp=Spinner(f"loading {model_id}…"); sp.start()
+                for _ in range(1800):
+                    if p.poll() is not None:
+                        sp.stop(); break
+                    if server_probe("http://127.0.0.1:8000",a.api_key,timeout=1.0):
+                        sp.stop()
+                        chat_attached(a,"http://127.0.0.1:8000",model_id)
+                        return
+                    time.sleep(1)
+                else:
+                    sp.stop(); sys.exit(f"timed out loading {model_id}")
+                # Died while loading: one lighter retry on an OOM-class death.
+                _drain.join(timeout=2)
+                plan=lighter_plan(family,attempt_env,base_cap) if _attempt==0 else None
+                if plan and oom_class_failed("".join(_tail),p.returncode):
+                    banner(f"{model_id} server died while loading (OOM-class) · "
+                           "retrying once with a lighter plan")
+                    attempt_env,attempt_cap2=plan
+                    if attempt_cap2 is not None:
+                        attempt_cap=attempt_cap2
+                        if "--cap" in cmd: cmd[cmd.index("--cap")+1]=str(attempt_cap)
+                        else: cmd+=["--cap",str(attempt_cap)]
+                    continue
+                sys.exit(f"{model_id} server exited while loading")
         finally:
-            if p.poll() is None:
+            if p is not None and p.poll() is None:
                 p.terminate()
                 try: p.wait(timeout=10)
                 except subprocess.TimeoutExpired: p.kill()
@@ -1990,21 +2078,48 @@ def cmd_chat(a):
     # once the READY sentinel arrives, so the status-line display below works
     # exactly as before. (Do NOT add a concurrent stderr drain thread: on
     # Windows, reading two child pipes simultaneously deadlocks CPython's IO.)
-    p=subprocess.Popen([GLM,str(cap_for_launch(a.cap,e,0))], env=e, stdin=subprocess.PIPE,
-                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
-    sp=Spinner("waking the giant (744B)…"); sp.start()
-    # Keep the pre-READY stdout preamble instead of discarding it: the engine's
-    # "loaded in Xs | resident dense: Y MB" line is a printf, i.e. STDOUT
-    # (syntara.c:9595 — same in inkling.c/olmoe.c), so it arrives HERE and never
-    # in errlog. The ready-line regex below used to scan stderr for it and could
-    # never match. A few hundred bytes of banner; nothing else reads them.
-    _preamble=bytearray()
-    st=stream_turn(p, READY, _preamble.extend)
-    sp.stop()
-    if st is None:
-        try: errlog.write(p.stderr.read().decode("utf-8","replace"))
+    # ONE lighter retry after an OOM-class load death (1h): halve the cap
+    # (cache slots/layer) and/or the family context env, respawn exactly once.
+    # Anything not classified OOM keeps the original single-attempt path.
+    launch_cap=cap_for_launch(a.cap,e,0)
+    for _attempt in range(2):
+        p=subprocess.Popen([GLM,str(launch_cap)], env=e, stdin=subprocess.PIPE,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+        sp=Spinner("waking the giant (744B)…" if _attempt==0
+                   else "waking the giant (lighter plan)…"); sp.start()
+        # Keep the pre-READY stdout preamble instead of discarding it: the engine's
+        # "loaded in Xs | resident dense: Y MB" line is a printf, i.e. STDOUT
+        # (syntara.c:9595 — same in inkling.c/olmoe.c), so it arrives HERE and never
+        # in errlog. The ready-line regex below used to scan stderr for it and could
+        # never match. A few hundred bytes of banner; nothing else reads them.
+        _preamble=bytearray()
+        st=stream_turn(p, READY, _preamble.extend)
+        sp.stop()
+        if st is not None: break
+        # Died during load: the engine's last words are the only evidence a
+        # silent OOM-kill or an in-engine allocation failure leaves behind.
+        _tail=b""
+        try: _tail=p.stderr.read() or b""
         except (OSError, ValueError): pass
-        errlog.flush(); errlog.seek(0); print(errlog.read()[-1500:])
+        _tail_text=_tail.decode("utf-8","replace")
+        try: errlog.write(_tail_text)
+        except (OSError, ValueError): pass
+        errlog.flush(); print(_tail_text[-1500:])
+        if p.poll() is None:            # stdout EOF can arrive a beat before
+            try: p.wait(timeout=2)      # the exit code; reap before classifying
+            except Exception: pass
+        _plan=lighter_plan(family,e,launch_cap) if _attempt==0 else None
+        if _plan and oom_class_failed(_tail_text+_preamble.decode("utf-8","replace"), p.poll()):
+            _ctx=getattr(getattr(family,"limits",None),"context_env",None)
+            _bits=[]
+            if _plan[1] is not None: _bits.append(f"cap {launch_cap}→{_plan[1]}")
+            if _ctx and _plan[0].get(_ctx)!=e.get(_ctx):
+                _bits.append(f"{_ctx} {e.get(_ctx)}→{_plan[0].get(_ctx)}")
+            banner("engine died while loading (OOM-class) · "
+                   f"retrying once with a lighter plan ({', '.join(_bits)})")
+            e=_plan[0]
+            if _plan[1] is not None: launch_cap=_plan[1]
+            continue
         engine_diag(p)        # perche' e' morto (OOM-kill compreso); errlog e' gia' stampato sopra
         sys.exit("the engine exited while loading")
     p.stdout.readline()   # TIERS line (web-dashboard protocol): emitted once right after STAT;
@@ -2183,11 +2298,30 @@ def cmd_serve(a):
                 sys.exit(f"{C.yel}cluster coordinator has no live expert workers{C.r}")
             env["CLUSTER_WORKERS"] = ",".join(workers)
             print(f"  {C.dim}[CLUSTER] discovered {len(workers)} expert worker(s){C.r}", file=sys.stderr)
-        openai_server.serve(a.model,a.host,a.port,model_id,a.api_key,
-              a.cap,ngen_for(a,interactive=True,family=family),engine,
-              env,a.cors_origin,
-              a.max_queue,a.queue_timeout,a.kv_slots,allowed_hosts=a.allowed_host,
-              family=family)
+        attempt_cap=a.cap
+        # The engine default (cap_for_arch) is the baseline the retry halves.
+        base_cap=(attempt_cap if attempt_cap is not None
+                  else openai_server.cap_for_arch(arch,None,env))
+        for _attempt in range(2):
+            try:
+                openai_server.serve(a.model,a.host,a.port,model_id,a.api_key,
+                      attempt_cap,ngen_for(a,interactive=True,family=family),engine,
+                      env,a.cors_origin,
+                      a.max_queue,a.queue_timeout,a.kv_slots,allowed_hosts=a.allowed_host,
+                      family=family)
+                break
+            except Exception as exc:
+                # ONE lighter retry when the engine died OOM-class while
+                # starting (1h). serve() has already released the port in its
+                # own finally before the exception reaches here, so rebinding
+                # is safe; anything not classified OOM re-raises untouched.
+                rc=getattr(exc,"rc",None)
+                plan=lighter_plan(family,env,base_cap) if _attempt==0 else None
+                if not plan or not oom_class_failed(str(exc),rc): raise
+                banner("engine died while starting (OOM-class) · "
+                       "retrying once with a lighter plan")
+                env,attempt_cap2=plan
+                if attempt_cap2 is not None: attempt_cap=attempt_cap2
     finally:
         try: os.unlink(serve_pidfile(a.port))
         except OSError: pass

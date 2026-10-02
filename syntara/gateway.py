@@ -125,6 +125,22 @@ def _hwinfo() -> dict[str, Any]:
     }
 
 
+def default_idle_unload_s() -> float:
+    """Idle-unload timeout in seconds (0 = keep the model warm forever).
+
+    Unloading after idle frees the model's RAM on constrained machines
+    while staying warm during use; the next request pays a reload (AGENTS
+    §69: unload only what nobody is using). Invalid values read as 0 so a
+    typo can never brick the gateway.
+    """
+    raw = os.environ.get("SYNTARA_IDLE_UNLOAD_S", "").strip()
+    try:
+        value = float(raw) if raw else 0.0
+    except ValueError:
+        return 0.0
+    return max(0.0, value)
+
+
 class HostGateway:
     """Loopback HTTP facade over one loaded model (see module docstring)."""
 
@@ -140,12 +156,16 @@ class HostGateway:
                  startup_timeout: float = 120.0,
                  scheduler: Scheduler | None = None,
                  max_queue: int = DEFAULT_MAX_QUEUE,
-                 queue_timeout: float = DEFAULT_QUEUE_TIMEOUT) -> None:
+                 queue_timeout: float = DEFAULT_QUEUE_TIMEOUT,
+                 idle_unload_s: float | None = None) -> None:
         self.entry = dict(entry)
         self.library = library
         self.host = host
         self.port = int(port)
         self.api_key = api_key
+        self.idle_unload_s = (default_idle_unload_s()
+                              if idle_unload_s is None
+                              else max(0.0, float(idle_unload_s)))
         self.cors_origins = tuple(
             cors_origins if cors_origins is not None else DEFAULT_CORS_ORIGINS)
         self._model_ctx = self.entry.get("model", {}).get("context_length")
@@ -173,13 +193,24 @@ class HostGateway:
         self.failure: str | None = None  # set only when supervision gave up
         # Cancellation for POST /stop (checked per streamed frame).
         self._cancel = threading.Event()
+        # Warm keep / idle unload (track 1h): the supervisor unloads after
+        # `idle_unload_s` of no requests; `ensure_loaded` reloads on demand.
+        self._idle_unloaded = False
+        self._last_used = time.monotonic()
+        self._load_lock = threading.Lock()
+        self._calib_thread: threading.Thread | None = None
 
     @property
     def state(self) -> str:
-        """Current lifecycle state; a stillborn runtime reads as degraded."""
+        """Current lifecycle state; a stillborn runtime reads as degraded.
+
+        An intentional idle unload stays `ready` - the model is absent but
+        reloads on the next request, so health must not claim degradation.
+        """
         with self._state_lock:
             state = self._state
-        if state == "ready" and self.runtime is not None and not self.runtime.loaded:
+        if (state == "ready" and self.runtime is not None
+                and not self.runtime.loaded and not self._idle_unloaded):
             return "degraded"
         return state
 
@@ -206,6 +237,46 @@ class HostGateway:
             self.entry["path"], context=self.context, threads=self._threads,
             startup_timeout=self._startup_timeout)
 
+    def _memory_guard(self) -> None:
+        """Refuse an impossible load *before* spawning (track 1h, pre-OOM).
+
+        Uses the library's stored weight estimate (``ram_gb_min`` =
+        weights x 1.25 from gguf_inspect). When the estimate alone exceeds
+        free RAM, no OOM ladder can save us - the model cannot fit - so
+        fail fast with numbers the user can act on instead of minutes of
+        loading followed by an opaque allocation error (AGENTS §14).
+        Entries without an estimate are loaded as before: an unknown is
+        not an impossible.
+        """
+        estimates = self.entry.get("estimates")
+        need = estimates.get("ram_gb_min") if isinstance(estimates, dict) else None
+        if need is None:
+            return
+        try:
+            need_gb = float(need)
+        except (TypeError, ValueError):
+            return
+        avail_gb = _default_ram_gb()
+        if avail_gb is None or avail_gb >= need_gb:
+            return
+        raise RuntimeError(
+            f"not enough free memory to load `{self.served_model_id}`: it "
+            f"needs about {need_gb:.1f} GB (weights plus headroom) but only "
+            f"{avail_gb:.1f} GB is free; close other applications or use a "
+            f"smaller model/quantization")
+
+    def _start_calibration(self) -> None:
+        """Kick the first-run micro-bench once the real runtime is serving."""
+        if self._runtime_factory is not None:
+            return  # synthetic runtimes (tests) are not worth measuring
+        from . import calibrate
+        if not calibrate.enabled():
+            return
+        self._calib_thread = threading.Thread(
+            target=calibrate.maybe_calibrate, args=(self,),
+            daemon=True, name="syntara-calibrate")
+        self._calib_thread.start()
+
     def start(self) -> "HostGateway":
         """Load the model, bind loopback, and serve on a background thread."""
         if self._server is not None:
@@ -214,6 +285,7 @@ class HostGateway:
             self._state = "starting"
         try:
             self.runtime = self._build_runtime()
+            self._memory_guard()
             self.runtime.load()  # raises with an actionable message on failure
             handler = _make_handler(self)
             try:
@@ -241,6 +313,7 @@ class HostGateway:
         self._supervisor.start()
         with self._state_lock:
             self._state = "ready"
+        self._start_calibration()
         return self
 
     def stop(self) -> None:
@@ -282,12 +355,87 @@ class HostGateway:
     # ----------------------------------------------------------- supervision
 
     def _supervise_loop(self) -> None:
+        # Crash isolation (track 1h): this thread must outlive transient
+        # states (reload, idle reload) and any exception - a dead supervisor
+        # while the state still reads `ready` is exactly the silent failure
+        # it exists to prevent. Only an explicit stop or `failed` ends it.
         while not self._supervisor_stop.wait(0.5):
-            if self._state not in ("ready", "degraded"):
+            if self._state == "failed":
                 return
-            runtime = self.runtime
-            if runtime is not None and not runtime.loaded:
-                self._on_runtime_death(runtime)
+            if self._state in ("starting", "stopping", "stopped"):
+                continue  # a load/reload owns the runtime right now
+            try:
+                runtime = self.runtime
+                if (runtime is not None and runtime.loaded
+                        and self._idle_timed_out()):
+                    self._idle_unload()
+                    continue
+                if (runtime is not None and not runtime.loaded
+                        and not self._idle_unloaded):
+                    self._on_runtime_death(runtime)
+            except Exception as exc:  # noqa: BLE001 - report, never die
+                with self._state_lock:
+                    self.last_error = f"supervisor error: {exc}"
+                    self.supervisor_last_event = f"supervisor error: {exc}"
+
+    def _idle_timed_out(self) -> bool:
+        return (self.idle_unload_s > 0 and self._state == "ready"
+                and not self._idle_unloaded
+                and (time.monotonic() - self._last_used)
+                >= self.idle_unload_s)
+
+    def _idle_unload(self) -> None:
+        """Unload an idle warm model; the next request reloads it."""
+        with self._state_lock:
+            if self._state != "ready" or self._idle_unloaded:
+                return
+            self._idle_unloaded = True
+            idle_for = round(time.monotonic() - self._last_used, 1)
+        try:
+            if self.runtime is not None:
+                self.runtime.unload()
+        except Exception as exc:  # noqa: BLE001 - a failed unload is not death
+            with self._state_lock:
+                self._idle_unloaded = False
+            self.supervisor_last_event = f"idle unload failed: {exc}"
+            return
+        with self._state_lock:
+            self.supervisor_last_event = (
+                f"unloaded after {idle_for}s idle "
+                f"(idle unload at {round(self.idle_unload_s, 1)}s)")
+
+    def ensure_loaded(self) -> None:
+        """Reload after an idle unload, on demand (AGENTS §112).
+
+        Only an *intentional* idle unload is handled here; a real backend
+        death stays supervision's job. Raises the loader's actionable
+        error (including the memory guard) so callers can report 503.
+        """
+        with self._load_lock:
+            if self.runtime is None:
+                return
+            if self.runtime.loaded:
+                with self._state_lock:
+                    self._idle_unloaded = False
+                return
+            if not self._idle_unloaded:
+                return
+            with self._state_lock:
+                self._state = "starting"
+            try:
+                self._memory_guard()
+                self.runtime.load()
+            except Exception as exc:
+                with self._state_lock:
+                    self._state = "failed"
+                    self.failure = f"reload after idle unload failed: {exc}"
+                    self.last_error = self.failure
+                raise
+            with self._state_lock:
+                self._idle_unloaded = False
+                self._state = "ready"
+            self.failure = None
+            self._last_used = time.monotonic()
 
     def _on_runtime_death(self, dead: Any) -> None:
         """Detect an unexpected backend exit: reload once, or fail honestly."""
@@ -342,6 +490,7 @@ class HostGateway:
         usage = usage or {}
         with self._state_lock:
             self._seq += 1
+            self._last_used = time.monotonic()  # a finished turn is activity
             self._turns.append({
                 "seq": self._seq,
                 "wall_s": round(wall_s, 3),
@@ -362,6 +511,15 @@ class HostGateway:
         }
         if self.runtime is not None:
             body["runtime"] = self.runtime.health()
+        if self.idle_unload_s > 0 or self._idle_unloaded:
+            with self._state_lock:
+                idle_for = round(time.monotonic() - self._last_used, 1)
+            body["idle"] = {
+                "enabled": self.idle_unload_s > 0,
+                "unloaded": self._idle_unloaded,
+                "idle_unload_s": self.idle_unload_s,
+                "idle_for_s": idle_for,
+            }
         if self.restarts or self.supervisor_last_event:
             body["supervisor"] = {
                 "restarts": self.restarts,
@@ -374,8 +532,11 @@ class HostGateway:
         return body
 
     def profile_body(self) -> dict[str, Any]:
+        from . import calibrate
         with self._state_lock:
-            return {"seq": self._seq, "turns": list(self._turns)}
+            body = {"seq": self._seq, "turns": list(self._turns)}
+        body["calibration"] = calibrate.calibration_for(self.served_model_id)
+        return body
 
     # ---------------------------------------------------------------- reload
 
@@ -406,6 +567,7 @@ class HostGateway:
             self._state = "starting"
         try:
             self.runtime = self._build_runtime()
+            self._memory_guard()
             self.runtime.load()
         except Exception as exc:
             with self._state_lock:
@@ -415,6 +577,8 @@ class HostGateway:
             raise
         with self._state_lock:
             self._state = "ready"
+            self._idle_unloaded = False
+            self._last_used = time.monotonic()
         self.failure = None
         return reason
 
@@ -461,6 +625,22 @@ class HostGateway:
             respond.error(400, "`messages` must be a non-empty array",
                           "invalid_request_error", "invalid_messages")
             return
+        with self._state_lock:
+            self._last_used = time.monotonic()  # arrival counts as activity
+        if self._idle_unloaded:
+            try:
+                self.ensure_loaded()
+            except Exception as exc:  # noqa: BLE001 - actionable 503
+                respond.error(503, str(exc), "server_error", "runtime_not_ready",
+                              extra_headers={"Retry-After": "5"})
+                return
+        if self.state == "starting":
+            # Reloading after a crash or idle: honest, retryable, not a lie
+            # about readiness (AGENTS §74/§112).
+            respond.error(503, "the model is restarting; retry shortly",
+                          "server_error", "restarting",
+                          extra_headers={"Retry-After": "2"})
+            return
         if self.runtime is None or not self.runtime.loaded:
             respond.error(503, "no model is loaded in the runtime",
                           "server_error", "runtime_not_ready")
@@ -491,8 +671,12 @@ class HostGateway:
             if not respond.streaming:
                 detail = getattr(exc, "detail", "")
                 try:
+                    # Retry-After: supervision may be reloading the backend;
+                    # a client that retries once usually lands on a healthy
+                    # runtime instead of treating this as a dead endpoint.
                     respond.error(502, str(exc), "server_error",
-                                  "backend_error", detail=detail)
+                                  "backend_error", detail=detail,
+                                  extra_headers={"Retry-After": "2"})
                 except OSError:
                     pass  # the client vanished; nothing left to tell it
             # Once streaming started, the connection is already committed;
