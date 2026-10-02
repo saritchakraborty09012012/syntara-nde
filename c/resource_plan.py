@@ -15,6 +15,7 @@ from pathlib import Path
 from family_registry import (expert_contributions, planner_geometry,
                              fixed_resident_contribution, resident_contribution,
                              trunk_contribution,
+                             family_by_id,
                              resolve_model)
 
 
@@ -1353,6 +1354,27 @@ def environment_for_plan(plan, env=None, cuda_enabled=True):
         # Private bridge for engines whose expert capacity is an argv value.
         # The gateway consumes and removes it before starting the engine.
         result.setdefault("SYNTARA_PLAN_CAP", str(planned_cap))
+
+    # The context clamp is a plan decision about memory, and each engine
+    # reads it from its own family variable (CTX, Q36_MAXT, K3_MAXT, ...).
+    # Without this bridge the engine kept the *requested* context after the
+    # plan had priced the granted one - the clamp printed by `syntara plan`
+    # never reached the allocation it existed to prevent.  Only when
+    # clamped: with no clamp there is nothing to correct, and the engine
+    # keeps whatever default or user value it would have used anyway.
+    # setdefault keeps an explicit user value (flag or env) authoritative.
+    context = plan.get("context", {})
+    if context.get("clamped"):
+        granted = context.get("granted")
+        if (isinstance(granted, int) and not isinstance(granted, bool) and
+                granted >= 1):
+            try:
+                context_env = family_by_id(
+                    plan["model"]["family_id"]).limits.context_env
+            except (KeyError, AttributeError, TypeError):
+                context_env = None
+            if context_env:
+                result.setdefault(context_env, str(granted))
 
     vram = plan["tiers"]["vram"]
     # Report every device, but only name the placement-qualified ones to the

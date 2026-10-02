@@ -1164,6 +1164,40 @@ class PlannerDecisionTest(unittest.TestCase):
         self.assertFalse(any("context was reduced" in warning
                              for warning in plan["warnings"]))
 
+    def _clamped_plan(self):
+        def big_geometry(resolved, context):
+            return PlannerGeometry(context_state_bytes=context * (1 << 20),
+                                   fixed_state_bytes=0, workspace_bytes=0,
+                                   configured_experts=8)
+
+        with mock.patch("resource_plan.planner_geometry", side_effect=big_geometry):
+            return self.plan(ram_gb=7, available_memory=8 * GB)
+
+    def test_the_clamp_reaches_the_family_context_env(self):
+        """The engine allocates from its own family variable (glm: CTX).
+
+        The clamp exists to keep the launch inside the RAM budget it was
+        computed against; writing it only into `syntara plan` output meant
+        the engine kept the requested context and priced exactly the
+        allocation the clamp was meant to prevent. Plan 1f: granted
+        context is env the launch actually injects.
+        """
+        plan = self._clamped_plan()
+        self.assertTrue(plan["context"]["clamped"])
+        env = environment_for_plan(plan, {})
+        self.assertEqual(env["CTX"], str(plan["context"]["granted"]))
+
+    def test_without_a_clamp_the_family_context_env_is_untouched(self):
+        """Nothing to correct: the engine keeps its default or user value."""
+        plan = self.plan()
+        self.assertNotIn("CTX", environment_for_plan(plan, {}))
+
+    def test_an_explicit_context_env_wins_over_the_clamp(self):
+        """setdefault contract: an explicit user value outranks the plan."""
+        plan = self._clamped_plan()
+        env = environment_for_plan(plan, {"CTX": "4096"})
+        self.assertEqual(env["CTX"], "4096")
+
     def test_batch_advice_varies_by_strategy_and_is_not_exported(self):
         cpu = self.plan()
         self.assertEqual(cpu["batch"]["prefill_chunk"], 128)

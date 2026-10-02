@@ -10,6 +10,7 @@ import sys
 import time
 import struct
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -22,7 +23,7 @@ from openai_server import (APIError, APIHandler, APIServer, ClientCancelled,
                            generation_options, parse_tool_calls, parse_dsv4_tool_calls,
                            parse_arch_tool_calls, parse_k3_tool_calls, parse_qwen38_tool_calls,
                            read_engine_turn, render_chat, render_chat_kimi, render_chat_olmoe,
-                           render_chat_qwen38, render_chat_v4, _dsv4_tool_calls, serve,
+                           render_chat_qwen38, render_chat_v4, _dsv4_tool_calls, runtime_status, serve,
                            split_thinking_reply,
                            stop_policy, tune_child_env)
 
@@ -1314,6 +1315,53 @@ class CapSentinelShimTest(unittest.TestCase):
             self.assertNotIn(key, env)
 
 
+class RuntimeStatusTest(unittest.TestCase):
+    """Health must report the settings the engine child really received.
+
+    Plan 1f's honest-status contract: values are verbatim from the launch
+    environment or null - a setting the plan never injected reads null,
+    never the intention `syntara plan` printed.
+    """
+
+    def status(self, env, family="kimi", context_env="K3_MAXT",
+               engine="/build/kimi_k3"):
+        stub = SimpleNamespace(id=family,
+                               limits=SimpleNamespace(context_env=context_env))
+        return runtime_status(stub, engine, env)
+
+    def test_reports_identity_and_injected_settings_verbatim(self):
+        status = self.status({"K3_MAXT": "8192", "SYNTARA_POLICY": "quality",
+                              "OMP_NUM_THREADS": "6", "RAM_GB": "24.000",
+                              "SYNTARA_CUDA": "1", "K3_CUDA": "1"})
+        self.assertEqual(status["family"], "kimi")
+        self.assertEqual(status["engine"], "kimi_k3")
+        self.assertEqual(status["context_env"], "K3_MAXT")
+        self.assertEqual(status["context"], "8192")
+        self.assertEqual(status["policy"], "quality")
+        self.assertEqual(status["threads"], "6")
+        self.assertEqual(status["ram_gb"], "24.000")
+        self.assertEqual(status["cuda"], "1")
+        self.assertEqual(status["family_gpu"], "1")
+
+    def test_absent_settings_are_null_not_aspirational(self):
+        status = self.status({})
+        for key in ("context", "policy", "threads", "ram_gb", "cuda",
+                    "gpus", "expert_gb", "family_gpu"):
+            self.assertIsNone(status[key], key)
+
+    def test_generic_cuda_and_family_switch_are_both_visible(self):
+        """Debugging "why is this CPU?" needs the switch the engine obeyed,
+        not only the generic variable the launcher set."""
+        status = self.status({"SYNTARA_CUDA": "1", "CUDA_EXPERT_GB": "8.000",
+                              "DSV4_CUDA": "0"},
+                             family="deepseek_v4", context_env="CTX",
+                             engine="/build/deepseek_v4")
+        self.assertEqual(status["engine"], "deepseek_v4")
+        self.assertEqual(status["cuda"], "1")
+        self.assertEqual(status["expert_gb"], "8.000")
+        self.assertEqual(status["family_gpu"], "0")
+
+
 class HTTPTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -1353,6 +1401,26 @@ class HTTPTest(unittest.TestCase):
         self.assertEqual(scheduler["max_queue"], 8)
         self.assertIn("queued", scheduler)
         self.assertEqual(health["kv_slots"], 2)
+
+    def test_health_carries_runtime_status_only_when_authed(self):
+        """Same #SEC-8 gate as scheduler/tiers/hwinfo: engine identity and
+        planner settings are operator internals, not liveness."""
+        previous = getattr(self.server, "runtime_status", None)
+        self.server.runtime_status = {"family": "glm", "engine": "syntara",
+                                      "context_env": "CTX", "context": "8192"}
+        try:
+            with self.request("/health") as response:
+                health = json.load(response)
+            with urlopen(self.base + "/health", timeout=2) as response:
+                bare = json.load(response)
+        finally:
+            if previous is None:
+                del self.server.runtime_status
+            else:
+                self.server.runtime_status = previous
+        self.assertEqual(health.get("runtime", {}).get("family"), "glm")
+        self.assertEqual(health["runtime"]["context"], "8192")
+        self.assertNotIn("runtime", bare)
 
     def test_profile_requires_auth(self):
         """/profile is served before require_auth(), so it needs its own gate.

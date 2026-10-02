@@ -80,6 +80,54 @@ class EnvDefaultsTest(unittest.TestCase):
             self.assertNotIn(k, e)
 
 
+class FamilyGpuMirrorTest(unittest.TestCase):
+    """The generic CUDA protocol must reach engines that read family switches.
+
+    The plan and --gpu/--vram speak SYNTARA_CUDA / CUDA_EXPERT_GB. Kimi K3
+    reads K3_CUDA only, DeepSeek V4 reads DSV4_CUDA only: a GPU request
+    that stopped at the generic variables ran CPU while the launch claimed
+    a tier, and V4's tier defaults ON, so `--gpu none` never switched it
+    off. Both are the #855 RAM_GB shape - an environment variable nobody
+    looked at. The mirror runs at the end of env_for_engine, so every
+    path (chat, serve, run, tune) carries it.
+    """
+
+    def mirror(self, environ, arch):
+        with mock.patch.dict(os.environ, environ, clear=True):
+            return syntara.env_for_engine(args(), arch)
+
+    def test_kimi_gpu_request_reaches_its_own_switch(self):
+        e = self.mirror({"SYNTARA_CUDA": "1"}, "kimi")
+        self.assertEqual(e["K3_CUDA"], "1")
+
+    def test_kimi_gpu_off_switches_every_backend(self):
+        """K3's Vulkan backend auto-inits when built; a hard off-switch that
+        left it running would not be a hard off-switch."""
+        e = self.mirror({"SYNTARA_CUDA": "0"}, "kimi")
+        self.assertEqual(e["K3_CUDA"], "0")
+        self.assertEqual(e["K3_VK"], "0")
+
+    def test_an_explicit_family_switch_wins(self):
+        e = self.mirror({"SYNTARA_CUDA": "1", "K3_CUDA": "0"}, "kimi")
+        self.assertEqual(e["K3_CUDA"], "0")
+
+    def test_deepseek_v4_off_reaches_its_tier_switch(self):
+        e = self.mirror({"SYNTARA_CUDA": "0"}, "deepseek_v4")
+        self.assertEqual(e["DSV4_CUDA"], "0")
+
+    def test_deepseek_v4_on_needs_no_mirrored_value(self):
+        """Unset already means on for a GPU build, and a CPU-only build
+        compiles the tier out - only the off-switch has to travel."""
+        e = self.mirror({"SYNTARA_CUDA": "1"}, "deepseek_v4")
+        self.assertNotIn("DSV4_CUDA", e)
+
+    def test_no_cuda_request_leaves_family_switches_alone(self):
+        for arch in ("kimi", "deepseek_v4"):
+            e = self.mirror({}, arch)
+            self.assertNotIn("K3_CUDA", e)
+            self.assertNotIn("DSV4_CUDA", e)
+
+
 class SiblingPlanRefusalTest(unittest.TestCase):
     """A sibling auto-tier refusal is a launcher diagnostic, never a traceback
     or a child started with an implicit over-budget cache."""

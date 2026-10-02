@@ -3803,6 +3803,8 @@ class APIHandler(BaseHTTPRequestHandler):
                     if tiers: payload["tiers"] = tiers
                     hwinfo = getattr(self.server.engine, "hwinfo", None) if self.server.engine else None
                     if hwinfo: payload["hwinfo"] = hwinfo
+                    runtime = getattr(self.server, "runtime_status", None)
+                    if runtime: payload["runtime"] = runtime
                 self.send_json(200, payload, request_id)
                 return
             if path == "/experts":
@@ -4837,6 +4839,36 @@ class APIHandler(BaseHTTPRequestHandler):
         self.generation(body, prompt, request_id, False)
 
 
+def runtime_status(family, engine, env):
+    """Honest /health identity: what is actually serving, from the env the
+    engine child really receives.
+
+    Values are verbatim from that environment or null - a setting the plan
+    never injected reads null, never the intention `syntara plan` printed.
+    The family GPU switch (K3_CUDA / DSV4_CUDA) is reported alongside the
+    generic CUDA variables because the engines read the former, not the
+    latter, and an operator debugging "why is this CPU?" needs the switch
+    the engine actually obeyed.
+    """
+    source = env if env is not None else os.environ
+    context_env = family.limits.context_env
+    family_gpu = next((source[key] for key in ("K3_CUDA", "DSV4_CUDA")
+                       if source.get(key) is not None), None)
+    return {
+        "family": family.id,
+        "engine": os.path.basename(str(engine)),
+        "context_env": context_env,
+        "context": source.get(context_env),
+        "policy": source.get("SYNTARA_POLICY"),
+        "threads": source.get("OMP_NUM_THREADS"),
+        "ram_gb": source.get("RAM_GB"),
+        "cuda": source.get("SYNTARA_CUDA"),
+        "gpus": source.get("SYNTARA_GPUS") or source.get("SYNTARA_GPU"),
+        "expert_gb": source.get("CUDA_EXPERT_GB"),
+        "family_gpu": family_gpu,
+    }
+
+
 def serve(model, host="127.0.0.1", port=8000, model_id=None, api_key=None,
           cap=None, max_tokens=1024, engine=None, env=None, cors_origins=None,
           max_queue=8, queue_timeout=300, kv_slots=1, allowed_hosts=(), family=None):
@@ -4880,6 +4912,7 @@ def serve(model, host="127.0.0.1", port=8000, model_id=None, api_key=None,
         engine = pending_engine or default_engine(family)
         model_id = pending_model_id or family.default_model_id
         server.model_id = model_id
+        server.runtime_status = runtime_status(family, engine, env)
         if kv_slots > family.limits.max_kv_slots:
             raise ValueError(f"{family.id} engine supports at most "
                              f"{family.limits.max_kv_slots} KV slot(s)")

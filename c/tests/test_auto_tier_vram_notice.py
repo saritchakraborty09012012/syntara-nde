@@ -155,5 +155,58 @@ class VramNoticeTest(unittest.TestCase):
                 self.assertEqual(notice_for(broken), "")
 
 
+def clamp_plan(clamped=True, granted=2048, requested=4096):
+    return {"model": {"family_id": "glm"},
+            "context": {"clamped": clamped, "granted": granted,
+                        "requested": requested}}
+
+
+def clamp_notice_for(p, env):
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        syntara.report_clamped_context(p, env)
+    return err.getvalue()
+
+
+class ClampedContextNoticeTest(unittest.TestCase):
+    """A context the plan shrank must be announced where it takes effect.
+
+    build_plan records "context was reduced..." in plan["warnings"], but
+    that list only prints under `syntara plan`. environment_for_plan then
+    writes the granted number into the family's context variable, so an
+    --auto-tier launch really runs fewer tokens than were requested while
+    the screen says nothing - the same silence as the unapplied VRAM tier
+    (#1581), one allocation over.
+    """
+
+    def test_an_applied_clamp_is_announced(self):
+        out = clamp_notice_for(clamp_plan(), {"CTX": "2048"})
+        self.assertIn("context 2048 of 4096", out)
+        self.assertIn("clamped to fit the RAM budget", out)
+
+    def test_no_clamp_is_silent(self):
+        """A warning that fires on every launch is one people scroll past."""
+        out = clamp_notice_for(clamp_plan(clamped=False, granted=4096),
+                               {"CTX": "4096"})
+        self.assertEqual(out, "")
+
+    def test_a_user_value_that_won_is_silent(self):
+        """The engine runs what the user asked for; there is no reduction
+        to report even though the plan itself clamped a copy."""
+        self.assertEqual(clamp_notice_for(clamp_plan(), {"CTX": "4096"}), "")
+
+    def test_a_missing_context_value_is_silent(self):
+        self.assertEqual(clamp_notice_for(clamp_plan(), {}), "")
+
+    def test_a_plan_of_the_wrong_shape_is_silent_and_harmless(self):
+        """It only prints. It must never be why a launch stops."""
+        for broken in ({}, {"context": None}, {"model": {}},
+                       {"model": {"family_id": "no-such-family"},
+                        "context": {"clamped": True, "granted": 1,
+                                    "requested": 2}}, "not a plan"):
+            with self.subTest(plan=broken):
+                self.assertEqual(clamp_notice_for(broken, {"CTX": "1"}), "")
+
+
 if __name__ == "__main__":
     unittest.main()

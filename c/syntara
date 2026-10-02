@@ -605,6 +605,7 @@ def env_for_engine(a, arch, plan=None):
         # that stumbled inside it would be reported as "invalid resource plan"
         # and take the launch down with it.
         if not cuda_on: report_unapplied_vram_tier(plan, gpu_off_by_request)
+        report_clamped_context(plan, env)
         if plan_must_not_choose_omp:
             # environment_for_plan supplies the physical-core default used by
             # the other engines. V4 deliberately computes logical CPUs minus
@@ -622,7 +623,7 @@ def env_for_engine(a, arch, plan=None):
                 gain=100.0*profile["gain"]
                 print(f"  {C.dim}[TUNE] applied measured profile · +{gain:.1f}% "
                       f"calibration throughput{C.r}",file=sys.stderr)
-    return env
+    return mirror_family_gpu_env(env, arch)
 
 def dsv4_cuda_available(model=None):
     # Windows loads the tier as a runtime DLL next to the engine; Linux links
@@ -790,6 +791,71 @@ def report_unapplied_vram_tier(plan, gpu_off_by_request=False):
           file=sys.stderr)
 
 
+def report_clamped_context(plan, env):
+    """Say so when this launch will actually run the clamped context.
+
+    build_plan clamps the granted context to fit the RAM budget and records
+    the warning in plan["warnings"], but that list only prints under
+    `syntara plan`. environment_for_plan writes the granted number into the
+    family's own context variable, so a launch under --auto-tier runs fewer
+    tokens than the user asked for - and nothing on screen connects the two.
+    Same shape as the unapplied VRAM tier in #1581: the decision was real,
+    the launch applied it, the user was never told.
+
+    Quiet in the two cases where there is nothing to tell: no clamp, or an
+    explicit user value won the setdefault race (the engine runs exactly
+    what was asked for, clamp or no clamp).
+    """
+    context = plan.get("context") if isinstance(plan, dict) else None
+    if not context or not context.get("clamped"):
+        return
+    try:
+        context_env = family_by_id(plan["model"]["family_id"]).limits.context_env
+        granted, requested = context.get("granted"), context.get("requested")
+        value = env.get(context_env) if isinstance(env, dict) else None
+    except (KeyError, AttributeError, TypeError,
+            FamilyConfigError, UnknownFamilyError):
+        return
+    if value is None or granted is None or requested is None:
+        return
+    if str(value) == str(granted) and str(granted) != str(requested):
+        print(f"  {C.yel}[PLAN] context {granted} of {requested} requested · "
+              f"clamped to fit the RAM budget{C.r}", file=sys.stderr)
+
+
+def mirror_family_gpu_env(env, arch):
+    """Bridge the generic CUDA protocol to engines that read their own switch.
+
+    The plan and the --gpu/--vram flags speak SYNTARA_CUDA / CUDA_EXPERT_GB.
+    Kimi K3 reads K3_CUDA only and DeepSeek V4 reads DSV4_CUDA only, so a
+    GPU request that stopped at the generic variables ran CPU while the
+    launch claimed a tier - and V4's tier defaults ON, so `--gpu none`
+    failed to switch it off at all. Both are the #855 RAM_GB shape: an
+    environment variable nobody looked at.
+
+    Only written when the family variable is absent: an explicit K3_CUDA /
+    DSV4_CUDA from the user is a decision the launcher must not overwrite.
+    V4 needs no on-mirror (unset already means on for GPU builds, and a
+    CPU-only build compiles the tier out); its engine also falls back to
+    CPU with a message when the backend is unavailable.
+    """
+    cuda = env.get("SYNTARA_CUDA")
+    if cuda is None:
+        return env
+    if arch == "kimi":
+        if cuda == "1":
+            env.setdefault("K3_CUDA", "1")
+        elif cuda == "0":
+            # Hard off-switch: K3's Vulkan backend auto-inits when built, so
+            # switching CUDA off alone would leave an accelerator running
+            # after the user asked for none.
+            env.setdefault("K3_CUDA", "0")
+            env.setdefault("K3_VK", "0")
+    elif arch == "deepseek_v4" and cuda == "0":
+        env.setdefault("DSV4_CUDA", "0")
+    return env
+
+
 def env_for(a):
     explicit_env = set(os.environ)
     e = dict(os.environ, SNAP=a.model)
@@ -882,6 +948,7 @@ def env_for(a):
             sys.exit(f"{C.yel}invalid resource plan:{C.r} {error}")
         has_cuda=cuda_binary()
         e=environment_for_plan(plan,e,has_cuda)
+        report_clamped_context(plan, e)
         if not getattr(a, "no_tune_profile", False):
             from autotune import load_profile
             profile=load_profile(plan,a.model,GLM)
@@ -941,6 +1008,7 @@ def env_for(a):
                         plan=build_plan(a.model,ram,ctx,devices,vram_req,policy=a.policy,
                                         kv_slots=requested_kv_slots(a,e))
                         e.update(environment_for_plan(plan,e,cuda_enabled=True))
+                        report_clamped_context(plan, e)
                         vt=plan["tiers"]["vram"]
                         # #1409: the dense trunk is read on every token; leaving
                         # it on the CPU next to a 30 GB expert tier is the
