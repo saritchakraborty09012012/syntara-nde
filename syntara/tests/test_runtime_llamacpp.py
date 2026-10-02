@@ -21,6 +21,8 @@ from syntara.runtime.llama_cpp import (
     PINNED_RELEASE,
     _translate,
     discover_binary,
+    looks_like_oom,
+    oom_context_ladder,
 )
 from syntara.runtime.llama_cpp import LlamaCppRuntime
 from syntara.tests.gguf_fixtures import build_tiny_llama_gguf
@@ -66,6 +68,34 @@ class AvailabilityTest(unittest.TestCase):
         self.assertFalse(caps["available"])
         self.assertEqual(caps["pinned_release"], PINNED_RELEASE)
         self.assertEqual(caps["formats"], ["gguf"])
+
+
+class OomLadderTest(unittest.TestCase):
+    """Plan 1d: startup OOM shrinks the context instead of failing outright."""
+
+    def test_ladder_halves_down_to_512_within_four_attempts(self):
+        self.assertEqual(oom_context_ladder(4096), [4096, 2048, 1024, 512])
+
+    def test_ladder_is_bounded_for_huge_contexts(self):
+        rungs = oom_context_ladder(262144)
+        self.assertLessEqual(len(rungs), 4)
+        self.assertEqual(rungs[0], 262144)
+        for prev, nxt in zip(rungs, rungs[1:]):
+            self.assertGreaterEqual(nxt, 512)
+            self.assertLess(nxt, prev)
+
+    def test_ladder_single_rung_at_or_below_floor(self):
+        self.assertEqual(oom_context_ladder(512), [512])
+        self.assertEqual(oom_context_ladder(256), [256])
+
+    def test_oom_markers_recognized(self):
+        for text in ("std::bad_alloc in kv cache",
+                     "failed to allocate memory: 4096 MB",
+                     "CUDA out of memory",
+                     "llama.cpp: out of memory"):
+            self.assertTrue(looks_like_oom(text), text)
+        self.assertFalse(looks_like_oom("model loading error: bad magic"))
+        self.assertFalse(looks_like_oom(""))
 
 
 @unittest.skipUnless(BINARY, _SKIP)

@@ -24,11 +24,22 @@ from typing import Any, Callable
 from urllib.parse import unquote
 
 from .library import ModelLibrary
+from .runtime.base import GenerationCancelled
 from .scheduler import (DEFAULT_MAX_QUEUE, DEFAULT_QUEUE_TIMEOUT, QueueFull,
                         QueueTimeout, Scheduler)
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
+
+# Lifecycle states (AGENTS §74): health reports which one is true right now
+# instead of a forever-"ok" liveness flag (AGENTS §75).
+LIFECYCLE_STATES = ("stopped", "starting", "ready", "degraded", "stopping",
+                    "failed")
+
+# Supervision: at most this many automatic reloads inside the window before
+# the host gives up and reports `failed` (a crash loop must not spin forever).
+_RESTART_WINDOW_S = 60.0
+_RESTART_LIMIT = 3
 
 # Origins the desktop/dev UI legitimately come from; anything else gets no
 # CORS grant (AGENTS §26: accidental exposure is a bug, not a default).
@@ -50,6 +61,29 @@ _IMPLEMENTED_LATER = {
 }
 
 RuntimeFactory = Callable[..., Any]
+
+
+def reload_predicate(current: dict[str, Any],
+                     wanted: dict[str, Any]) -> str | None:
+    """Say why the loaded runtime must be rebuilt, or None if it can keep serving.
+
+    Pure decision function so callers (CLI reloads, future model-switch API,
+    the OOM ladder) share one definition of "what changed matters":
+    model identity, context window and thread count all change the backend's
+    process arguments; anything else (metadata refreshes) does not.
+    """
+    cur_entry = current.get("entry") or {}
+    want_entry = wanted.get("entry") or {}
+    if want_entry and cur_entry and want_entry.get("id") != cur_entry.get("id"):
+        return (f"model changed from `{cur_entry.get('id')}` "
+                f"to `{want_entry.get('id')}`")
+    for key in ("context", "threads"):
+        if key in wanted and wanted[key] is not None:
+            old = current.get(key)
+            if old != wanted[key]:
+                old_label = old if old is not None else "default"
+                return f"{key} changed from {old_label} to {wanted[key]}"
+    return None
 
 
 def _default_ram_gb() -> float | None:
@@ -128,6 +162,26 @@ class HostGateway:
         self._seq = 0
         self._turns: list[dict[str, Any]] = []
         self.last_error: str | None = None
+        # Lifecycle + supervision (AGENTS §74/§27).
+        self._state = "stopped"
+        self._supervisor: threading.Thread | None = None
+        self._supervisor_stop = threading.Event()
+        self._restarting = False
+        self._restart_times: list[float] = []
+        self.restarts = 0
+        self.supervisor_last_event: str | None = None
+        self.failure: str | None = None  # set only when supervision gave up
+        # Cancellation for POST /stop (checked per streamed frame).
+        self._cancel = threading.Event()
+
+    @property
+    def state(self) -> str:
+        """Current lifecycle state; a stillborn runtime reads as degraded."""
+        with self._state_lock:
+            state = self._state
+        if state == "ready" and self.runtime is not None and not self.runtime.loaded:
+            return "degraded"
+        return state
 
     # ------------------------------------------------------------- lifecycle
 
@@ -156,25 +210,47 @@ class HostGateway:
         """Load the model, bind loopback, and serve on a background thread."""
         if self._server is not None:
             return self
-        self.runtime = self._build_runtime()
-        self.runtime.load()  # raises with an actionable message on failure
-        handler = _make_handler(self)
+        with self._state_lock:
+            self._state = "starting"
         try:
-            self._server = ThreadingHTTPServer((self.host, self.port), handler)
-        except OSError as exc:
-            self.runtime.unload()
-            raise RuntimeError(
-                f"cannot bind {self.host}:{self.port}: {exc}; another "
-                f"instance may be running - choose another --port") from exc
-        self._server.daemon_threads = True
-        self.port = self._server.server_address[1]
+            self.runtime = self._build_runtime()
+            self.runtime.load()  # raises with an actionable message on failure
+            handler = _make_handler(self)
+            try:
+                self._server = ThreadingHTTPServer((self.host, self.port), handler)
+            except OSError as exc:
+                self.runtime.unload()
+                raise RuntimeError(
+                    f"cannot bind {self.host}:{self.port}: {exc}; another "
+                    f"instance may be running - choose another --port") from exc
+            self._server.daemon_threads = True
+            self.port = self._server.server_address[1]
+        except Exception as exc:
+            with self._state_lock:
+                self._state = "failed"
+                if self.failure is None:
+                    self.failure = f"startup failed: {exc}"
+            raise
         self._thread = threading.Thread(
             target=self._server.serve_forever, name="syntara-gateway",
             daemon=True)
         self._thread.start()
+        self._supervisor_stop.clear()
+        self._supervisor = threading.Thread(
+            target=self._supervise_loop, name="syntara-supervisor", daemon=True)
+        self._supervisor.start()
+        with self._state_lock:
+            self._state = "ready"
         return self
 
     def stop(self) -> None:
+        with self._state_lock:
+            if self._state != "stopped":
+                self._state = "stopping"
+        self._supervisor_stop.set()
+        if self._supervisor is not None:
+            self._supervisor.join(timeout=2.0)
+            self._supervisor = None
         server, self._server = self._server, None
         if server is not None:
             server.shutdown()
@@ -185,21 +261,80 @@ class HostGateway:
         if self.runtime is not None:
             self.runtime.unload()
             self.runtime = None
+        self._cancel.clear()
+        with self._state_lock:
+            self._state = "stopped"
 
     def serve_forever(self) -> None:
         """Blocking serve with clean Ctrl-C shutdown (used by the CLI)."""
         self.start()
         try:
-            while True:
+            while self.state in ("ready", "degraded"):
                 time.sleep(0.5)
-                if self.runtime is not None and not self.runtime.loaded:
-                    # The backend died; stop serving rather than 500 forever.
-                    self.last_error = "the runtime process exited"
-                    break
+                # Supervision owns death handling: it either reloads the
+                # runtime (state returns to ready) or marks `failed`, which
+                # ends this loop instead of serving 503s forever.
         except KeyboardInterrupt:
             pass
         finally:
             self.stop()
+
+    # ----------------------------------------------------------- supervision
+
+    def _supervise_loop(self) -> None:
+        while not self._supervisor_stop.wait(0.5):
+            if self._state not in ("ready", "degraded"):
+                return
+            runtime = self.runtime
+            if runtime is not None and not runtime.loaded:
+                self._on_runtime_death(runtime)
+
+    def _on_runtime_death(self, dead: Any) -> None:
+        """Detect an unexpected backend exit: reload once, or fail honestly."""
+        with self._state_lock:
+            if self._restarting or self._state not in ("ready", "degraded"):
+                return
+            self._restarting = True
+            self._state = "starting"
+        health: dict[str, Any] = {}
+        try:
+            health = dead.health() or {}
+        except Exception:  # noqa: BLE001 - health is diagnostics only
+            pass
+        event = "the runtime process exited"
+        if health.get("exited") is not None:
+            event = f"the runtime process exited with code {health['exited']}"
+        now = time.monotonic()
+        self._restart_times = [t for t in self._restart_times
+                               if now - t < _RESTART_WINDOW_S]
+        if len(self._restart_times) >= _RESTART_LIMIT:
+            with self._state_lock:
+                self._restarting = False
+                self._state = "failed"
+                self.failure = (f"{event}; not restarting - "
+                                f"{len(self._restart_times)} restarts in the "
+                                f"last {int(_RESTART_WINDOW_S)}s (crash loop)")
+                self.last_error = self.failure
+                self.supervisor_last_event = event
+            return
+        try:
+            dead.unload()
+            self.runtime = self._build_runtime()
+            self.runtime.load()  # OOM ladder lives inside the adapter's load
+        except Exception as exc:  # noqa: BLE001 - one honest failure report
+            with self._state_lock:
+                self._restarting = False
+                self._state = "failed"
+                self.failure = f"{event}; automatic reload failed: {exc}"
+                self.last_error = self.failure
+                self.supervisor_last_event = event
+            return
+        self._restart_times.append(now)
+        with self._state_lock:
+            self._restarting = False
+            self._state = "ready"
+            self.restarts += 1
+            self.supervisor_last_event = f"{event} - reloaded automatically"
 
     # -------------------------------------------------------------- bookkeeping
 
@@ -217,23 +352,94 @@ class HostGateway:
                 del self._turns[:-_PROFILE_WINDOW]
 
     def health_body(self) -> dict[str, Any]:
-        runtime_alive = self.runtime is not None and self.runtime.loaded
-        status = "ok" if runtime_alive else "degraded"
+        state = self.state
         body: dict[str, Any] = {
-            "status": status,
+            "status": state,
+            "ready": state == "ready",
             "model": self.served_model_id,
             "scheduler": self.scheduler.snapshot(),
             "hwinfo": _hwinfo(),
         }
         if self.runtime is not None:
             body["runtime"] = self.runtime.health()
-        if self.last_error:
+        if self.restarts or self.supervisor_last_event:
+            body["supervisor"] = {
+                "restarts": self.restarts,
+                "last_event": self.supervisor_last_event,
+            }
+        if self.failure:
+            body["error"] = self.failure
+        elif self.last_error:
             body["error"] = self.last_error
         return body
 
     def profile_body(self) -> dict[str, Any]:
         with self._state_lock:
             return {"seq": self._seq, "turns": list(self._turns)}
+
+    # ---------------------------------------------------------------- reload
+
+    def reload(self, *, entry: dict[str, Any] | None = None,
+               context: int | None = None,
+               threads: int | None = None) -> str | None:
+        """Rebuild the runtime when (and only when) something that matters
+        changed. Returns the reload reason, or None when nothing changed."""
+        wanted = {"entry": entry, "context": context, "threads": threads}
+        reason = reload_predicate(
+            {"entry": self.entry, "context": self.context,
+             "threads": self._threads}, wanted)
+        if reason is None:
+            return None
+        with self._state_lock:
+            self._state = "stopping"
+        if self.runtime is not None:
+            self.runtime.unload()
+            self.runtime = None
+        if entry is not None:
+            self.entry = dict(entry)
+            self._model_ctx = self.entry.get("model", {}).get("context_length")
+        if context is not None:
+            self.context = int(context)
+        if threads is not None:
+            self._threads = threads
+        with self._state_lock:
+            self._state = "starting"
+        try:
+            self.runtime = self._build_runtime()
+            self.runtime.load()
+        except Exception as exc:
+            with self._state_lock:
+                self._state = "failed"
+            self.failure = f"reload failed: {exc}"
+            self.last_error = self.failure
+            raise
+        with self._state_lock:
+            self._state = "ready"
+        self.failure = None
+        return reason
+
+    # ----------------------------------------------------------------- stop
+
+    def stop_generation(self) -> dict[str, Any]:
+        """Cancel the active generation (POST /stop).
+
+        Only a currently running request can be cancelled; queued requests
+        are left alone (they have not started consuming anything yet) and the
+        result says so instead of pretending (AGENTS §17).
+        """
+        snap = self.scheduler.snapshot()
+        active = int(snap.get("active", 0) or 0)
+        if active:
+            self._cancel.set()
+            runtime = self.runtime
+            cancel = getattr(runtime, "cancel", None)
+            if callable(cancel):
+                try:
+                    cancel()
+                except Exception:  # noqa: BLE001 - best-effort backend abort
+                    pass
+        return {"cancelled": active > 0, "active": active,
+                "queued": int(snap.get("queued", 0) or 0)}
 
     # ------------------------------------------------------------ request path
 
@@ -271,6 +477,15 @@ class HostGateway:
                           extra_headers={"Retry-After": "1"})
         except QueueTimeout as exc:
             respond.error(504, str(exc), "server_error", "queue_timeout")
+        except GenerationCancelled:
+            # An intentional stop (POST /stop), not a failure: say so plainly
+            # and do not record it as a backend error.
+            if not respond.streaming:
+                try:
+                    respond.error(499, "the generation was cancelled",
+                                  "server_error", "cancelled")
+                except OSError:
+                    pass
         except Exception as exc:  # noqa: BLE001 - mapped to an honest error
             self.last_error = str(exc)
             if not respond.streaming:
@@ -286,6 +501,7 @@ class HostGateway:
     def _run_chat(self, body: dict[str, Any], respond: "_Responder") -> None:
         """Execute one admitted request (scheduler slot already held)."""
         started = time.monotonic()
+        self._cancel.clear()  # a stop applies to the generation it overlaps
         if body.get("stream"):
             respond.stream(self.runtime.stream(body))
         else:
@@ -366,6 +582,12 @@ class _Responder:
         usage: dict[str, Any] | None = None
         try:
             for frame in frames:
+                if self.g._cancel.is_set():
+                    # POST /stop asked us to stop: end the SSE stream the way
+                    # clients expect (a final [DONE]) instead of an error.
+                    self.h.wfile.write(b"data: [DONE]\n\n")
+                    self.h.wfile.flush()
+                    return
                 # Capture usage if the backend included it, then pass through.
                 for line in frame.split(b"\n"):
                     if line.startswith(b"data: ") and b'"usage"' in line:
@@ -377,6 +599,13 @@ class _Responder:
                             pass
                 self.h.wfile.write(frame)
                 self.h.wfile.flush()
+        except GenerationCancelled:
+            try:
+                self.h.wfile.write(b"data: [DONE]\n\n")
+                self.h.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError):
+                pass
+            return
         except (BrokenPipeError, ConnectionResetError, OSError):
             # Client went away mid-generation; the runtime sees the closed
             # response and stops. Not an error to report back to anyone.
@@ -442,7 +671,10 @@ def _make_handler(gateway: HostGateway):
                                 "authentication_error", "invalid_api_key")
                 return
             if path == "/health":
-                responder.json(200, gateway.health_body())
+                body = gateway.health_body()
+                # 200 only when actually ready to serve inference; the other
+                # lifecycle states are honest 503s (AGENTS §74/§75).
+                responder.json(200 if body.get("ready") else 503, body)
             elif path == "/profile":
                 responder.json(200, gateway.profile_body())
             elif path == "/v1/models":
@@ -481,6 +713,9 @@ def _make_handler(gateway: HostGateway):
                                     "invalid_request_error", "invalid_body")
                     return
                 gateway.handle_chat(body, responder)
+            elif path == "/stop":
+                self._read_json()  # drain any body; /stop takes no arguments yet
+                responder.json(200, gateway.stop_generation())
             elif path in _IMPLEMENTED_LATER:
                 responder.error(
                     501,

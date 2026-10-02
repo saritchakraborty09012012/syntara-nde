@@ -114,12 +114,13 @@ class GatewayTest(unittest.TestCase):
 
     # --------------------------------------------------------------- health
 
-    def test_health_reports_ok_and_scheduler_shape(self):
+    def test_health_reports_ready_and_scheduler_shape(self):
         gw = self.start_gateway()
         status, _, raw = self.get(gw, "/health")
         self.assertEqual(status, 200)
         body = json.loads(raw)
-        self.assertEqual(body["status"], "ok")
+        self.assertEqual(body["status"], "ready")
+        self.assertTrue(body["ready"])
         self.assertEqual(body["model"], "fake-model")
         self.assertIn("scheduler", body)
         self.assertEqual(body["scheduler"]["active"], 0)
@@ -423,6 +424,232 @@ class GatewayTest(unittest.TestCase):
         gw = HostGateway(_entry(ctx=32768), port=0,
                          runtime_factory=FakeRuntime)
         self.assertEqual(gw.context, 4096)  # default cap
+
+
+class HostLifecycleTest(unittest.TestCase):
+    """Plan 1d: lifecycle states, reload predicate, supervision, POST /stop."""
+
+    # -- helpers (mirrors GatewayTest's, kept local so lifecycle tests own
+    #    their gateways without inheriting every other test) ---------------
+
+    def _get(self, gw, path, headers=None, expect_error=False):
+        req = urllib.request.Request(gw.url + path, headers=headers or {})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.status, dict(resp.headers), resp.read()
+        except urllib.error.HTTPError as exc:
+            if not expect_error:
+                raise
+            return exc.code, dict(exc.headers), exc.read()
+
+    def _post(self, gw, path, body, headers=None):
+        data = json.dumps(body).encode()
+        req = urllib.request.Request(gw.url + path, data=data, method="POST",
+                                     headers={"Content-Type": "application/json",
+                                              **(headers or {})})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.status, dict(resp.headers), resp.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, dict(exc.headers), exc.read()
+
+    def _wait_for(self, predicate, timeout: float = 8.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            time.sleep(0.1)
+        return predicate()
+
+    # -- lifecycle ---------------------------------------------------------
+
+    def test_lifecycle_start_ready_stop(self):
+        gw = HostGateway(_entry(), port=0, runtime_factory=FakeRuntime)
+        self.assertEqual(gw.state, "stopped")
+        gw.start()
+        self.addCleanup(gw.stop)
+        self.assertEqual(gw.state, "ready")
+        status, _, raw = self._get(gw, "/health")
+        self.assertEqual(status, 200)
+        body = json.loads(raw)
+        self.assertEqual(body["status"], "ready")
+        self.assertTrue(body["ready"])
+        gw.stop()
+        self.assertEqual(gw.state, "stopped")
+
+    def test_startup_failure_marks_failed(self):
+        class BrokenRuntime(FakeRuntime):
+            def load(self):
+                raise RuntimeError("model load exploded")
+
+        gw = HostGateway(_entry(), port=0, runtime_factory=BrokenRuntime)
+        with self.assertRaisesRegex(RuntimeError, "model load exploded"):
+            gw.start()
+        self.assertEqual(gw.state, "failed")
+        self.assertIn("model load exploded", gw.failure)
+
+    # -- reload predicate --------------------------------------------------
+
+    def test_reload_predicate_and_reload(self):
+        gw = HostGateway(_entry(), port=0, runtime_factory=FakeRuntime)
+        gw.start()
+        self.addCleanup(gw.stop)
+        runtime = gw.runtime
+
+        self.assertIsNone(gw.reload())          # nothing changed
+        self.assertIs(gw.runtime, runtime)      # same instance, not rebuilt
+
+        reason = gw.reload(context=1024)
+        self.assertEqual(reason, "context changed from 4096 to 1024")
+        self.assertIsNot(gw.runtime, runtime)
+        self.assertEqual(gw.state, "ready")
+        self.assertEqual(gw.context, 1024)
+
+        reason = gw.reload(threads=4)
+        self.assertEqual(reason, "threads changed from default to 4")
+
+        reason = gw.reload(entry=_entry("other-model"))
+        self.assertIn("model changed", reason)
+        self.assertEqual(gw.served_model_id, "other-model")
+        self.assertEqual(gw.context, 1024)      # context survives a model swap
+        self.assertEqual(gw.state, "ready")
+
+    # -- supervision -------------------------------------------------------
+
+    def test_supervisor_recovers_dead_runtime(self):
+        gw = HostGateway(_entry(), port=0, runtime_factory=FakeRuntime)
+        gw.start()
+        self.addCleanup(gw.stop)
+        gw.runtime.unload()  # simulate the backend dying unexpectedly
+
+        self.assertTrue(self._wait_for(lambda: gw.restarts >= 1))
+        self.assertEqual(gw.state, "ready")
+        self.assertTrue(gw.runtime.loaded)
+        status, _, raw = self._get(gw, "/health")
+        self.assertEqual(status, 200)
+        body = json.loads(raw)
+        self.assertEqual(body["supervisor"]["restarts"], 1)
+        self.assertIn("reloaded", body["supervisor"]["last_event"])
+
+    def test_supervisor_failed_reload_reports_failed_with_503(self):
+        builds = {"n": 0}
+
+        def flaky_factory(entry, *, context=None, threads=None, **kw):
+            builds["n"] += 1
+            if builds["n"] > 1:
+                raise RuntimeError("model file vanished")
+            return FakeRuntime(entry, context=context, threads=threads)
+
+        gw = HostGateway(_entry(), port=0, runtime_factory=flaky_factory)
+        gw.start()
+        self.addCleanup(gw.stop)
+        gw.runtime.unload()
+
+        self.assertTrue(self._wait_for(lambda: gw.state == "failed"))
+        self.assertIn("automatic reload failed", gw.failure)
+        self.assertIn("model file vanished", gw.failure)
+        status, _, raw = self._get(gw, "/health", expect_error=True)
+        self.assertEqual(status, 503)
+        body = json.loads(raw)
+        self.assertEqual(body["status"], "failed")
+        self.assertIn("automatic reload failed", body["error"])
+        # The SDK reads the 503 body instead of raising: health must report
+        # the failed state, not choke on it.
+        from syntara.client import Syntara
+        client = Syntara(gw.url + "/v1")
+        report = client.health()
+        self.assertEqual(report["status"], "failed")
+        self.assertFalse(report["ready"])
+
+    def test_supervisor_gives_up_on_crash_loop(self):
+        class DiesAfterLoad(FakeRuntime):
+            def load(self):
+                super().load()
+                self._loaded = False  # "crashed" the moment it came up
+
+        gw = HostGateway(_entry(), port=0, runtime_factory=DiesAfterLoad)
+        gw.start()
+        self.addCleanup(gw.stop)
+
+        self.assertTrue(self._wait_for(lambda: gw.state == "failed",
+                                       timeout=15.0))
+        self.assertIn("crash loop", gw.failure)
+        self.assertEqual(gw.restarts, 3)  # restart limit, then honest give-up
+
+    # -- POST /stop --------------------------------------------------------
+
+    def test_stop_when_idle_is_honest(self):
+        gw = HostGateway(_entry(), port=0, runtime_factory=FakeRuntime)
+        gw.start()
+        self.addCleanup(gw.stop)
+        status, _, raw = self._post(gw, "/stop", {})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(raw),
+                         {"cancelled": False, "active": 0, "queued": 0})
+
+    def test_stop_cancels_active_stream(self):
+        class SlowStreamRuntime(FakeRuntime):
+            def stream(self, body):
+                for i in range(10000):
+                    chunk = {"id": "c", "object": "chat.completion.chunk",
+                             "choices": [{"index": 0,
+                                          "delta": {"content": f"tok{i}"}}]}
+                    yield b"data: " + json.dumps(chunk).encode() + b"\n\n"
+                    time.sleep(0.01)
+
+        gw = HostGateway(_entry(), port=0, runtime_factory=SlowStreamRuntime)
+        gw.start()
+        self.addCleanup(gw.stop)
+        result: dict = {}
+
+        def run_stream():
+            data = json.dumps({"messages": [{"role": "user", "content": "hi"}],
+                               "stream": True}).encode()
+            req = urllib.request.Request(
+                gw.url + "/v1/chat/completions", data=data, method="POST",
+                headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result["body"] = resp.read().decode()
+
+        worker = threading.Thread(target=run_stream, daemon=True)
+        worker.start()
+        self.assertTrue(self._wait_for(
+            lambda: gw.scheduler.snapshot()["active"] == 1))
+        time.sleep(0.3)  # let some frames flow first
+
+        status, _, raw = self._post(gw, "/stop", {})
+        self.assertEqual(status, 200)
+        stop_body = json.loads(raw)
+        self.assertTrue(stop_body["cancelled"])
+        self.assertEqual(stop_body["active"], 1)
+
+        worker.join(timeout=15.0)
+        self.assertFalse(worker.is_alive())
+        body = result.get("body", "")
+        self.assertIn("data: [DONE]", body)
+        self.assertNotIn("tok9999", body)
+        # No error frame: a cancellation is not a backend failure.
+        self.assertNotIn("backend_error", body)
+
+    def test_non_stream_cancel_returns_499_without_error_state(self):
+        from syntara.runtime.base import GenerationCancelled
+
+        class CancelledRuntime(FakeRuntime):
+            def chat(self, body):
+                raise GenerationCancelled()
+
+        gw = HostGateway(_entry(), port=0, runtime_factory=CancelledRuntime)
+        gw.start()
+        self.addCleanup(gw.stop)
+        status, _, raw = self._post(
+            gw, "/v1/chat/completions",
+            {"messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(status, 499)
+        err = json.loads(raw)["error"]
+        self.assertEqual(err["code"], "cancelled")
+        self.assertIsNone(gw.last_error)  # cancel != failure
+        status, _, _ = self._get(gw, "/health")
+        self.assertEqual(status, 200)  # still ready
 
 
 if __name__ == "__main__":

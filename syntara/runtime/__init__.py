@@ -6,6 +6,7 @@ wire formats stay behind the adapter.
 """
 from __future__ import annotations
 
-from .base import Runtime, RuntimeError, RuntimeNotAvailable
+from .base import GenerationCancelled, Runtime, RuntimeError, RuntimeNotAvailable
 
-__all__ = ["Runtime", "RuntimeError", "RuntimeNotAvailable"]
+__all__ = ["GenerationCancelled", "Runtime", "RuntimeError",
+           "RuntimeNotAvailable"]

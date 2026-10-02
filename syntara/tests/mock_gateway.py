@@ -1,6 +1,6 @@
 """A small mock of the Syntara local gateway for SDK/CLI tests.
 
-Mirrors the real surface (openai_server.py): /health, /profile, /experts,
+Mirrors the real surface: /health, /profile, /experts, /stop,
 /v1/models, /v1/models/{id}, /v1/chat/completions (stream and not),
 /v1/completions, /v1/brio and /v1/messages.
 """
@@ -34,7 +34,7 @@ class MockGateway(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?", 1)[0]
         if path == "/health":
-            self._send(200, {"status": "ok",
+            self._send(200, {"status": "ready", "ready": True,
                              "scheduler": {"active": 1, "queued": 0, "admitted": 3},
                              "hwinfo": {"cpu": "mock-cpu", "gpu": "none", "ram_avail_gb": 16}})
         elif path == "/profile":
@@ -63,6 +63,8 @@ class MockGateway(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(length)) if length else {}
         if path == "/v1/chat/completions":
             self._chat(body)
+        elif path == "/stop":
+            self._send(200, {"cancelled": False, "active": 0, "queued": 0})
         elif path == "/v1/completions":
             self._send(200, {"choices": [{"text": "completion-ok"}],
                              "usage": {"total_tokens": 3}})

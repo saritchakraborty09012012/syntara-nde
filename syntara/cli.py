@@ -267,6 +267,11 @@ def _cmd_serve(client: Syntara, args: argparse.Namespace) -> int:
         gateway.serve_forever()
     except KeyboardInterrupt:
         gateway.stop()
+    if gateway.failure:
+        # Supervision gave up (crash loop or failed reload): say why and
+        # exit non-zero so scripts notice (AGENTS §73).
+        print(f"host failed: {gateway.failure}", file=sys.stderr)
+        return 1
     print("stopped", flush=True)
     return 0
 

@@ -24,7 +24,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Iterator
 
-from .base import RuntimeNotAvailable, RuntimeError
+from .base import GenerationCancelled, RuntimeNotAvailable, RuntimeError
 from .process import ManagedProcess, free_port, wait_until_healthy
 
 # Pinned release the installer script fetches; capabilities() reports it.
@@ -35,6 +35,29 @@ _ENV_BIN = "SYNTARA_LLAMA_BIN"
 # Request-body keys the engine gateway uses that llama.cpp does not know.
 _DROP_KEYS = ("enable_thinking", "cache_slot")
 _RENAME_KEYS = {"max_completion_tokens": "max_tokens"}
+
+# Startup stderr markers that mean "not enough memory" rather than "broken
+# model" - the OOM ladder retries a smaller context only for these.
+OOM_MARKERS = ("out of memory", "outofmemory", "bad_alloc", "bad alloc",
+               "failed to allocate", "cannot allocate", "not enough memory",
+               "std::bad_alloc")
+
+
+def looks_like_oom(text: str) -> bool:
+    lowered = (text or "").lower()
+    return any(marker in lowered for marker in OOM_MARKERS)
+
+
+def oom_context_ladder(context: int, *, max_attempts: int = 4) -> list[int]:
+    """Context sizes to try after an OOM: current, halved, down to 512.
+
+    Bounded so a hopeless startup fails in seconds, not minutes; the caller
+    reports the lowest size actually tried (AGENTS §28).
+    """
+    rungs = [int(context)]
+    while len(rungs) < max_attempts and rungs[-1] > 512:
+        rungs.append(max(512, rungs[-1] // 2))
+    return rungs
 
 
 def default_bin_dir() -> Path:
@@ -81,6 +104,13 @@ class LlamaCppRuntime:
         self._api_key = secrets.token_urlsafe(24)
         self._lock = threading.Lock()  # one generation at a time per backend
         self._version: str | None = None
+        # Cancellation: in-flight backend responses are closed by cancel()
+        # (a separate lock - cancel must never wait on the generation lock).
+        self._active_lock = threading.Lock()
+        self._active: set[Any] = set()
+        self._cancelled = False
+        # OOM ladder bookkeeping, surfaced through health().
+        self.oom_attempts: list[int] = []
 
     # ------------------------------------------------------------- lifecycle
 
@@ -106,30 +136,46 @@ class LlamaCppRuntime:
                     f"{self.model_path} is not a GGUF file; run "
                     f"`syntara inspect {self.model_path}` for details")
 
-        self._port = free_port()
-        argv = [
-            str(self._binary),
-            "-m", self.model_path,
-            "--host", "127.0.0.1",
-            "--port", str(self._port),
-            "-c", str(self.context),
-            "--api-key", self._api_key,
-            "--no-ui",
-        ]
-        if self.threads:
-            argv += ["-t", str(self.threads)]
+        ladder = oom_context_ladder(self.context)
+        for attempt, ctx in enumerate(ladder):
+            self.context = ctx
+            self._port = free_port()
+            argv = [
+                str(self._binary),
+                "-m", self.model_path,
+                "--host", "127.0.0.1",
+                "--port", str(self._port),
+                "-c", str(ctx),
+                "--api-key", self._api_key,
+                "--no-ui",
+            ]
+            if self.threads:
+                argv += ["-t", str(self.threads)]
 
-        proc = ManagedProcess(argv)
-        proc.spawn()
-        proc.attach_stderr_drain()
-        self._proc = proc
-        healthy = wait_until_healthy(
-            f"http://127.0.0.1:{self._port}/health",
-            process=proc, timeout=self.startup_timeout,
-            headers={"Authorization": f"Bearer {self._api_key}"})
-        if not healthy:
+            proc = ManagedProcess(argv)
+            proc.spawn()
+            proc.attach_stderr_drain()
+            self._proc = proc
+            healthy = wait_until_healthy(
+                f"http://127.0.0.1:{self._port}/health",
+                process=proc, timeout=self.startup_timeout,
+                headers={"Authorization": f"Bearer {self._api_key}"})
+            if healthy:
+                return
             tail = self._stderr_tail()
+            oom = looks_like_oom(tail)
             self.unload()  # never leave a half-started backend behind
+            if oom and attempt + 1 < len(ladder):
+                # Out of memory: retry with half the context (the OOM ladder).
+                self.oom_attempts.append(ctx)
+                continue
+            if oom:
+                tried = " -> ".join(str(c) for c in
+                                    [*self.oom_attempts, self.context])
+                raise RuntimeError(
+                    "the backend ran out of memory even at a reduced context "
+                    f"({tried}); close other applications or use a smaller "
+                    "model/quantization", detail=tail)
             if "model loading error" in tail or "failed to load model" in tail:
                 raise RuntimeError(
                     f"the runtime could not load {os.path.basename(self.model_path)}; "
@@ -184,7 +230,10 @@ class LlamaCppRuntime:
             "backend": "llama.cpp",
             "loaded": self.loaded,
             "model": os.path.basename(self.model_path) if self.model_path else None,
+            "context": self.context,
         }
+        if self.oom_attempts:
+            info["oom_context_attempts"] = list(self.oom_attempts)
         if self._proc is not None and not self._proc.alive:
             info["exited"] = self._proc.returncode
             info["error_tail"] = self._proc.read_stderr_tail()[-800:]
@@ -203,6 +252,30 @@ class LlamaCppRuntime:
             raise RuntimeError("no model is loaded in the runtime")
         return self._port
 
+    def cancel(self) -> None:
+        """Abort in-flight request(s) by closing their backend connection.
+
+        llama.cpp stops generating when the client disconnects; a cancelled
+        generation raises GenerationCancelled so callers can report a
+        cancellation instead of a backend error (AGENTS §28).
+        """
+        with self._active_lock:
+            self._cancelled = True
+            actives = list(self._active)
+        for resp in actives:
+            try:
+                resp.close()
+            except OSError:
+                pass
+
+    def _release(self, resp: Any) -> None:
+        with self._active_lock:
+            self._active.discard(resp)
+        try:
+            resp.close()
+        except OSError:
+            pass
+
     def _post(self, path: str, payload: dict[str, Any], *,
               timeout: float) -> urllib.response.addinfourl:
         port = self._require_ready()
@@ -210,8 +283,11 @@ class LlamaCppRuntime:
         data = json.dumps(payload).encode("utf-8")
         req = urllib.request.Request(url, data=data, headers=self._headers(),
                                      method="POST")
+        with self._active_lock:
+            if self._cancelled:
+                raise GenerationCancelled()
         try:
-            return urllib.request.urlopen(req, timeout=timeout)  # noqa: S310 - loopback
+            resp = urllib.request.urlopen(req, timeout=timeout)  # noqa: S310 - loopback
         except urllib.error.HTTPError as exc:
             detail = ""
             try:
@@ -222,19 +298,34 @@ class LlamaCppRuntime:
                 f"the backend rejected the request (HTTP {exc.code})",
                 detail=detail) from exc
         except OSError as exc:
+            if self._cancelled:
+                raise GenerationCancelled() from exc
             raise RuntimeError(
                 "the backend connection failed; the model may have crashed - "
                 "check `syntara health` and retry", detail=str(exc)) from exc
+        with self._active_lock:
+            if self._cancelled:
+                resp.close()
+                raise GenerationCancelled()
+            self._active.add(resp)
+        return resp
 
     def chat(self, body: dict[str, Any]) -> dict[str, Any]:
         payload = _translate(body)
         payload["stream"] = False
         with self._lock:
+            self._cancelled = False  # a cancel only applies to its generation
             resp = self._post("/v1/chat/completions", payload, timeout=600.0)
             try:
                 raw = resp.read()
+            except OSError as exc:
+                if self._cancelled:
+                    raise GenerationCancelled() from exc
+                raise RuntimeError(
+                    "the backend connection broke mid-response; retry the "
+                    "request", detail=str(exc)) from exc
             finally:
-                resp.close()
+                self._release(resp)
         try:
             return json.loads(raw)
         except json.JSONDecodeError as exc:
@@ -246,15 +337,18 @@ class LlamaCppRuntime:
         payload["stream"] = True
         payload.setdefault("stream_options", {"include_usage": True})
         with self._lock:
+            self._cancelled = False
             resp = self._post("/v1/chat/completions", payload, timeout=600.0)
             try:
                 yield from _iter_sse_frames(resp)
             except OSError as exc:
+                if self._cancelled:
+                    raise GenerationCancelled() from exc
                 raise RuntimeError(
                     "the stream to the backend broke mid-generation; retry "
                     "the request", detail=str(exc)) from exc
             finally:
-                resp.close()
+                self._release(resp)
 
 
 def _iter_sse_frames(resp: Any) -> Iterator[bytes]:

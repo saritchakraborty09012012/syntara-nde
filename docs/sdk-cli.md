@@ -164,10 +164,22 @@ syntara serve --model qwen              # or pass the .gguf path directly
 syntara serve --model qwen --port 9000 --context 8192
 ```
 
-- `GET /health` - process alive, model loaded, scheduler counters, hardware
-  info; `GET /profile` - recent per-turn wall time and token usage;
-  `GET /v1/models` and `GET /v1/chat/completions` (streaming supported) are
-  the OpenAI-compatible surface.
+- `GET /health` - lifecycle state (`stopped`, `starting`, `ready`,
+  `degraded`, `stopping`, `failed`), model, scheduler counters, hardware
+  info: HTTP 200 only when `ready`, an honest 503 for every other state
+  with the same JSON body. `GET /profile` - recent per-turn wall time and
+  token usage; `GET /v1/models` and `GET /v1/chat/completions`
+  (streaming supported) are the OpenAI-compatible surface.
+- `POST /stop` - cancel the active streaming generation. Answers
+  `{"cancelled": bool, "active": n, "queued": m}` (an idle host reports
+  `cancelled: false` instead of pretending) and ends the SSE stream with
+  `data: [DONE]`, never an error frame. SDK: `client.stop()`.
+- The supervisor watches the backend process: an unexpected exit triggers
+  one automatic reload (reported as `supervisor.restarts` in `/health`); a
+  crash loop (3 restarts within 60 s) or a failed reload marks the host
+  `failed` and `syntara serve` exits `1` with the reason. A startup
+  out-of-memory retries with a halved context (down to 512 tokens, at most
+  4 attempts) and reports the exact sizes it tried before giving up.
 - Endpoints the host does not implement yet (`/v1/completions`,
   `/v1/messages`, `/v1/brio`, `/experts`) answer HTTP 501 with
   `code: not_implemented` rather than pretending.

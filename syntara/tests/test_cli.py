@@ -124,7 +124,7 @@ class CliTest(unittest.TestCase):
     def test_health_json(self):
         code, out, _ = run(["health", "--json"])
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads(out)["status"], "ok")
+        self.assertEqual(json.loads(out)["status"], "ready")
 
     def test_profile(self):
         code, out, _ = run(["profile"])

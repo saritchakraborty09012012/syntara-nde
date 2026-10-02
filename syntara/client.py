@@ -424,9 +424,27 @@ class Syntara:
         return body
 
     def health(self) -> dict[str, Any]:
-        body = self._request("health", base=self.root_url)
+        try:
+            body = self._request("health", base=self.root_url)
+        except SyntaraError as exc:
+            # Not-ready hosts answer 503 with the same health JSON; reading
+            # that state is the whole point of `syntara health`.
+            if exc.status == 503 and isinstance(exc.body, dict):
+                return exc.body
+            raise
         if not isinstance(body, dict):
             raise SyntaraError(f"Unexpected health response: {body!r}")
+        return body
+
+    def stop(self) -> dict[str, Any]:
+        """Cancel the host's active generation (POST /stop).
+
+        Returns the honest cancellation report: ``cancelled`` is True only
+        when a running generation was actually interrupted.
+        """
+        body = self._request("stop", "POST", {}, base=self.root_url)
+        if not isinstance(body, dict):
+            raise SyntaraError(f"Unexpected stop response: {body!r}")
         return body
 
     def profile(self) -> dict[str, Any]:

@@ -26,6 +26,17 @@ class RuntimeNotAvailable(RuntimeError):
     """The runtime binary is missing or cannot be started on this machine."""
 
 
+class GenerationCancelled(RuntimeError):
+    """The running generation was cancelled on purpose (POST /stop).
+
+    Not a failure: callers must report it as a cancellation, never as a
+    backend error (AGENTS §28).
+    """
+
+    def __init__(self, message: str = "the generation was cancelled") -> None:
+        super().__init__(message)
+
+
 class Runtime(Protocol):
     """What the gateway requires from any backend that serves a model."""
 

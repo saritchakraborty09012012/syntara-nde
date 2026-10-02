@@ -57,10 +57,14 @@ class ClientTest(unittest.TestCase):
         self.assertEqual(ctx.exception.code, "model_not_found")
 
     def test_health_profile_experts(self):
-        self.assertEqual(self.client.health()["status"], "ok")
+        self.assertEqual(self.client.health()["status"], "ready")
         self.assertEqual(self.client.health()["scheduler"]["admitted"], 3)
         self.assertEqual(self.client.profile()["seq"], 2)
         self.assertEqual(self.client.experts()["rows"], 1)
+
+    def test_stop_reports_cancellation_honestly(self):
+        self.assertEqual(self.client.stop(),
+                         {"cancelled": False, "active": 0, "queued": 0})
 
     def test_brio(self):
         result = self.client.brio("mock-model", "pick one", ["a", "b"])
