@@ -77,3 +77,65 @@ export function statusOf(error: unknown): number | null {
 export function retryAfterOf(error: unknown): number | null {
   return error instanceof ApiError ? error.retryAfterSeconds : null
 }
+
+/* Throttled streaming (track 2c): deltas arrive per token, but writing
+   state (and re-parsing markdown) that often makes long answers jank.
+   Tokens are buffered and handed over at most once per interval; the
+   final partial interval is forced out on flush, so nothing is lost. */
+export const STREAM_FLUSH_MS = 80
+
+export interface DeltaBuffer {
+  push(text: string): void
+  /* Hand over whatever is pending now, cancelling the pending timer. */
+  flush(): void
+  readonly pending: string
+}
+
+export function createDeltaBuffer(
+  onFlush: (chunk: string) => void,
+  intervalMs = STREAM_FLUSH_MS,
+  /* Injectable so tests drive time explicitly (and node test envs do
+     not need window). */
+  schedule: (fn: () => void, ms: number) => number = (fn, ms) => Number(setTimeout(fn, ms)),
+  cancel: (id: number) => void = (id) => clearTimeout(id),
+): DeltaBuffer {
+  let buffer = ""
+  let timer: number | null = null
+  const fire = () => {
+    timer = null
+    const chunk = buffer
+    buffer = ""
+    if (chunk) onFlush(chunk)
+  }
+  return {
+    push(text) {
+      buffer += text
+      if (timer === null) timer = schedule(fire, intervalMs)
+    },
+    flush() {
+      if (timer !== null) {
+        cancel(timer)
+        timer = null
+      }
+      fire()
+    },
+    get pending() {
+      return buffer
+    },
+  }
+}
+
+/* The turn sent to resume an interrupted answer (track 2c). It is
+   request-only: never stored in the transcript, so history shows what
+   the user actually wrote, not the continuation scaffolding. */
+export const CONTINUE_NUDGE =
+  "Continue exactly where you left off. Do not repeat anything already written, and do not restart the answer."
+
+/* A stopped assistant answer can be continued only when it is the last
+   message: continuing an older one would rewrite history. */
+export function canContinue(
+  message: { role: string; stopped?: boolean },
+  isLast: boolean,
+): boolean {
+  return Boolean(isLast && message.role === "assistant" && message.stopped)
+}

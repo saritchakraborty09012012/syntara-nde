@@ -95,7 +95,7 @@ import { MODEL_TABS, parseHash, type ModelTab, type View } from "@/lib/routes"
 import { hostBaseFromStatus, hostStart, hostStatus, libraryInspect, waitHostReady } from "@/lib/host-bridge"
 import { badgeLabel, groupComplete, metaFromInspect, pickInspectTarget } from "@/lib/inspect"
 import { mergePickerOptions, type PickerRow } from "@/lib/picker"
-import { retryAfterOf, retryDecision, statusOf } from "@/lib/send"
+import { canContinue, CONTINUE_NUDGE, createDeltaBuffer, retryAfterOf, retryDecision, statusOf } from "@/lib/send"
 import { ModelPicker } from "@/components/ModelPicker"
 import { cn } from "@/lib/utils"
 
@@ -172,6 +172,30 @@ function usePersistentState() {
     saveTimer.current = window.setTimeout(() => saveState(state), 150)
     return () => window.clearTimeout(saveTimer.current)
   }, [state])
+  /* Track 2c: while tokens stream in every frame the trailing debounce
+     never fires, so closing mid-generation would lose the tail of the
+     answer. Flush synchronously when the page goes away, when the tab
+     is hidden (mobile closes background tabs), and on unmount. */
+  const stateRef = useRef(state)
+  stateRef.current = state
+  useEffect(() => {
+    const flush = () => {
+      window.clearTimeout(saveTimer.current)
+      saveState(stateRef.current)
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flush()
+    }
+    window.addEventListener("pagehide", flush)
+    window.addEventListener("beforeunload", flush)
+    document.addEventListener("visibilitychange", onVisibility)
+    return () => {
+      window.removeEventListener("pagehide", flush)
+      window.removeEventListener("beforeunload", flush)
+      document.removeEventListener("visibilitychange", onVisibility)
+      flush()
+    }
+  }, [])
   return [state, setState] as const
 }
 
@@ -779,6 +803,23 @@ export default function App() {
     setState((current) => ({ ...current, conversations: [next, ...current.conversations] }))
   }
 
+  /* Shared request preambles for both fresh sends and continuations, so
+     the two paths can never drift apart (track 2c). */
+  const systemPreambleFor = (conv: Conversation): ChatMessage[] =>
+    conv.systemPrompt?.trim() ? [message("system", conv.systemPrompt.trim())] : []
+  const memoryContextFor = (): ChatMessage[] =>
+    state.settings.memoryEnabled && state.memories.length
+      ? [message("system", `The following are user-approved local memories. Use them only when relevant and never invent additional memories:\n${state.memories.slice(0, 50).map((item) => `- ${item.content}`).join("\n")}`)]
+      : []
+  /* Attached documents travel verbatim in the request; the stored transcript keeps
+     them on the message so regenerations can resend the exact same content. */
+  const expandDocs = (item: StoredMessage): ChatMessage => {
+    const content = item.docs?.length
+      ? `${item.content}\n\n${item.docs.map((doc) => `[Attached file: ${doc.name}]\n${doc.content}`).join("\n\n")}`
+      : item.content
+    return item.images?.length ? { id: item.id, role: item.role, content, images: item.images } : { id: item.id, role: item.role, content }
+  }
+
   const sendAs = async (text: string, images: string[], base?: Conversation, docs: Array<{ name: string; content: string }> = pendingDocs, conversationId?: string | null) => {
     if (loading) return
     const current = base
@@ -805,18 +846,8 @@ export default function App() {
     }
     const userMessage: StoredMessage = { ...message("user", textOut, imagesOut), docs: docsOut.length ? docsOut : undefined }
     const assistantMessage = message("assistant", "")
-    const systemPreamble: ChatMessage[] = current.systemPrompt?.trim() ? [message("system", current.systemPrompt.trim())] : []
-    const memoryContext: ChatMessage[] = state.settings.memoryEnabled && state.memories.length
-      ? [message("system", `The following are user-approved local memories. Use them only when relevant and never invent additional memories:\n${state.memories.slice(0, 50).map((item) => `- ${item.content}`).join("\n")}`)]
-      : []
-    // Attached documents travel verbatim in the request; the stored transcript keeps
-    // them on the message so regenerations can resend the exact same content.
-    const expandDocs = (item: StoredMessage): ChatMessage => {
-      const content = item.docs?.length
-        ? `${item.content}\n\n${item.docs.map((doc) => `[Attached file: ${doc.name}]\n${doc.content}`).join("\n\n")}`
-        : item.content
-      return item.images?.length ? { id: item.id, role: item.role, content, images: item.images } : { id: item.id, role: item.role, content }
-    }
+    const systemPreamble = systemPreambleFor(current)
+    const memoryContext = memoryContextFor()
     const requestMessages: ChatMessage[] = [...systemPreamble, ...memoryContext, ...current.messages.map(expandDocs), expandDocs(userMessage)]
     const storedMessages: StoredMessage[] = [...current.messages, userMessage, assistantMessage]
     const initial: Conversation = {
@@ -838,6 +869,21 @@ export default function App() {
     /* Mirrors the assistant text in the transcript, so the retry policy
        can refuse to re-send once partial output already landed. */
     let assistantText = ""
+    /* Track 2c: deltas are buffered and written at most every
+       STREAM_FLUSH_MS. Each write stores the accumulated assistantText
+       (not the incoming chunk against the snapshot), so no token can be
+       lost between flushes and the transcript never falls back to only
+       the latest delta. */
+    const buffer = createDeltaBuffer(() => {
+      saveConversation({
+        ...initial,
+        messages: initial.messages.map((item) => item.id === assistantMessage.id ? { ...item, content: assistantText } : item),
+        updatedAt: Date.now(),
+      })
+    })
+    /* True only when the stream ended as designed; a stop or a failure
+       with partial output leaves a Continue-able (stopped) answer. */
+    let finishedNaturally = false
     const controller = new AbortController()
     abortRef.current = controller
     let attempt = 0
@@ -858,13 +904,10 @@ export default function App() {
             tokenCount += 1
             assistantText += delta
             setRuntimeError("")
-            saveConversation({
-              ...initial,
-              messages: initial.messages.map((item) => item.id === assistantMessage.id ? { ...item, content: `${item.content}${delta}` } : item),
-              updatedAt: Date.now(),
-            })
+            buffer.push(delta)
           },
         })
+        finishedNaturally = true
         const totalMs = performance.now() - started
         const tokensPerSec = totalMs > 100 && tokenCount > 0 ? Math.round((tokenCount / (totalMs / 1000)) * 10) / 10 : 0
         setMetrics({ kind: "chat", tokensPerSec, firstTokenMs: firstTokenAt !== null ? firstTokenAt - started : 0, totalMs, tokens: tokenCount })
@@ -899,9 +942,30 @@ export default function App() {
       }
       }
     } finally {
+      /* Drain the last buffered tokens before deciding the flag, so the
+         stopped transcript holds everything the stream delivered. */
+      buffer.flush()
       abortRef.current = null
       setLoading(false)
       setRetryNote("")
+      if (!finishedNaturally) {
+        if (assistantText) {
+          /* Partial answer: keep the text and offer Continue (2c). */
+          saveConversation({
+            ...initial,
+            messages: initial.messages.map((item) => item.id === assistantMessage.id ? { ...item, content: assistantText, stopped: true } : item),
+            updatedAt: Date.now(),
+          })
+        } else if (controller.signal.aborted) {
+          /* Stopped before the first token: drop the empty bubble so the
+             turn does not linger as a blank assistant message. */
+          saveConversation({
+            ...initial,
+            messages: initial.messages.filter((item) => item.id !== assistantMessage.id),
+            updatedAt: Date.now(),
+          })
+        }
+      }
       /* Queued sends flush from the post-commit effect above, which
          resolves the conversation from fresh state (track 2b). */
     }
@@ -935,6 +999,97 @@ export default function App() {
     const history = conv.messages.slice(0, index - 1)
     setSelectedConversationId(conv.id)
     void sendAs(target.content, target.images || [], { ...conv, messages: history, updatedAt: Date.now() }, target.docs || [])
+  }
+
+  /* Track 2c: resume a stopped answer into the SAME assistant message -
+     history keeps showing the partial, the nudge turn is request-only
+     (never stored), and if this continuation is stopped or fails the
+     stopped flag stays, so Continue remains available. Deliberately no
+     retry loop: the partial is safe, and re-running automatically could
+     duplicate text the user just interrupted. */
+  const continueAnswer = async (conversationId: string, messageId: string) => {
+    if (loading || loadingModel) return
+    const conv = state.conversations.find((item) => item.id === conversationId)
+    if (!conv) return
+    const index = conv.messages.findIndex((item) => item.id === messageId)
+    if (index === -1 || index !== conv.messages.length - 1) return
+    const target = conv.messages[index]
+    if (!canContinue(target, true)) return
+    const model = conv.model || selectedModel
+    if (!model) {
+      setRuntimeError("Choose a model before continuing. Inference runs entirely on your machine.")
+      return
+    }
+    const requestMessages: ChatMessage[] = [
+      ...systemPreambleFor(conv),
+      ...memoryContextFor(),
+      ...conv.messages.map(expandDocs),
+      message("user", CONTINUE_NUDGE),
+    ]
+    setRetryNote("")
+    setRuntimeError("")
+    setLoading(true)
+    const started = performance.now()
+    let tokenCount = 0
+    let firstTokenAt: number | null = null
+    let text = target.content
+    const buffer = createDeltaBuffer((chunk) => {
+      text += chunk
+      saveConversation({
+        ...conv,
+        messages: conv.messages.map((item) => item.id === messageId ? { ...item, content: text, stopped: true } : item),
+        updatedAt: Date.now(),
+      })
+    })
+    const controller = new AbortController()
+    abortRef.current = controller
+    let completed = false
+    try {
+      const result: StreamChatResult = await streamChat({
+        baseUrl: state.settings.baseUrl,
+        model,
+        messages: requestMessages,
+        temperature,
+        maxTokens,
+        enableThinking: thinking,
+        cacheSlot: conv.cacheSlot,
+        signal: controller.signal,
+        onDelta: (delta) => {
+          if (firstTokenAt === null) firstTokenAt = performance.now()
+          tokenCount += 1
+          setRuntimeError("")
+          buffer.push(delta)
+        },
+      })
+      completed = true
+      const totalMs = performance.now() - started
+      const tokensPerSec = totalMs > 100 && tokenCount > 0 ? Math.round((tokenCount / (totalMs / 1000)) * 10) / 10 : 0
+      setMetrics({ kind: "chat", tokensPerSec, firstTokenMs: firstTokenAt !== null ? firstTokenAt - started : 0, totalMs, tokens: tokenCount })
+      if (result.usage) {
+        const wait = result.queueWaitMs && result.queueWaitMs > 0 ? ` · ${result.queueWaitMs}ms in the local queue` : ""
+        setAgentLog((currentLog) => currentLog.slice(-29).concat(`Continued answer: ${result.usage?.completion_tokens ?? 0} completion tokens${wait}`))
+      }
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setRuntimeError(error instanceof Error ? error.message : "The continuation could not reach the local runtime.")
+      }
+    } finally {
+      buffer.flush()
+      abortRef.current = null
+      setLoading(false)
+      setRetryNote("")
+      if (completed && !controller.signal.aborted) {
+        saveConversation({
+          ...conv,
+          messages: conv.messages.map((item) => {
+            if (item.id !== messageId) return item
+            const { stopped: _done, ...rest } = item
+            return { ...rest, content: text }
+          }),
+          updatedAt: Date.now(),
+        })
+      }
+    }
   }
 
   const editMessage = (conversationId: string, messageId: string) => {
@@ -1531,7 +1686,7 @@ export default function App() {
                 </div>
               ) : (
                 <div className="messages">
-                  {activeConversation.messages.map((item) => (
+                  {activeConversation.messages.map((item, index) => (
                     <article key={item.id} className={cn("message", item.role)}>
                       <div className="message-avatar">{item.role === "assistant" ? <img src="/syntara-logo.png" alt="" /> : "You"}</div>
                       <div className="message-body">
@@ -1544,6 +1699,7 @@ export default function App() {
                         {item.content ? (
                           <div className="message-actions">
                             <button className="icon-btn" onClick={() => copy(item.content, `mc_${item.id}`)} title="Copy message" aria-label="Copy message">{copied === `mc_${item.id}` ? <Check size={13} /> : <Copy size={13} />}</button>
+                            {canContinue(item, index === activeConversation.messages.length - 1) ? <button className="icon-btn" onClick={() => void continueAnswer(activeConversation.id, item.id)} title="Continue this answer" aria-label="Continue this answer"><Play size={13} /></button> : null}
                             {item.role === "assistant" ? <button className="icon-btn" onClick={() => regenerateLast(activeConversation.id, item.id)} title="Regenerate answer" aria-label="Regenerate answer"><RefreshCw size={13} /></button> : null}
                             {item.role === "user" ? <button className="icon-btn" onClick={() => editMessage(activeConversation.id, item.id)} title="Edit and resend" aria-label="Edit and resend"><Pencil size={13} /></button> : null}
                           </div>

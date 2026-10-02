@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { memo, useMemo, useState } from "react"
 import { Check, Copy } from "lucide-react"
 import katex from "katex"
 
@@ -176,10 +176,14 @@ function blocks(source: string, key: string): React.ReactNode[] {
   return out
 }
 
-export function Markdown({ text }: { text: string }) {
+/* Memoised (track 2c): while one message streams, every already-finished
+   message keeps its text, so React can skip re-parsing them entirely -
+   re-parsing the growing answer itself is throttled upstream by the
+   delta buffer. */
+export const Markdown = memo(function Markdown({ text }: { text: string }) {
   return <div className="md">
     {segments(text).map((segment, at) => segment.kind === "code"
       ? <CodeBlock key={at} lang={segment.lang} body={segment.body} />
       : <div key={at}>{blocks(segment.body, `s${at}`)}</div>)}
   </div>
-}
+})

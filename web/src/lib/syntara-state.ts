@@ -8,6 +8,10 @@ export interface StoredMessage {
   /* Text documents attached to a user turn (name + full text). Sent verbatim in
      every request that includes this message, so regenerations stay faithful. */
   docs?: Array<{ name: string; content: string }>
+  /* Generation ended before completion (stopped by the user, or the
+     runtime failed mid-answer) - the transcript keeps the partial text
+     and the UI offers Continue (track 2c). */
+  stopped?: boolean
 }
 
 export interface Conversation {

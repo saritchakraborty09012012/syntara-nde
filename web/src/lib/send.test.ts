@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { ApiError, parseRetryAfter } from "./api"
-import { MAX_SEND_ATTEMPTS, retryAfterOf, retryDecision, statusOf } from "./send"
+import { CONTINUE_NUDGE, canContinue, createDeltaBuffer, MAX_SEND_ATTEMPTS, retryAfterOf, retryDecision, statusOf, STREAM_FLUSH_MS } from "./send"
 
 describe("retryDecision", () => {
   it("retries a 503 and honours the server's Retry-After", () => {
@@ -70,5 +70,77 @@ describe("statusOf / retryAfterOf", () => {
   it("treats any other thrown value as a non-HTTP failure", () => {
     expect(statusOf(new Error("boom"))).toBeNull()
     expect(retryAfterOf("nope")).toBeNull()
+  })
+})
+
+describe("createDeltaBuffer", () => {
+  const harness = (intervalMs = STREAM_FLUSH_MS) => {
+    const flushes: string[] = []
+    const scheduled: Array<() => void> = []
+    const cancelled: number[] = []
+    const buffer = createDeltaBuffer(
+      (chunk) => flushes.push(chunk),
+      intervalMs,
+      (fn) => { scheduled.push(fn); return scheduled.length },
+      (id) => cancelled.push(id),
+    )
+    return { flushes, scheduled, cancelled, buffer }
+  }
+
+  it("coalesces the deltas of one interval into a single flush", () => {
+    const { flushes, scheduled, buffer } = harness()
+    buffer.push("Hello")
+    buffer.push(" ")
+    buffer.push("world")
+    expect(scheduled.length).toBe(1)
+    expect(flushes).toEqual([])
+    expect(buffer.pending).toBe("Hello world")
+    scheduled[0]()
+    expect(flushes).toEqual(["Hello world"])
+    expect(buffer.pending).toBe("")
+  })
+
+  it("schedules the next interval after one fires", () => {
+    const { flushes, scheduled, buffer } = harness()
+    buffer.push("a")
+    scheduled[0]()
+    buffer.push("b")
+    expect(scheduled.length).toBe(2)
+    scheduled[1]()
+    expect(flushes).toEqual(["a", "b"])
+  })
+
+  it("flush hands pending over immediately and cancels the timer", () => {
+    const { flushes, scheduled, cancelled, buffer } = harness()
+    buffer.push("tail")
+    buffer.flush()
+    expect(scheduled.length).toBe(1)
+    expect(cancelled).toEqual([1])
+    expect(flushes).toEqual(["tail"])
+    expect(buffer.pending).toBe("")
+  })
+
+  it("flush with nothing pending calls back nothing", () => {
+    const { flushes, buffer } = harness()
+    buffer.flush()
+    expect(flushes).toEqual([])
+  })
+
+  it("uses a UI-safe throttle interval by default", () => {
+    expect(STREAM_FLUSH_MS).toBeGreaterThan(0)
+    expect(STREAM_FLUSH_MS).toBeLessThanOrEqual(200)
+  })
+})
+
+describe("canContinue", () => {
+  it("continues only a stopped assistant answer that is last", () => {
+    expect(canContinue({ role: "assistant", stopped: true }, true)).toBe(true)
+    expect(canContinue({ role: "assistant", stopped: true }, false)).toBe(false)
+    expect(canContinue({ role: "assistant" }, true)).toBe(false)
+    expect(canContinue({ role: "user", stopped: true }, true)).toBe(false)
+  })
+
+  it("ships a non-empty continuation nudge", () => {
+    expect(CONTINUE_NUDGE.trim().length).toBeGreaterThan(0)
   })
 })
