@@ -5,6 +5,9 @@ pub mod host;
 // `library` is public for the same reason as `host`: tests/host_contract.rs
 // pins the inspect argv and the JSON mapping as an integration target.
 pub mod library;
+// `agent_tools` is public for the same reason: tests/agent_tools_contract.rs
+// pins the path scoping, caps and process rules as an integration target.
+pub mod agent_tools;
 mod qdm;
 
 use std::sync::{Arc, Mutex};
@@ -31,6 +34,12 @@ pub fn run() {
             host::host_start,
             host::host_stop,
             library::library_inspect,
+            agent_tools::fs_read,
+            agent_tools::fs_list,
+            agent_tools::fs_write,
+            agent_tools::proc_run,
+            agent_tools::todo_get,
+            agent_tools::todo_set,
             qdm::commands::download_add,
             qdm::commands::download_start,
             qdm::commands::download_pause,
@@ -66,6 +75,7 @@ pub fn run() {
                 engine,
                 host: Mutex::new(host_process),
             });
+            app.manage(agent_tools::AgentTodo::default());
 
             let show = MenuItemBuilder::with_id("show", "Show Syntara").build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "Quit Syntara").build(app)?;
