@@ -545,6 +545,8 @@ select option { background-color: var(--bg-soft); color: var(--text); }
   .nav-collapsed .nav-item { justify-content: center; }
   .nav-collapsed .nav-label { display: none; }
   .nav-collapsed .runtime-chip { justify-content: center; }
+  .nav-collapsed .mode-toggle { flex-direction: column; padding: 3px; margin-bottom: 8px; }
+  .nav-collapsed .mode-toggle .mode-btn { padding: 7px 2px; font-size: 10px; letter-spacing: .02em; }
 
   /* Conversation history panel toggle. */
   .chat-view.history-collapsed { grid-template-columns: minmax(0, 1fr); }
@@ -561,6 +563,24 @@ select option { background-color: var(--bg-soft); color: var(--text); }
 .model-tab:hover { border-color: var(--accent); color: var(--accent); transform: translateY(-1px); }
 .model-tab.active { background: linear-gradient(105deg, var(--accent), var(--accent-2)); border-color: transparent; color: #03131f; font-family: 'Orbitron', sans-serif; font-weight: 800; letter-spacing: .12em; box-shadow: 0 0 28px rgba(69,224,255,.22); }
 :root[data-theme="light"] .model-tab { background: rgba(0,140,190,.05); }
+
+/* Chat|Agent mode toggle (phase 3): segmented control where the workspace
+   switcher used to sit. Two tabs, one panel each; switching is a hash
+   navigation, never a reload, so each mode keeps its own history. */
+.mode-toggle { display: flex; gap: 4px; margin: 0 0 12px; padding: 4px; border: 1px solid var(--line); background: rgba(69,224,255,.035); border-radius: 2px; }
+.mode-toggle .mode-btn { flex: 1; border: 0; background: transparent; color: var(--muted); padding: 9px 8px; cursor: pointer; border-radius: 2px; font-family: 'Share Tech Mono', monospace; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; transition: background .18s, color .18s; white-space: nowrap; }
+.mode-toggle .mode-btn:hover { color: var(--accent); }
+.mode-toggle .mode-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mode-toggle .mode-btn.active { background: linear-gradient(105deg, var(--accent), var(--accent-2)); color: #03131f; font-family: 'Orbitron', sans-serif; font-weight: 800; }
+:root[data-theme="light"] .mode-toggle { background: rgba(0,140,190,.05); }
+/* Agent-mode toolbar row: shared model picker above the hero. */
+.agent-toolbar { display: flex; align-items: center; margin: 0 0 14px; }
+/* Narrow/collapsed rails (~92 px): stack the two labels vertically so the
+   words stay readable instead of overflowing. These must live AFTER the
+   base rules above — the generic breakpoint blocks earlier in the file
+   lose the cascade to them. */
+@media (max-width: 1000px) { .mode-toggle { flex-direction: column; } .mode-toggle .mode-btn { padding: 7px 2px; font-size: 10px; letter-spacing: .02em; } }
+@media (max-width: 760px) { .mode-toggle { flex: 0 0 auto; flex-direction: row; margin: 0; } .mode-toggle .mode-btn { padding: 8px 12px; font-size: 13px; letter-spacing: .08em; } }
 /* The heading's decorative blue line would sit between the title and its tab
    row, so the tabbed head opts out of it. */
 .section-head.tabbed h2:after { display: none; }

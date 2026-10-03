@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest"
 
-import { MODEL_TABS, parseHash } from "./routes"
+import { ALL_VIEW_IDS, MODE_VIEWS, MODEL_TABS, parseHash, VIEW_LABELS } from "./routes"
 
-const VIEW_IDS = ["chat", "agents", "models", "downloads", "memory", "performance", "developer", "settings"] as const
+const VIEW_IDS = ALL_VIEW_IDS
 
 describe("parseHash", () => {
   it("keeps a plain view route", () => {
@@ -43,5 +43,23 @@ describe("parseHash", () => {
   it("exposes all three tabs with 'all' first", () => {
     expect(MODEL_TABS.map((tab) => tab.id)).toEqual(["all", "installing", "installed"])
     expect(MODEL_TABS[0].label).toBe("All")
+  })
+})
+
+describe("phase 3 mode toggle", () => {
+  it("routes both modes as plain views (deep links, back/forward)", () => {
+    expect(parseHash("#chat", VIEW_IDS)).toEqual({ view: "chat", family: null, tab: null })
+    expect(parseHash("#agents", VIEW_IDS)).toEqual({ view: "agents", family: null, tab: null })
+  })
+
+  it("lists the two modes first in the canonical view ids", () => {
+    expect(ALL_VIEW_IDS.slice(0, 2)).toEqual([...MODE_VIEWS])
+    expect(ALL_VIEW_IDS).toHaveLength(8)
+  })
+
+  it("labels the modes singularly and every view exactly once", () => {
+    expect(VIEW_LABELS.chat).toBe("Chat")
+    expect(VIEW_LABELS.agents).toBe("Agent")
+    expect(Object.keys(VIEW_LABELS).sort()).toEqual([...ALL_VIEW_IDS].sort())
   })
 })

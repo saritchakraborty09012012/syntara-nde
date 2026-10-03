@@ -142,7 +142,7 @@ delivered them. Earlier commits used interim labels (host work landed as
 | **0 — Audit & gate** (this doc) | audit docs, name gate + tests + CI, licence records, purge | **done `f028c30`** — gate green locally and tests pass |
 | **1 — Adaptive Engine** | see track table below | a local GGUF file can be inspected, loaded and streamed through the host on Windows, via a packaged build |
 | **2 — Chat mode** | rewire to host API; picker = local models only + badges, no key fields; resume/queue/throttled-markdown lessons; no workspace concept in chat | **done this commit** — tracks 2a–2e below; exit criterion met: `tools/chat_e2e.py` drives the packaged host end-to-end (9/9, loopback-only), web build exit 0, web tests 120/120 |
-| **3 — Mode toggle** | single `Chat \| Agent` toggle replacing workspaces; per-mode history, shared picker, no reload, existing theme tokens | mode switch preserves context; no full reload |
+| **3 — Mode toggle** | single `Chat \| Agent` toggle replacing workspaces; per-mode history, shared picker, no reload, existing theme tokens | **done this commit** — sidebar segmented tablist (`role="tab"`/`aria-selected`/roving tabindex/arrow keys) where the workspace switcher sat; modes are ordinary hash views (`#chat`, `#agents`) so switching never remounts or reloads the app and each mode keeps its history in App state (conversations vs. run log); shared `ModelPicker` now heads both panels; `VIEW_LABELS` is the single wording source for menu/eyebrow/document title; Alt+1…2 jump to the modes; exit criterion met by build exit 0 + **125/125** web tests incl. a server-rendered App-shell test asserting the toggle and panel wiring |
 | **4 — Agent mode** | TS loop (`web/src/lib/agent/`), tools as Tauri commands, permission system (once/always/deny, per-project), local-model tool-call layer (schema-constrained JSON + repair), tool cards/diffs/todo UI | agent tools run and are gated; parser/repair/compaction unit tests + integration test vs mock gateway |
 | **5 — Polish & hardening** | startup/memory/shutdown hygiene, child-process cleanup, in-app logs, first-run hardware scan → starter-model suggestion, final name-purge + full test matrix + production builds, docs/README sync | checklist from `AGENTS.md` §115 satisfied |
 
@@ -265,6 +265,10 @@ proven embedding strategy (adjustment to the plan, as agreed).
 | Chat 2e: offline claim | **by construction, not by disabling the NIC** — every e2e request targets `127.0.0.1` and the chat path performs no other network calls; the machine itself was online |
 | Chat 2e: full Tauri GUI chat session | **not run** — the packaged host is driven by the script; a human click-through of the desktop shell was not performed in this pass |
 | Chat 2e: `python tools/check_names.py` | **ran — clean (1099 files; +2 = the new `tools/chat_e2e.py` and its gitignored report)** |
+| Mode toggle (3): `npm run build` (`tsc -b` + vite build), from `web/` | **ran — exit 0** |
+| Mode toggle (3): `npm test` (vitest, node env) | **ran — 125/125 (16 files)**: +3 route tests (`#chat`/`#agents` routing, canonical id list, singular labels) and a new `app-shell.test.tsx` that server-renders the real `App` with stubbed browser globals and asserts the tablist/tabs/aria-selected state, the chat panel, and that the menu no longer lists Chat/Agents |
+| Mode toggle (3): GUI click-through of an actual mode switch | **not run** — no browser/webview automation in this environment; the switch is the same `navigate()` hash path every sidebar item already uses, and the render test covers initial wiring |
+| Mode toggle (3): `python tools/check_names.py` | **ran — clean (1100 files; +1 = `web/src/app-shell.test.tsx`)** |
 
 Deviations from the original Phase 0 checklist: `docs/ARCHITECTURE.md` was
 **not** created — the repository already carries a root `ARCHITECTURE.md`

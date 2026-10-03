@@ -60,6 +60,7 @@ row names the concrete files that own the behavior.
 | Resume stopped answers (Continue into the same assistant message) | ✅ | `web/src/App.tsx` `continueAnswer`, `web/src/lib/send.ts` (Phase 2c) |
 | Throttled stream writes + memoised Markdown; flush on pagehide/hidden/unmount | ✅ | `web/src/lib/send.ts` `createDeltaBuffer`, `web/src/components/Markdown.tsx`, `web/src/App.tsx` (Phase 2c) |
 | Queue-wait surfaced (`x-syntara-queue-wait-ms` emitted by host, shown in run log) | ✅ | `syntara/gateway.py`, `web/src/lib/api.ts` (Phase 2e) |
+| Single `Chat \| Agent` mode toggle (hash views, per-mode history, shared picker, no reload) | ✅ | `web/src/App.tsx` sidebar tablist, `web/src/lib/routes.ts` `MODE_VIEWS`/`VIEW_LABELS` (Phase 3) |
 | Modalities beyond text/image | 🔴 | Extension point |
 
 ## Memory and persistence

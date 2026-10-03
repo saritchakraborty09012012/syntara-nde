@@ -90,7 +90,7 @@ import {
   type StoredMessage,
   type SyntaraState,
 } from "@/lib/syntara-state"
-import { MODEL_TABS, parseHash, type ModelTab, type View } from "@/lib/routes"
+import { ALL_VIEW_IDS, MODE_VIEWS, MODEL_TABS, parseHash, VIEW_LABELS, type ModelTab, type View } from "@/lib/routes"
 import { hostBaseFromStatus, hostStart, hostStatus, libraryInspect, waitHostReady } from "@/lib/host-bridge"
 import { badgeLabel, groupComplete, metaFromInspect, pickInspectTarget } from "@/lib/inspect"
 import { mergePickerOptions, type PickerRow } from "@/lib/picker"
@@ -106,22 +106,27 @@ const message = (role: ChatMessage["role"], content: string, images?: string[]):
 
 type ThemeMode = AppSettings["theme"]
 
-const NAV: Array<{ id: View; label: string; icon: typeof MessageSquare }> = [
-  { id: "chat", label: "Chat", icon: MessageSquare },
-  { id: "agents", label: "Agents", icon: Bot },
-  { id: "models", label: "Models", icon: Boxes },
-  { id: "downloads", label: "Downloads", icon: Download },
-  { id: "memory", label: "Memory", icon: BrainCircuit },
-  { id: "performance", label: "Performance", icon: Gauge },
-  { id: "developer", label: "Developer", icon: Code2 },
-  { id: "settings", label: "Settings", icon: Settings2 },
+/* Sidebar menu (phase 3): Chat and Agent are no longer menu items — one
+   Chat|Agent toggle above this list owns them, and VIEW_LABELS owns all
+   wording so the menu, the topbar eyebrow and the document title can never
+   drift apart. */
+const NAV: Array<{ id: View; icon: typeof MessageSquare }> = [
+  { id: "models", icon: Boxes },
+  { id: "downloads", icon: Download },
+  { id: "memory", icon: BrainCircuit },
+  { id: "performance", icon: Gauge },
+  { id: "developer", icon: Code2 },
+  { id: "settings", icon: Settings2 },
 ]
 
+/* Alt+1…9 jumps: the two modes first, then the menu. */
+const SHORTCUT_VIEWS: View[] = [...MODE_VIEWS, ...NAV.map((item) => item.id)]
+
 /* Hash parsing lives in lib/routes.ts (#models, #models/installing,
-   #models/qwen-local, …); the NAV ids are the only app-specific input. */
-const VIEW_IDS: readonly string[] = NAV.map((item) => item.id)
+   #models/qwen-local, …); ALL_VIEW_IDS includes both modes even though
+   they are reached through the toggle rather than the menu. */
 const routeFromHash = (): { view: View; family: string | null; tab: ModelTab | null } =>
-  parseHash(window.location.hash, VIEW_IDS)
+  parseHash(window.location.hash, ALL_VIEW_IDS)
 
 const defaultAgent = {
   name: "Local Coding Agent",
@@ -234,7 +239,7 @@ export default function App() {
       document.title = `${MODEL_TABS.find((tab) => tab.id === route.tab)?.label} models · Syntara`
       return
     }
-    const label = NAV.find((item) => item.id === route.view)?.label
+    const label = VIEW_LABELS[route.view]
     document.title = label && route.view !== "chat" ? `${label} · Syntara` : "Syntara"
   }, [route, state.models])
   const [connected, setConnected] = useState(false)
@@ -575,8 +580,8 @@ export default function App() {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.altKey && !event.ctrlKey && !event.metaKey && event.key >= "1" && event.key <= "9") {
-        const target = NAV[Number(event.key) - 1]
-        if (target) { event.preventDefault(); setView(target.id) }
+        const target = SHORTCUT_VIEWS[Number(event.key) - 1]
+        if (target) { event.preventDefault(); setView(target) }
         return
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
@@ -1581,12 +1586,34 @@ export default function App() {
           <div><div className="brand-name">Syntara</div><div className="brand-by">By NDe</div></div>
         </div>
 
-        <button className="new-chat" onClick={startConversation}><Plus size={16} /> <span>New chat</span></button>
+        {/* Phase 3: one Chat|Agent segmented switch where the workspace
+            switcher used to sit. Switching is a hash navigation like every
+            other view change, so nothing reloads and each mode keeps its own
+            history (conversations vs. run log) in App state. */}
+        <div className="mode-toggle" role="tablist" aria-label="Work mode" onKeyDown={(event) => {
+          if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return
+          event.preventDefault()
+          const dir = event.key === "ArrowRight" ? 1 : -1
+          const current = MODE_VIEWS.findIndex((id) => id === view)
+          const next = MODE_VIEWS[(current + dir + MODE_VIEWS.length) % MODE_VIEWS.length]
+          setView(next)
+          document.getElementById(`mode-tab-${next}`)?.focus()
+        }}>
+          {MODE_VIEWS.map((id) => (
+            <button key={id} id={`mode-tab-${id}`} type="button" role="tab"
+              aria-selected={view === id} tabIndex={view === id ? 0 : -1}
+              className={cn("mode-btn", view === id && "active")} onClick={() => setView(id)}>
+              {VIEW_LABELS[id]}
+            </button>
+          ))}
+        </div>
+
+        {view !== "agents" ? <button className="new-chat" onClick={() => { startConversation(); if (view !== "chat") setView("chat") }}><Plus size={16} /> <span>New chat</span></button> : null}
         <div className="nav-section">
           <div className="nav-label">Menu</div>
-          {NAV.map(({ id, label, icon: Icon }) => (
+          {NAV.map(({ id, icon: Icon }) => (
             <button key={id} className={cn("nav-item", view === id && "active")} onClick={() => setView(id)}>
-              <Icon size={16} /> <span>{label}</span>
+              <Icon size={16} /> <span>{VIEW_LABELS[id]}</span>
               {id === "downloads" && state.downloads.some((item) => item.state === "downloading") ? <span className="nav-dot" /> : null}
             </button>
           ))}
@@ -1613,7 +1640,7 @@ export default function App() {
               <PanelLeft size={17} />
             </button>
             <div>
-              <span className="eyebrow">{NAV.find((item) => item.id === view)?.label}</span>
+              <span className="eyebrow">{VIEW_LABELS[view]}</span>
               <div className="runtime-inline"><span className={cn("status-light", connected && "on")} /> {selectedModel || "No model selected"}</div>
             </div>
           </div>
@@ -1627,7 +1654,7 @@ export default function App() {
         {retryNote && !runtimeError ? <div className="info-strip" role="status"><span><LoaderCircle size={15} className="spin" /> {retryNote}</span></div> : null}
 
         {view === "chat" && (
-          <section className={cn("view chat-view", state.settings.historyCollapsed && "history-collapsed")}>
+          <section className={cn("view chat-view", state.settings.historyCollapsed && "history-collapsed")} id="panel-chat" role="tabpanel" aria-labelledby="mode-tab-chat">
             <div className="chat-toolbar">
               <div className="toolbar-left">
                 <button className="icon-btn" onClick={() => updateSettings({ historyCollapsed: !state.settings.historyCollapsed })} title={state.settings.historyCollapsed ? "Show conversation history" : "Hide conversation history"} aria-label={state.settings.historyCollapsed ? "Show conversation history" : "Hide conversation history"} aria-expanded={!state.settings.historyCollapsed}>
@@ -1717,7 +1744,10 @@ export default function App() {
           </section>
         )}
 
-        {view === "agents" && <section className="view scroll-view">
+        {view === "agents" && <section className="view scroll-view" id="panel-agents" role="tabpanel" aria-labelledby="mode-tab-agents">
+          {/* Shared picker (phase 3): same ModelPicker, rows and one-click
+              load path as chat — one model choice for the whole app. */}
+          <div className="agent-toolbar"><ModelPicker rows={pickerRows} value={effectiveModel} loading={loadingModel} onSelect={pickModel} /></div>
           <div className="hero-panel agent-hero"><div><span className="section-kicker">AGENT MODE</span><h2>Local agents that can actually work.</h2><p>Build Codex/Claude-Code/Qwen-Code-style workflows around your local models, with explicit permissions and boundaries you control.</p></div><button className="primary-btn" onClick={createAgent}><Plus size={15} /> New agent</button></div>
           <div className="two-col">
             <div className="card-panel"><div className="panel-title"><span>Task</span><span className="permission-chip"><ShieldCheck size={13} /> Permission-gated</span></div><textarea className="large-input" value={agentPrompt} onChange={(e) => setAgentPrompt(e.target.value)} placeholder="e.g. Audit this repository, propose fixes, run tests, and show me the diff." /><button className="primary-btn" onClick={() => void runAgent()} disabled={!agentPrompt.trim() || agentBusy}>{agentBusy ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />} {agentBusy ? "Planning…" : "Run agent"}</button></div>

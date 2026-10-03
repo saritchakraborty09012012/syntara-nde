@@ -17,6 +17,39 @@ export type View =
   | "developer"
   | "settings"
 
+/* Phase 3: the app has exactly two modes — Chat and Agent — switched by one
+   segmented toggle where the workspace switcher used to sit. They are views
+   like any other (#chat, #agents) so deep links, back/forward and hash-only
+   navigation work; switching never remounts the app, so each mode keeps its
+   own history (conversations vs. run log) in place. */
+export const MODE_VIEWS = ["chat", "agents"] as const
+
+/* Canonical list of every routable view id. The sidebar menu (NAV in App.tsx)
+   is a subset — the two modes are reached through the toggle, not the menu —
+   but parseHash must still accept all of them. */
+export const ALL_VIEW_IDS: readonly string[] = [
+  ...MODE_VIEWS,
+  "models",
+  "downloads",
+  "memory",
+  "performance",
+  "developer",
+  "settings",
+]
+
+/* Labels shown for each view (sidebar tooltips, topbar eyebrow, a11y names).
+   The mode labels are singular: the toggle reads "Chat | Agent". */
+export const VIEW_LABELS: Record<View, string> = {
+  chat: "Chat",
+  agents: "Agent",
+  models: "Models",
+  downloads: "Downloads",
+  memory: "Memory",
+  performance: "Performance",
+  developer: "Developer",
+  settings: "Settings",
+}
+
 export type ModelTab = "all" | "installing" | "installed"
 
 export const MODEL_TABS: Array<{ id: ModelTab; label: string }> = [
