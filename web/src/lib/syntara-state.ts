@@ -44,6 +44,12 @@ export interface ProjectItem {
   memoryIds: string[]
   createdAt: number
   updatedAt: number
+  /* Agent mode (phase 4): the folder the agent may touch. Paths in tool
+     calls are resolved underneath it in the desktop shell. */
+  rootPath?: string
+  /* Tool names this project has an `always` grant for (phase 4 permission
+     system; plain tool-name list, e.g. ["fs_write", "proc_run"]). */
+  permissions?: string[]
 }
 
 export interface AgentConfig {

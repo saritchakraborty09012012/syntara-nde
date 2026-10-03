@@ -87,10 +87,12 @@ row names the concrete files that own the behavior.
 
 | Feature | Status | Where |
 | --- | --- | --- |
-| Local agent loop with OpenAI-style tool calls | ✅ | `syntara/client.py` `_Agents`, CLI `agents run`/`agent` |
-| Bound local handlers; unbound tool → honest interruption | ✅ | `syntara/tests/test_agents.py` |
-| Plan + permission gate UI | ✅ | `web/src/App.tsx` (Agents view) |
-| Sandboxed file/shell/browser tools | 🟡 | Desktop/engine-gated; labeled, not faked |
+| Local agent loop with OpenAI-style tool calls | ✅ | `syntara/client.py` `_Agents`, CLI `agents run`/`agent`; web loop `web/src/lib/agent/loop.ts` (Phase 4a: native `tool_calls` + JSON-fence fallback, bounded repair, compaction) |
+| Bound local handlers; unbound tool → honest interruption | ✅ | `syntara/tests/test_agents.py`; web `web/src/lib/agent/execute.ts` bound-check + `desktop/src-tauri/src/agent_tools.rs` (Phase 4b/4c) |
+| Plan + permission gate UI (once/always/deny, per-project, no backdrop dismissal) | ✅ | `web/src/App.tsx` project bar + permission prompt, `web/src/lib/agent/permissions.ts` (Phase 4c) |
+| Tool-card run stream: outputs, write diffs, todo panel, interruption banners | ✅ | `web/src/components/AgentEvents.tsx`, `web/src/lib/agent/ui.ts` (Phase 4c) |
+| Project folder scoping for fs/process tools (root-bound, argv-only, caps) | ✅ | `desktop/src-tauri/src/agent_tools.rs` `resolve_under`/`run_process`, 17 contract tests (Phase 4b) |
+| Sandboxed file/shell/browser tools | 🟡 | Desktop/engine-gated (root-scoped + permission-gated, not an OS sandbox); browser session plans with `tools: []`; labeled, not faked |
 
 ## Local API and developer surface
 

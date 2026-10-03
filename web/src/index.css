@@ -588,3 +588,48 @@ select option { background-color: var(--bg-soft); color: var(--text); }
    action columns, so they only need the icon + content tracks. */
 .download-row.progress-row { grid-template-columns: 36px minmax(0, 1fr); }
 .empty-state-card .primary-btn { margin-top: 10px; }
+/* Phase 4c — project bar, permission prompt, run events, todo.
+   Appended after every base and theme rule so the cascade always wins. */
+.agent-project { display: grid; gap: 11px; margin-bottom: 12px; }
+.agent-project-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.agent-project-row .panel-note { flex: 1 1 240px; min-width: 0; }
+.project-select { max-width: 240px; background: var(--panel-2); border: 1px solid var(--line); color: var(--text); border-radius: 9px; padding: 6px 9px; font-size: 13px; }
+.project-name { font-size: 13px; color: var(--text); }
+.grant-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.grant-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 4px 8px; }
+.grant-chip.granted { color: var(--success); border-color: rgba(95,241,174,.35); }
+.grant-chip .chip-x { display: inline-flex; border: 0; background: none; color: inherit; padding: 0; cursor: pointer; opacity: .75; }
+.grant-chip .chip-x:hover { opacity: 1; }
+.task-actions { display: flex; align-items: center; gap: 9px; margin-top: 2px; }
+.agent-todo { margin-top: 12px; }
+.todo-list { margin: 0; padding-left: 18px; display: grid; gap: 5px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+.agent-events { min-height: 220px; display: grid; align-content: start; gap: 8px; font-size: 11px; }
+.ev-step { display: flex; align-items: center; gap: 7px; color: var(--muted-2); font-family: 'Share Tech Mono', ui-monospace, monospace; text-transform: uppercase; letter-spacing: .1em; padding-top: 3px; border-top: 1px dashed var(--line); }
+.ev-text { color: var(--text); line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; padding: 6px 8px; background: rgba(127,140,160,.07); border-radius: 8px; }
+.ev-permission, .ev-notice, .ev-done, .ev-interrupted, .ev-error { display: flex; align-items: flex-start; gap: 7px; padding: 6px 8px; border-radius: 8px; line-height: 1.5; overflow-wrap: anywhere; }
+.ev-permission { color: var(--success); background: rgba(95,241,174,.06); }
+.ev-notice { color: var(--accent); background: rgba(99,215,255,.07); }
+.ev-done { color: var(--success); background: rgba(95,241,174,.07); flex-wrap: wrap; }
+.ev-interrupted { color: var(--warn); background: rgba(255,200,87,.08); }
+.ev-error { color: var(--danger); background: rgba(255,117,143,.09); }
+.tool-card { display: grid; gap: 7px; padding: 8px 9px; border: 1px solid var(--line); border-radius: 10px; background: rgba(127,140,160,.06); }
+.tool-card.running { border-color: rgba(99,215,255,.35); }
+.tool-card.fail { border-color: rgba(255,117,143,.4); }
+.tool-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 11px; }
+.tool-card-head code { font-family: 'Share Tech Mono', ui-monospace, monospace; color: var(--accent); }
+.tool-card.fail .tool-card-head code { color: var(--danger); }
+.tool-args { color: var(--muted); min-width: 0; overflow-wrap: anywhere; flex: 1 1 120px; }
+.tool-status { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; color: var(--muted-2); font-family: 'Share Tech Mono', ui-monospace, monospace; }
+.tool-card.ok .tool-status { color: var(--success); }
+.tool-card.fail .tool-status { color: var(--danger); }
+.tool-output { margin: 0; padding: 8px; max-height: 260px; overflow: auto; background: rgba(0,0,0,.26); border-radius: 8px; color: #bed0db; font-family: 'Share Tech Mono', ui-monospace, monospace; font-size: 11px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-diff { display: grid; max-height: 260px; overflow: auto; background: rgba(0,0,0,.26); border-radius: 8px; padding: 5px 0; font-family: 'Share Tech Mono', ui-monospace, monospace; font-size: 11px; line-height: 1.55; }
+.diff-line { display: grid; grid-template-columns: 14px minmax(0,1fr); gap: 6px; padding: 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; color: #93a3b5; }
+.diff-line.add { color: #5ff1ae; background: rgba(95,241,174,.08); }
+.diff-line.del { color: #ff758f; background: rgba(255,117,143,.08); }
+.permission-modal .permission-args { font-family: 'Share Tech Mono', ui-monospace, monospace; overflow-wrap: anywhere; }
+:root[data-theme="light"] .tool-output,
+:root[data-theme="light"] .tool-diff { background: #0b1520; color: #c6e2ef; }
+:root[data-theme="light"] .diff-line { color: #93a3b5; }
+:root[data-theme="light"] .diff-line.add { color: #5ff1ae; background: rgba(95,241,174,.1); }
+:root[data-theme="light"] .diff-line.del { color: #ff758f; background: rgba(255,117,143,.1); }

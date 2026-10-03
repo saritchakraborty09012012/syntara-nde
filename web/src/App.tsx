@@ -20,6 +20,7 @@ import {
   Gauge,
   HardDrive,
   Link2,
+  ListChecks,
   LoaderCircle,
   MemoryStick,
   MessageSquare,
@@ -87,6 +88,7 @@ import {
   type DownloadTask,
   type MemoryItem,
   type ModelMeta,
+  type ProjectItem,
   type StoredMessage,
   type SyntaraState,
 } from "@/lib/syntara-state"
@@ -96,6 +98,13 @@ import { badgeLabel, groupComplete, metaFromInspect, pickInspectTarget } from "@
 import { mergePickerOptions, type PickerRow } from "@/lib/picker"
 import { canContinue, CONTINUE_NUDGE, createDeltaBuffer, retryAfterOf, retryDecision, statusOf } from "@/lib/send"
 import { ModelPicker } from "@/components/ModelPicker"
+import { AgentEvents } from "@/components/AgentEvents"
+import { runAgentLoop, type AgentEvent } from "@/lib/agent/loop"
+import { AGENT_TOOL_SPECS } from "@/lib/agent/tools"
+import { createAgentExecutor } from "@/lib/agent/execute"
+import { summarizeArgs } from "@/lib/agent/ui"
+import { agentToolsAvailable } from "@/lib/agent-tools"
+import type { GrantStore, PermissionDecision } from "@/lib/agent/permissions"
 import { cn } from "@/lib/utils"
 
 const message = (role: ChatMessage["role"], content: string, images?: string[]): ChatMessage => {
@@ -133,6 +142,12 @@ const defaultAgent = {
   systemPrompt: "You are a careful local coding agent. Explain actions, request approval for risky operations, and keep changes inside the directory you are working in.",
   tools: ["filesystem", "terminal", "git", "tests"],
 }
+
+/* Phase 4c: the two gated tools and how the project bar words them. */
+const GRANT_LABELS = [
+  { tool: "fs_write", label: "Write files" },
+  { tool: "proc_run", label: "Run processes" },
+] as const
 
 type RunMetrics = { kind: "chat" | "agent"; tokensPerSec: number; firstTokenMs: number; totalMs: number; tokens: number }
 
@@ -270,7 +285,12 @@ export default function App() {
   const [memorySearch, setMemorySearch] = useState("")
   const [agentPrompt, setAgentPrompt] = useState("")
   const [agentBusy, setAgentBusy] = useState(false)
-  const [agentLog, setAgentLog] = useState<string[]>([])
+  /* Phase 4c: structured loop events replace the old plain-text log, and a
+     pending permission request blocks the run until the user answers. */
+  const [runEvents, setRunEvents] = useState<AgentEvent[]>([])
+  const [agentTodo, setAgentTodo] = useState<string[]>([])
+  const [permissionAsk, setPermissionAsk] = useState<{ tool: string; args: Record<string, unknown> } | null>(null)
+  const permissionResolver = useRef<((decision: PermissionDecision) => void) | null>(null)
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
   const [pendingImages, setPendingImages] = useState<string[]>([])
   const [pendingDocs, setPendingDocs] = useState<Array<{ name: string; content: string }>>([])
@@ -328,6 +348,34 @@ export default function App() {
   const conversation = state.conversations.find((item) => item.id === selectedConversationId) || state.conversations[0]
   const activeConversation = conversation || null
   const selectedModel = state.settings.model || models[0] || ""
+  /* Phase 4c: the project the agent works inside (folder + `always`
+     grants). Falls back to the first stored project, so legacy rows kept
+     from Phase 2 keep working without a Projects view. */
+  const activeProject = useMemo(
+    () => state.projects.find((item) => item.id === state.settings.selectedProjectId) ?? state.projects[0] ?? null,
+    [state.projects, state.settings.selectedProjectId],
+  )
+  /* Persisted side of the permission system: `always` grants live on
+     ProjectItem.permissions; runs without a project only ever earn
+     session-scoped grants (addAlways is a no-op then). */
+  const grantStore = useMemo<GrantStore>(() => ({
+    hasAlways: (projectId, tool) => {
+      if (!projectId) return false
+      const project = state.projects.find((item) => item.id === projectId)
+      return !!project?.permissions?.includes(tool)
+    },
+    addAlways: (projectId, tool) => {
+      if (!projectId) return
+      setState((current) => ({
+        ...current,
+        projects: current.projects.map((item) =>
+          item.id === projectId && !(item.permissions ?? []).includes(tool)
+            ? { ...item, permissions: [...(item.permissions ?? []), tool], updatedAt: Date.now() }
+            : item,
+        ),
+      }))
+    },
+  }), [state.projects])
   const hardware = useMemo(() => detectHardware(health), [health])
   const filteredModels = useMemo(() => state.models.filter((model) => {
     const needle = modelSearch.trim().toLowerCase()
@@ -914,10 +962,6 @@ export default function App() {
         const totalMs = performance.now() - started
         const tokensPerSec = totalMs > 100 && tokenCount > 0 ? Math.round((tokenCount / (totalMs / 1000)) * 10) / 10 : 0
         setMetrics({ kind: "chat", tokensPerSec, firstTokenMs: firstTokenAt !== null ? firstTokenAt - started : 0, totalMs, tokens: tokenCount })
-        if (result.usage) {
-          const wait = result.queueWaitMs && result.queueWaitMs > 0 ? ` · ${result.queueWaitMs}ms in the local queue` : ""
-          setAgentLog((currentLog) => currentLog.slice(-29).concat(`Last chat: ${result.usage?.completion_tokens ?? 0} completion tokens${wait}`))
-        }
         setRetryNote("")
         break
       } catch (error) {
@@ -1068,10 +1112,6 @@ export default function App() {
       const totalMs = performance.now() - started
       const tokensPerSec = totalMs > 100 && tokenCount > 0 ? Math.round((tokenCount / (totalMs / 1000)) * 10) / 10 : 0
       setMetrics({ kind: "chat", tokensPerSec, firstTokenMs: firstTokenAt !== null ? firstTokenAt - started : 0, totalMs, tokens: tokenCount })
-      if (result.usage) {
-        const wait = result.queueWaitMs && result.queueWaitMs > 0 ? ` · ${result.queueWaitMs}ms in the local queue` : ""
-        setAgentLog((currentLog) => currentLog.slice(-29).concat(`Continued answer: ${result.usage?.completion_tokens ?? 0} completion tokens${wait}`))
-      }
     } catch (error) {
       if (!controller.signal.aborted) {
         setRuntimeError(error instanceof Error ? error.message : "The continuation could not reach the local runtime.")
@@ -1224,6 +1264,59 @@ export default function App() {
     setState((current) => ({ ...current, agents: [{ id: createId("agent"), ...defaultAgent, createdAt: now, updatedAt: now }, ...current.agents] }))
   }
 
+  /* One resolver per pending permission prompt: the loop's askPermission
+     promise resolves only when the user picks Deny / Allow once / Always. */
+  const settlePermission = (decision: PermissionDecision) => {
+    permissionResolver.current?.(decision)
+    permissionResolver.current = null
+    setPermissionAsk(null)
+  }
+
+  /* Folder for the agent project (desktop shell only): reuses an existing
+     project when the same folder is chosen twice. */
+  const pickAgentFolder = async () => {
+    if (!qdmAvailable()) return
+    try {
+      const picked = await pickQdmFolder()
+      if (!picked) return
+      const name = picked.split(/[\\/]/).filter(Boolean).pop() || picked
+      setState((current) => {
+        const existing = current.projects.find((item) => item.rootPath === picked)
+        if (existing) return { ...current, settings: { ...current.settings, selectedProjectId: existing.id } }
+        const now = Date.now()
+        const project: ProjectItem = {
+          id: createId("project"),
+          name,
+          description: "",
+          rootPath: picked,
+          memoryIds: [],
+          createdAt: now,
+          updatedAt: now,
+        }
+        return { ...current, projects: [project, ...current.projects], settings: { ...current.settings, selectedProjectId: project.id } }
+      })
+    } catch {
+      /* Dialog dismissed — keep the current project untouched. */
+    }
+  }
+
+  const revokeGrant = (tool: string) => {
+    if (!activeProject) return
+    setState((current) => ({
+      ...current,
+      projects: current.projects.map((item) =>
+        item.id === activeProject.id
+          ? { ...item, permissions: (item.permissions ?? []).filter((granted) => granted !== tool), updatedAt: Date.now() }
+          : item,
+      ),
+    }))
+  }
+
+  const stopAgent = () => {
+    abortRef.current?.abort()
+    settlePermission("deny")
+  }
+
   const runAgent = async () => {
     const text = agentPrompt.trim()
     const model = activeConversation?.model || selectedModel
@@ -1232,49 +1325,52 @@ export default function App() {
       setRuntimeError("Choose a model before running the agent.")
       return
     }
+    const root = activeProject?.rootPath ?? null
+    if (agentToolsAvailable() && !root) {
+      setRuntimeError("Choose a project folder for the agent before running it.")
+      return
+    }
+    /* Browser sessions get a planning-only agent (empty tool list — the
+       loop then answers honestly without pretending to touch files); the
+       desktop shell with a folder gets the real, gated tools. */
+    const tools = agentToolsAvailable() && root ? AGENT_TOOL_SPECS : []
     setAgentBusy(true)
+    setRunEvents([])
     const started = performance.now()
-    setAgentLog((log) => [
-      `Task received: ${text.slice(0, 96)}${text.length > 96 ? "…" : ""}`,
-      `Model: ${model}`,
-      "Web agent scope: the local model plans and answers here; file, shell and git tools stay gated to the desktop runtime.",
-      ...log,
-    ].slice(0, 40))
-    const agent = state.agents[0]
-    let acc = ""
     const controller = new AbortController()
     abortRef.current = controller
-    const pushStream = (delta: string) => {
-      acc += delta
-      const lines = acc.split("\n")
-      acc = lines.pop() ?? ""
-      if (lines.length) setAgentLog((log) => [...lines.filter((line) => line.trim() !== "").map((line) => `  ${line.trimEnd()}`), ...log].slice(0, 40))
-    }
+    const sessionGrants = new Set<string>()
+    const agent = state.agents[0]
     try {
-      const result: StreamChatResult = await streamChat({
+      const result = await runAgentLoop({
         baseUrl: state.settings.baseUrl,
         model,
-        messages: [message("system", agent?.systemPrompt || defaultAgent.systemPrompt), message("user", text)],
-        temperature: 0.2,
-        maxTokens,
-        enableThinking: true,
+        systemPrompt: agent?.systemPrompt || defaultAgent.systemPrompt,
+        task: text,
+        tools,
+        executor: createAgentExecutor(root, { onTodo: setAgentTodo }),
+        askPermission: (tool, args) =>
+          new Promise<PermissionDecision>((resolve) => {
+            permissionResolver.current = resolve
+            setPermissionAsk({ tool, args })
+          }),
+        projectId: activeProject?.id ?? null,
+        sessionGrants,
+        grantStore,
         signal: controller.signal,
-        onDelta: pushStream,
+        onEvent: (event) => setRunEvents((list) => [...list, event]),
+        maxTokens,
       })
-      if (acc.trim()) setAgentLog((log) => [`  ${acc.trimEnd()}`, ...log].slice(0, 40))
       const totalMs = performance.now() - started
       const tokens = result.usage?.completion_tokens ?? 0
       const tokensPerSec = totalMs > 100 && tokens > 0 ? Math.round((tokens / (totalMs / 1000)) * 10) / 10 : 0
       setMetrics({ kind: "agent", tokensPerSec, firstTokenMs: 0, totalMs, tokens })
-      setAgentLog((log) => [
-        `Completed in ${(totalMs / 1000).toFixed(1)}s${tokensPerSec > 0 ? ` · ${tokensPerSec} tok/s (${tokens} tokens)` : ""}. Next step: open the desktop runtime to approve real file, shell and git tools.`,
-        ...log,
-      ].slice(0, 40))
     } catch (error) {
-      if (!controller.signal.aborted) {
-        setAgentLog((log) => [`Error: ${error instanceof Error ? error.message : "Request failed"}`, ...log].slice(0, 40))
-      }
+      /* The loop feeds expected failures back as events; reaching this
+         branch means something unexpected broke in the wiring itself. */
+      setRunEvents((list) => [...list, { type: "error", message: error instanceof Error ? error.message : "The agent run failed." }])
     } finally {
+      if (permissionResolver.current) settlePermission("deny")
       abortRef.current = null
       setAgentBusy(false)
     }
@@ -1749,10 +1845,36 @@ export default function App() {
               load path as chat — one model choice for the whole app. */}
           <div className="agent-toolbar"><ModelPicker rows={pickerRows} value={effectiveModel} loading={loadingModel} onSelect={pickModel} /></div>
           <div className="hero-panel agent-hero"><div><span className="section-kicker">AGENT MODE</span><h2>Local agents that can actually work.</h2><p>Build Codex/Claude-Code/Qwen-Code-style workflows around your local models, with explicit permissions and boundaries you control.</p></div><button className="primary-btn" onClick={createAgent}><Plus size={15} /> New agent</button></div>
-          <div className="two-col">
-            <div className="card-panel"><div className="panel-title"><span>Task</span><span className="permission-chip"><ShieldCheck size={13} /> Permission-gated</span></div><textarea className="large-input" value={agentPrompt} onChange={(e) => setAgentPrompt(e.target.value)} placeholder="e.g. Audit this repository, propose fixes, run tests, and show me the diff." /><button className="primary-btn" onClick={() => void runAgent()} disabled={!agentPrompt.trim() || agentBusy}>{agentBusy ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />} {agentBusy ? "Planning…" : "Run agent"}</button></div>
-            <div className="card-panel"><div className="panel-title"><span>Execution log</span><Activity size={15} /></div><div className="agent-log">{agentLog.length ? agentLog.map((line, i) => <div key={`${line}-${i}`}><span>{String(i + 1).padStart(2, "0")}</span>{line}</div>) : <div className="empty-mini">No agent runs yet.</div>}</div></div>
+          {/* Phase 4c: the project folder bounds every tool call, and the
+              chips show — and let you revoke — persisted `always` grants. */}
+          <div className="card-panel agent-project">
+            <div className="panel-title"><span>Project folder</span><span className="permission-chip"><ShieldCheck size={13} /> {agentToolsAvailable() ? (activeProject?.rootPath ? "Tools active" : "Folder required") : "Planning only"}</span></div>
+            <div className="agent-project-row">
+              {state.projects.length > 1 ? (
+                <select className="project-select" value={activeProject?.id ?? ""} onChange={(e) => updateSettings({ selectedProjectId: e.target.value || null })} aria-label="Active project">
+                  {state.projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </select>
+              ) : activeProject ? <strong className="project-name">{activeProject.name}</strong> : null}
+              <span className="panel-note">{activeProject?.rootPath ?? (qdmAvailable() ? "No folder chosen — pick the directory the agent may work in." : "Folders are available in the desktop app; here the agent plans without touching files.")}</span>
+              <button className="ghost-btn" onClick={() => void pickAgentFolder()} disabled={!qdmAvailable()} title={qdmAvailable() ? undefined : "Available inside the Syntara desktop app"}><FolderOpen size={14} /> {activeProject?.rootPath ? "Change folder…" : "Choose folder…"}</button>
+            </div>
+            <div className="grant-row" aria-label="Tool permissions">
+              {GRANT_LABELS.map(({ tool, label }) => {
+                const granted = !!activeProject?.permissions?.includes(tool)
+                return (
+                  <span key={tool} className={cn("grant-chip", granted && "granted")}>
+                    <ShieldCheck size={12} /> {label}: {granted ? "always allowed" : "asks every run"}
+                    {granted ? <button className="chip-x" onClick={() => revokeGrant(tool)} aria-label={`Revoke always-allow for ${label}`}><X size={12} /></button> : null}
+                  </span>
+                )
+              })}
+            </div>
           </div>
+          <div className="two-col">
+            <div className="card-panel"><div className="panel-title"><span>Task</span><span className="permission-chip"><ShieldCheck size={13} /> Permission-gated</span></div><textarea className="large-input" value={agentPrompt} onChange={(e) => setAgentPrompt(e.target.value)} placeholder="e.g. Audit this repository, propose fixes, run tests, and show me the diff." /><div className="task-actions"><button className="primary-btn" onClick={() => void runAgent()} disabled={!agentPrompt.trim() || agentBusy}>{agentBusy ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />} {agentBusy ? "Planning…" : "Run agent"}</button>{agentBusy ? <button className="ghost-btn" onClick={stopAgent} title="Interrupt the run; in-flight tool calls are cut off"><X size={15} /> Stop</button> : null}</div></div>
+            <div className="card-panel"><div className="panel-title"><span>Execution</span><Activity size={15} /></div><AgentEvents events={runEvents} /></div>
+          </div>
+          <div className="card-panel agent-todo"><div className="panel-title"><span>Todo</span><ListChecks size={15} /></div>{agentTodo.length ? <ol className="todo-list">{agentTodo.map((item, i) => <li key={`${i}-${item}`}>{item}</li>)}</ol> : <div className="empty-mini">No todo list yet — the agent can create one with the todo tool.</div>}</div>
           <div className="card-grid">{(state.agents.length ? state.agents : [{ id: "seed", ...defaultAgent, createdAt: Date.now(), updatedAt: Date.now() }]).map((agent) => <div className="feature-card" key={agent.id}><div className="feature-icon"><Bot size={18} /></div><strong>{agent.name}</strong><p>{agent.systemPrompt}</p><div className="chip-row">{agent.tools.map((tool) => <span key={tool}>{tool}</span>)}</div></div>)}</div>
         </section>}
 
@@ -1784,6 +1906,23 @@ export default function App() {
             <div className="panel-title"><strong>Download again?</strong><button className="icon-btn" onClick={() => settleRedownload(false)}><X size={15} /></button></div>
             <p className="panel-note">You already downloaded <strong>{redownload.name}</strong> before{state.downloadedModels[redownload.modelId]?.bytes ? ` (${formatBytes(state.downloadedModels[redownload.modelId]?.bytes)})` : ""} on {new Date(state.downloadedModels[redownload.modelId]?.at ?? Date.now()).toLocaleDateString()}. Downloading again will pull the full file a second time. Continue?</p>
             <div className="modal-actions"><button className="ghost-btn" onClick={() => settleRedownload(false)}>Cancel</button><button className="primary-btn" onClick={() => settleRedownload(true)}><Download size={15} /> Download again</button></div>
+          </div>
+        </div>
+      ) : null}
+      {/* Phase 4c: gated tool calls block here until answered — there is no
+          backdrop dismissal, because a stray click must not decide whether
+          the agent may write a file or run a process. */}
+      {permissionAsk ? (
+        <div className="modal-backdrop">
+          <div className="modal-card permission-modal" role="alertdialog" aria-modal="true" aria-label="Tool permission request">
+            <div className="panel-title"><strong>Allow <code>{permissionAsk.tool}</code>?</strong></div>
+            <p className="panel-note permission-args">{summarizeArgs(permissionAsk.tool, permissionAsk.args)}</p>
+            <p className="panel-note">{activeProject ? `Project: ${activeProject.name} — "Always allow" is stored on this project.` : `No project folder — "Always allow" applies to this session only.`}</p>
+            <div className="modal-actions">
+              <button className="ghost-btn" onClick={() => settlePermission("deny")}>Deny</button>
+              <button className="ghost-btn" onClick={() => settlePermission("once")}>Allow once</button>
+              <button className="primary-btn" onClick={() => settlePermission("always")}>Always allow</button>
+            </div>
           </div>
         </div>
       ) : null}
