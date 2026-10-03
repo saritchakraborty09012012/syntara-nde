@@ -248,6 +248,74 @@ export async function streamChat(options: StreamChatOptions): Promise<StreamChat
   }
 }
 
+/* Non-streaming chat (phase 4, agent loop): one JSON round-trip that keeps
+   the whole message — including `tool_calls`, which the streaming consumer
+   above intentionally ignores. The gateway passes `tools` through to the
+   runtime verbatim, so this speaks plain OpenAI to the same localhost host. */
+export interface WireToolCall {
+  id: string
+  type: "function"
+  function: { name: string; arguments: string }
+}
+
+export interface WireMessage {
+  role: "system" | "user" | "assistant" | "tool"
+  content: string | null
+  tool_calls?: WireToolCall[]
+  tool_call_id?: string
+}
+
+export interface OpenAIToolSpec {
+  type: "function"
+  function: { name: string; description: string; parameters: Record<string, unknown> }
+}
+
+export interface ChatOnceOptions {
+  baseUrl: string
+  apiKey?: string
+  model: string
+  messages: WireMessage[]
+  tools?: OpenAIToolSpec[]
+  temperature?: number
+  maxTokens?: number
+  signal?: AbortSignal
+}
+
+export interface ChatOnceResult {
+  content: string | null
+  toolCalls: WireToolCall[]
+  finishReason: string | null
+  usage: TokenUsage | null
+}
+
+export async function chatOnce(options: ChatOnceOptions): Promise<ChatOnceResult> {
+  const response = await fetch(endpoint(options.baseUrl, "chat/completions"), {
+    method: "POST",
+    headers: headers(options.apiKey),
+    signal: options.signal,
+    body: JSON.stringify({
+      model: options.model,
+      messages: options.messages,
+      temperature: options.temperature ?? 0.2,
+      max_completion_tokens: options.maxTokens ?? 8192,
+      stream: false,
+      ...(options.tools?.length ? { tools: options.tools } : {}),
+    }),
+  })
+  if (!response.ok) await fail(response)
+  const body = (await response.json()) as {
+    choices?: Array<{ message?: { content?: string | null; tool_calls?: WireToolCall[] }; finish_reason?: string | null }>
+    usage?: TokenUsage | null
+  }
+  const choice = body.choices?.[0]
+  return {
+    content: choice?.message?.content ?? null,
+    toolCalls: choice?.message?.tool_calls ?? [],
+    finishReason: choice?.finish_reason ?? null,
+    usage: body.usage ?? null,
+  }
+}
+
 /* Modalita brio: il modello non genera, assegna una probabilita a ogni opzione
  * ammessa. Il ciclo (fotografia del prefisso condiviso, una lettura per
  * opzione, normalizzazione per lunghezza) sta nel gateway: qui si manda una
