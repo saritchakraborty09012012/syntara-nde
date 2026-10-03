@@ -273,6 +273,36 @@ fn env_str(name: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
+/// Interpreter names to try inside the bundled `<resource>/python`, in order.
+///
+/// Windows gets the embeddable python.org build, which ships both `pythonw.exe`
+/// (what the hidden host wants) and `python.exe`. POSIX gets
+/// python-build-standalone's `install_only` layout, which keeps the interpreter
+/// under `bin/`; a hand-assembled bundle may put it at the root instead, so
+/// both are probed rather than one being assumed.
+fn bundled_candidates(res: &Path) -> Vec<PathBuf> {
+    let dir = res.join("python");
+    if cfg!(windows) {
+        vec![dir.join("pythonw.exe"), dir.join("python.exe")]
+    } else {
+        vec![
+            dir.join("bin").join("python3"),
+            dir.join("python3"),
+            dir.join("bin").join("python"),
+        ]
+    }
+}
+
+/// First candidate that exists, else the first one (so the error the user sees
+/// names the interpreter we would have used).
+fn first_existing(candidates: &[PathBuf]) -> PathBuf {
+    candidates
+        .iter()
+        .find(|path| path.is_file())
+        .cloned()
+        .unwrap_or_else(|| candidates[0].clone())
+}
+
 /// Locate the interpreter: env override, bundled layout, PATH fallback.
 pub fn resolve_python(resource_dir: Option<&Path>) -> Result<PathBuf, String> {
     if let Some(override_) = env_str("SYNTARA_PYTHON") {
@@ -286,21 +316,22 @@ pub fn resolve_python(resource_dir: Option<&Path>) -> Result<PathBuf, String> {
         ));
     }
     if let Some(res) = resource_dir {
-        let bundled = if cfg!(windows) {
-            res.join("python").join("pythonw.exe")
-        } else {
-            res.join("python").join("python3")
-        };
-        if bundled.is_file() {
-            return Ok(bundled);
+        let candidates = bundled_candidates(res);
+        if candidates.iter().any(|path| path.is_file()) {
+            return Ok(first_existing(&candidates));
         }
     }
-    // Dev fallback: no bundle yet (Phase 5 configures the resource layout).
-    Ok(PathBuf::from(if cfg!(windows) {
-        "pythonw.exe"
+    // Dev fallback: no bundle staged (Phase 5 configures the resource layout).
+    // `pythonw.exe` is tried before `python.exe` on Windows because a console
+    // window flashing on every launch is the one thing a tray app must not do,
+    // but pythonw.exe is rare on PATH and a missing host is worse than a
+    // visible one.
+    let on_path: Vec<PathBuf> = if cfg!(windows) {
+        vec![PathBuf::from("pythonw.exe"), PathBuf::from("python.exe")]
     } else {
-        "python3"
-    }))
+        vec![PathBuf::from("python3"), PathBuf::from("python")]
+    };
+    Ok(first_existing(&on_path))
 }
 
 /// Locate the directory that contains the `syntara` package.

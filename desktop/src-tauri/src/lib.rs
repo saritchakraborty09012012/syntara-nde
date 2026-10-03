@@ -8,7 +8,10 @@ pub mod library;
 // `agent_tools` is public for the same reason: tests/agent_tools_contract.rs
 // pins the path scoping, caps and process rules as an integration target.
 pub mod agent_tools;
+// `storage` is public for the same reason: tests/storage_contract.rs pins the
+// volume recommendation and the 20 GB space rules as an integration target.
 mod qdm;
+pub mod storage;
 
 use std::sync::{Arc, Mutex};
 use tauri::Manager;
@@ -35,6 +38,8 @@ pub fn run() {
             host::host_stop,
             host::host_logs,
             library::library_inspect,
+            library::library_import,
+            storage::storage_list_volumes,
             agent_tools::fs_read,
             agent_tools::fs_list,
             agent_tools::fs_write,
@@ -59,6 +64,7 @@ pub fn run() {
             qdm::commands::config_get,
             qdm::commands::config_set,
             qdm::commands::dialog_select_folder,
+            qdm::commands::dialog_select_model_file,
             qdm::commands::storage_list_files,
         ])
         .setup(|app| {

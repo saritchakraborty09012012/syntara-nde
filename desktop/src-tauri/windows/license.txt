@@ -1,0 +1,73 @@
+Syntara - Terms of Use and Privacy Policy
+==========================================
+
+Syntara is a local-first application. It runs AI models that you download
+and store on your own device. Please read the following terms before
+installing Syntara.
+
+1. The software
+---------------
+
+Syntara is provided "as is", without warranty of any kind. You are
+responsible for evaluating whether Syntara is suitable for your purposes,
+and for backing up any data you store with it.
+
+2. Your models and your prompts stay on your device
+----------------------------------------------------
+
+Syntara does not require an account. It does not upload your models, your
+prompts, your conversations or your files to any server. Inference runs
+against model files that you have downloaded or connected yourself, and
+those files remain under your control at all times.
+
+3. When Syntara uses the network
+--------------------------------
+
+Syntara uses the internet only for the features you ask it to use:
+
+  - downloading a model or an application update;
+  - fetching documentation, version metadata or a model catalogue;
+  - optional integrations you enable yourself.
+
+Core operation - loading an already downloaded model, generating text,
+serving the local API, reading local history and configuration - works
+without an internet connection. If a network feature fails, Syntara
+reports the failure instead of blocking local use.
+
+No telemetry, tracking or analytics are collected. Nothing about what you
+run, ask or generate is reported anywhere.
+
+4. Where your data is stored
+----------------------------
+
+Chat history, settings, logs and model metadata are stored locally, in
+folders chosen by you or by the location Syntara was installed to. Model
+files you connect to Syntara are never deleted without an explicit action
+on your part. Removing Syntara does not delete your model files unless you
+explicitly choose to delete them during uninstall.
+
+5. The local API
+----------------
+
+Syntara can expose a local HTTP endpoint so that other programs on your
+machine can use the same model. This endpoint binds to localhost by
+default. If you choose to expose it to your local network, that choice is
+yours and you are responsible for who can reach it.
+
+6. Third-party components
+-------------------------
+
+Syntara bundles open-source runtimes and libraries. Those components keep
+their own licenses; the full list ships with the installation.
+
+7. Privacy summary
+------------------
+
+  What leaves your device:  only what you explicitly request (a model
+                            download, an update check).
+  What never leaves it:     prompts, conversations, model files,
+                            files you open, usage statistics.
+  Accounts:                 none required, none created.
+
+Installing Syntara means you accept these terms. If you do not accept
+them, please cancel the installation.

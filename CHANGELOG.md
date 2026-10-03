@@ -5,6 +5,53 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Downloads from the site
+
+- **Download buttons point at real installers.** The macOS asset was still
+  named after the bundled CLI binary, so the button downloaded a file the
+  extension hint did not describe; it is now `Syntara-macOS-arm64.dmg` and the
+  label says Apple Silicon. Windows and Linux keep their `.exe` / `.AppImage`
+  names, and every platform row now links the release artifact rather than the
+  source archive.
+
+### Windows installer
+
+- **Custom NSIS template** (`desktop/src-tauri/windows/installer.nsi`, wired
+  through `bundle.windows.nsis.template`): the installer now runs the
+  agree-to-terms page (`MUI_LICENSEPAGE_CHECKBOX`, so Next stays disabled
+  until the box is ticked) over `windows/license.txt` — the same document
+  shown on first run in the app.
+- **Shortcut options page**: desktop shortcut, Start menu shortcut and
+  "start Syntara when I sign in", with the existing install's autostart value
+  carried forward rather than overwritten. Windows owns taskbar and Start
+  pinning and exposes no supported API for it, so the page says where it is
+  done instead of offering a checkbox that would pin nothing.
+- **Folder page disk sizing**: the header names the roomiest fixed drive as
+  the recommended install location with its free space, and leaving the page
+  with under 20 GB free warns before continuing — offering to switch to the
+  roomiest drive when one exists. Sizes are read in whole GB through
+  FileFunc's `DriveSpace`, so large volumes are not truncated.
+- `desktop/src-tauri/windows/license.txt` feeds `bundle.licenseFile`, which is
+  what the template renders into the license page.
+
+### First run and connecting an existing model
+
+- **First-run setup** (`web/src/components/FirstRunSetup.tsx`, rules in
+  `web/src/lib/setup.ts`): terms and privacy consent, then the model folder —
+  the roomiest drive is preselected and labelled recommended, a drive under
+  20 GB needs an explicit acknowledgement, and a drive that cannot hold a
+  model is not offered. The consent is versioned, so a later change to either
+  document asks again. The folder chosen here becomes the download directory.
+- **Connect existing model**: a Models-hub action that opens a native file
+  picker (`dialog_select_model_file`) and then asks whether to **copy** the
+  model into Syntara or **move** it. The move removes the original only after
+  the copy has been verified, and either way the card is registered with the
+  same inspection badges the CLI produces (`library_import`).
+- **Installer workflow** (`desktop-installers.yml`) can be run by tag
+  (`workflow_dispatch`) and builds from `desktop/`, so `tauri build` resolves
+  `beforeBuildCommand` and the NSIS template the way the docs say to invoke
+  it; the version baked into the installer comes from the tag.
+
 ### Desktop native downloads (Quantum Download Manager)
 
 - **QDM download engine ported into the desktop shell**

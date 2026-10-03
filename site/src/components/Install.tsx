@@ -6,39 +6,45 @@ const STEPS: Array<{ n: string; title: string; body: React.ReactNode }> = [
     title: "Download",
     body: (
       <>
-        Grab the archive for your operating system (Windows: <code className="text-terminal">.zip</code>,
-        macOS/Linux: <code className="text-terminal">.tar.gz</code>).
+        Click your operating system above and the installer downloads straight to your machine
+        — Windows <code className="text-terminal">.exe</code>, macOS{" "}
+        <code className="text-terminal">.dmg</code>, Linux{" "}
+        <code className="text-terminal">.AppImage</code>. No source code, no account.
       </>
     ),
   },
   {
     n: "02",
-    title: "Extract",
+    title: "Install",
     body: (
       <>
-        Unzip / unpack anywhere. It is fully portable — no installer or admin rights
-        required.
+        Run it. The installer offers the install folder, a Start Menu and desktop shortcut, and
+        launches Syntara when it finishes. Prefer the portable build? Every release also keeps a{" "}
+        <code className="text-terminal">.zip</code> /{" "}
+        <code className="text-terminal">.tar.gz</code> on GitHub — unzip it and run{" "}
+        <code className="text-terminal">./syntara</code>.
       </>
     ),
   },
   {
     n: "03",
-    title: "Launch",
+    title: "Pick a model",
     body: (
       <>
-        Run the launcher bundled in the archive. On macOS/Linux that is{" "}
-        <code className="text-terminal">./syntara</code> from the extracted directory; the
-        Windows archive carries its own launcher — see the README inside the archive.
+        Point Syntara at a model you already have and choose <em>copy</em> (your original stays
+        where it is) or <em>move</em> (it is relocated into Syntara). Or download one from inside
+        the app and it lands in the model folder you chose. It is your file, either way.
       </>
     ),
   },
   {
     n: "04",
-    title: "Choose a model",
+    title: "Work offline",
     body: (
       <>
-        Open the dashboard to pick a model, or start the local API with{" "}
-        <code className="text-terminal">./syntara serve --model &lt;dir&gt;</code>.
+        Once the app and the model are on disk, connecting the model, converting it and every
+        chat or agent run are local. Network is used to download the app and the model — nothing
+        else is required.
       </>
     ),
   },

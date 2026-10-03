@@ -4,11 +4,16 @@
    runs the Python package's own inspector (one source of truth with the
    CLI), and `host_start`/`host_status` manage the local gateway process.
    In a plain `syntara web` session `qdmAvailable()` is false and the
-   callers skip these flows - there is no native host to talk to. */
+   callers skip these flows - there is no native host to talk to.
+
+   Storage (`storage_list_volumes`) and the copy/move import live here
+   for the same reason: they are shell-only, and every caller already
+   gates on the shell being present. */
 
 import { invoke } from "@tauri-apps/api/core"
 
 import type { LibraryInspectResult } from "./inspect"
+import type { VolumeReport } from "./storage-plan"
 
 /** The `health` object of a HostStatus: the gateway's `/health` body. */
 export interface HostHealth {
@@ -60,6 +65,31 @@ export function hostBaseFromStatus(status: Pick<HostStatus, "state" | "url">): s
    inspector the `syntara inspect` CLI uses. */
 export const libraryInspect = (path: string): Promise<LibraryInspectResult> =>
   invoke("library_inspect", { path })
+
+/* ── storage + connecting a model that already exists ─────────────────── */
+
+/** The machine's volumes plus the shell's answer about where models go. */
+export const storageListVolumes = (): Promise<VolumeReport> => invoke("storage_list_volumes")
+
+/** Native file picker, filtered to model formats; null when cancelled. */
+export const dialogSelectModelFile = (): Promise<string | null> =>
+  invoke("dialog_select_model_file")
+
+/* "Connect an existing model": `copy` leaves the original where it is,
+   `move` removes it only after the copy into the model folder has been
+   verified. Both refuse a file that is already inside the folder. */
+export interface ImportResult {
+  mode: string
+  source: string
+  path: string
+  bytes: number
+  sourceRemoved: boolean
+  warning: string | null
+  inspect: LibraryInspectResult
+}
+
+export const libraryImport = (path: string, mode: "copy" | "move"): Promise<ImportResult> =>
+  invoke("library_import", { path, mode })
 
 /* Global timer, not `window.setTimeout`: the wait loop also runs under
    vitest's node environment, where `window` does not exist. */

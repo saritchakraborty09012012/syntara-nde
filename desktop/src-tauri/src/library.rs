@@ -9,7 +9,7 @@
 //! files in place, so inspecting never copies model weights.
 
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -410,4 +410,236 @@ pub async fn library_inspect(app: AppHandle, path: String) -> LibraryInspect {
         Ok(outcome) => outcome,
         Err(err) => LibraryInspect::failed(format!("the local inspector could not run: {err}")),
     }
+}
+
+// ── importing a model that is already on this machine ─────────────────────
+
+/// What the user chose when pointing Syntara at a model file that already
+/// exists somewhere on the disk. The two words are the ones people already
+/// use for this: copy is copy-paste (the original stays), move is cut-paste
+/// (the original goes away once the copy is verified).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImportMode {
+    Copy,
+    Move,
+}
+
+impl ImportMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ImportMode::Copy => "copy",
+            ImportMode::Move => "move",
+        }
+    }
+}
+
+/// Outcome of an import. `inspect` is the ordinary inspection result for the
+/// file at its *new* path, so the card gets the same badges an in-place
+/// registration would have given it.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportResult {
+    pub mode: String,
+    /// Where the file was before the import.
+    pub source: String,
+    /// Where the model lives now.
+    pub path: String,
+    pub bytes: u64,
+    /// True only for a move that finished: the original is gone because the
+    /// copy was verified first, never before.
+    pub source_removed: bool,
+    /// Non-fatal note: the file was already inside the storage folder, or the
+    /// destination volume is tight.
+    pub warning: Option<String>,
+    pub inspect: LibraryInspect,
+}
+
+/// What an import will do, decided before a single byte moves. Separate from
+/// the execution so the refusal reasons (no room, name taken, source missing)
+/// are testable without touching a real model file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ImportPlan {
+    pub source: String,
+    pub destination: String,
+    pub bytes: u64,
+    /// False when source and destination are the same file: nothing to copy,
+    /// and the UI says so instead of copying a model onto itself.
+    pub needs_copy: bool,
+}
+
+/// Decide the destination and validate it. `free_bytes` is the destination
+/// volume's free space when it is known (`None` skips that check - an unknown
+/// volume is not a reason to refuse, a full one is).
+pub fn plan_import(
+    dir: &Path,
+    source: &str,
+    free_bytes: Option<u64>,
+) -> Result<ImportPlan, String> {
+    let source_path = Path::new(source);
+    let meta = std::fs::metadata(source_path).map_err(|err| {
+        format!(
+            "could not read {}: {err}. Pick the model file again; it may have moved.",
+            source_path.display()
+        )
+    })?;
+    if !meta.is_file() {
+        return Err(format!(
+            "{} is not a file - pick the model file itself, not its folder.",
+            source_path.display()
+        ));
+    }
+    let name = source_path
+        .file_name()
+        .ok_or_else(|| format!("{} has no file name to import.", source_path.display()))?;
+    let destination = dir.join(name);
+    let bytes = meta.len();
+    let needs_copy = destination != source_path;
+    if !needs_copy {
+        return Ok(ImportPlan {
+            source: source.to_string(),
+            destination: destination.display().to_string(),
+            bytes,
+            needs_copy: false,
+        });
+    }
+    if destination.exists() {
+        // Never overwrite: the destination is a model the user may already be
+        // running, and a second copy of a 200 GB file is not ours to make.
+        return Err(format!(
+            "{} already exists in the model folder. Rename or remove it before importing.",
+            destination.display()
+        ));
+    }
+    if let Some(free) = free_bytes {
+        if !crate::storage::has_room(free, bytes) {
+            return Err(format!(
+                "not enough free space on {} for {} ({} free). Choose another drive in Settings.",
+                dir.display(),
+                crate::storage::human_bytes(bytes),
+                crate::storage::human_bytes(free)
+            ));
+        }
+    }
+    Ok(ImportPlan {
+        source: source.to_string(),
+        destination: destination.display().to_string(),
+        bytes,
+        needs_copy: true,
+    })
+}
+
+/// Copy into the destination folder, then verify, then (for a move) remove the
+/// original. The copy lands on a temporary name first, so an interrupted
+/// import leaves no half-written file that the UI would list as a model.
+fn transfer(source: &Path, destination: &Path, bytes: u64, mode: ImportMode) -> Result<(), String> {
+    // A move inside one filesystem is a rename: instant, atomic, and free. It
+    // is only ever a rename for a MOVE - the copy path must leave the source
+    // in place, which is the whole difference between the two buttons.
+    // Across drives the rename fails with ERROR_NOT_SAME_DEVICE / EXDEV and
+    // falls through to the copy below, which then removes the original.
+    if mode == ImportMode::Move && std::fs::rename(source, destination).is_ok() {
+        return Ok(());
+    }
+    let temporary = destination.with_extension(format!(
+        "{}part",
+        destination
+            .extension()
+            .map(|ext| format!("{}.", ext.to_string_lossy()))
+            .unwrap_or_default()
+    ));
+    let copied = (|| -> std::io::Result<u64> {
+        let written = std::fs::copy(source, &temporary)?;
+        // Only now does the real name appear: an interrupted copy leaves the
+        // `.part` file, which nothing lists as a model.
+        std::fs::rename(&temporary, destination)?;
+        Ok(written)
+    })();
+    match copied {
+        Ok(copied) if copied == bytes => Ok(()),
+        Ok(copied) => Err(format!(
+            "the copy stopped early ({} of {} bytes) - the destination was removed and your original file is untouched.",
+            copied, bytes
+        )),
+        Err(err) => {
+            let _ = std::fs::remove_file(&temporary);
+            Err(format!(
+                "could not copy {} to {}: {err}",
+                source.display(),
+                destination.display()
+            ))
+        }
+    }
+}
+
+/// Blocking body behind `library_import`: place the file, then inspect it
+/// exactly as `library_inspect` would have inspected the original.
+pub fn import_blocking(
+    resource_dir: Option<&Path>,
+    dir: &Path,
+    source: String,
+    mode: ImportMode,
+    free_bytes: Option<u64>,
+) -> Result<ImportResult, String> {
+    std::fs::create_dir_all(dir)
+        .map_err(|err| format!("could not create the model folder {}: {err}", dir.display()))?;
+    let plan = plan_import(dir, &source, free_bytes)?;
+    let mut warning = None;
+    let mut source_removed = false;
+
+    if plan.needs_copy {
+        let source_path = Path::new(&source);
+        let destination_path = Path::new(&plan.destination);
+        transfer(source_path, destination_path, plan.bytes, mode)?;
+        if mode == ImportMode::Move {
+            // The bytes are proven there (copy verified its length, rename is
+            // atomic), so removing the original is safe. If the delete fails
+            // the import still succeeded - the user keeps both copies, which
+            // is a nuisance, never data loss, so it is reported, not fatal.
+            match std::fs::remove_file(source_path) {
+                Ok(()) => source_removed = true,
+                Err(err) => {
+                    warning = Some(format!(
+                        "the model was imported but the original could not be removed ({}): {err}",
+                        source_path.display()
+                    ))
+                }
+            }
+        }
+    } else {
+        warning = Some("this file is already in the Syntara model folder.".to_string());
+    }
+
+    // Inspect the file at its new path so the card carries the same badges an
+    // in-place registration would: quantizations, RAM estimate, completeness.
+    let inspect = inspect_blocking(resource_dir, plan.destination.clone());
+    Ok(ImportResult {
+        mode: mode.as_str().to_string(),
+        source: plan.source,
+        path: plan.destination,
+        bytes: plan.bytes,
+        source_removed,
+        warning,
+        inspect,
+    })
+}
+
+/// Import a model the user pointed at: "copy the model to Syntara" or "move
+/// the model to Syntara". The destination is the configured model folder, so
+/// anything downloaded from inside the app afterwards lands in the same place.
+#[tauri::command]
+pub async fn library_import(
+    app: AppHandle,
+    state: tauri::State<'_, crate::AppState>,
+    path: String,
+    mode: ImportMode,
+) -> Result<ImportResult, String> {
+    let dir = PathBuf::from(state.engine.config.lock().await.download_dir.clone());
+    let free_bytes = crate::storage::free_space_for(&dir.display().to_string());
+    let resource_dir = app.path().resource_dir().ok();
+    tauri::async_runtime::spawn_blocking(move || {
+        import_blocking(resource_dir.as_deref(), &dir, path, mode, free_bytes)
+    })
+    .await
+    .map_err(|err| format!("the import could not run: {err}"))?
 }

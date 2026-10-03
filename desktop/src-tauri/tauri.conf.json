@@ -30,7 +30,24 @@
     "active": true,
     "targets": "all",
     "category": "DeveloperTool",
+    "publisher": "NDe: NoirDemons",
     "shortDescription": "Universal local AI by NDe: NoirDemons",
+    "longDescription": "Syntara runs local AI models on your own machine: connect a model you already have, or download one, then chat and run agent tasks offline. No account, no cloud, no upload.",
+    "resources": {
+      "resources/app/": "app/",
+      "resources/python/": "python/"
+    },
+    "licenseFile": "windows/license.txt",
+    "windows": {
+      "nsis": {
+        "template": "windows/installer.nsi",
+        "installMode": "both",
+        "startMenuFolder": "Syntara",
+        "displayLanguageSelector": true,
+        "languages": ["English"],
+        "compression": "lzma"
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/64x64.png",

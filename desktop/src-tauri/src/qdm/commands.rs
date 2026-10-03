@@ -356,3 +356,33 @@ pub async fn dialog_select_folder(app_handle: AppHandle) -> Result<Option<String
     });
     Ok(rx.await.ok().flatten().map(|p| format!("{}", p)))
 }
+
+/// Pick a model file that already lives on this disk, for the
+/// "connect an existing model -> copy or move" flow. The extension filter is
+/// a convenience for the picker, not a check: `library_import` reads the
+/// file's real metadata and refuses anything that is not one.
+#[tauri::command]
+pub async fn dialog_select_model_file(app_handle: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::{DialogExt, FilePath};
+    let (tx, rx) = tokio::sync::oneshot::channel::<Option<FilePath>>();
+    app_handle
+        .dialog()
+        .file()
+        .add_filter(
+            "Model files",
+            &[
+                "gguf",
+                "safetensors",
+                "ggml",
+                "bin",
+                "pt",
+                "pth",
+                "ckpt",
+                "onnx",
+            ],
+        )
+        .pick_file(move |path| {
+            tx.send(path).ok();
+        });
+    Ok(rx.await.ok().flatten().map(|p| format!("{}", p)))
+}

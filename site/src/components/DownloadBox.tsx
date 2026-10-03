@@ -42,11 +42,18 @@ export function DownloadBox({
                 {ARCH_LABEL[os]}
                 {os === detected ? " · Recommended" : ""}
                 {size ? ` · ${size}` : ""}
+                {release.kinds[os] === "portable" ? " · portable archive" : ""}
               </span>
             </a>
           )
         })}
       </div>
+
+      <p className="mt-4 font-mono text-[12px] leading-relaxed text-muted">
+        These buttons download the installer itself — not the source code. After it installs,
+        the app and your models are all you need: connecting a model, converting it and
+        chatting (or running an agent task) never touch the internet.
+      </p>
 
       <div className="mt-4 flex flex-wrap items-center gap-3 font-mono text-[12px] text-muted">
         <span>Also on GitHub · pip SDK/CLI:</span>

@@ -1,0 +1,179 @@
+name: Desktop installers
+
+# The website's download buttons resolve
+#   https://github.com/<repo>/releases/latest/download/Syntara-Windows-x64-Setup.exe
+# (site/src/lib/releases.ts), which only ever serves a real installer. That
+# URL is a promise this workflow has to keep: until a tag is built here, every
+# button on syntara-nde.vercel.app 404s instead of quietly dumping the source
+# tree on the user (which is what "Source code (zip)" on the releases page is).
+#
+# The asset names are fixed on purpose. A versioned asset name would need the
+# site to ask api.github.com before it can build a link, and that call is
+# rate-limited per IP - the moment it is throttled, the honest thing (a direct
+# installer link) becomes the bug again. Renaming an asset here without
+# renaming it in site/src/lib/releases.ts breaks every button, so the two
+# lists must be changed together.
+#
+# Triggered by the same `v*` tags as release.yml, which builds the portable
+# source-free archives. Both upload to the same release; this one only ever
+# adds installer files and never removes an existing asset.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: >-
+          Existing release tag to attach the installers to (e.g. 1.0.0).
+          Required when dispatching by hand, because a manual run has no tag
+          in github.ref_name - it has the branch name instead, and publishing
+          installers under a branch name would create a release nobody's
+          download button points at.
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  # Tag pushes carry the tag in github.ref_name; a manual run carries the
+  # operator-supplied release tag instead. Both end up as the release the
+  # site's `releases/latest/download/...` URLs resolve to.
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+
+jobs:
+  build:
+    name: Installer (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+            asset: Syntara-Windows-x64-Setup.exe
+            bundle: nsis
+            glob: "*.exe"
+          - os: macos-latest
+            name: macos
+            asset: Syntara-macOS-arm64.dmg
+            bundle: dmg
+            glob: "*.dmg"
+            # Apple Silicon, like the portable macos-arm64 archive release.yml
+            # already ships. An x86_64 slice would need a second interpreter in
+            # the bundle; shipping one honest slice beats shipping a bundle
+            # that only starts on half the machines it advertises.
+            rust_target: aarch64-apple-darwin
+          - os: ubuntu-latest
+            name: linux
+            asset: Syntara-Linux-x86_64.AppImage
+            bundle: appimage
+            glob: "*.AppImage"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tauri Linux system dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # tauri.conf.json runs `npm --prefix ../web run build` as
+      # beforeBuildCommand, so web/node_modules has to exist before the
+      # bundler starts - and it embeds the result into the binary.
+      - name: Install frontend dependencies
+        run: npm ci --prefix web
+
+      # The tauri CLI (not tauri-action): the asset names here are fixed, and
+      # tauri-action publishes under the bundler's own versioned names. Pinned
+      # to the crate's version so the bundler that renders installer.nsi is the
+      # one the template was vendored from.
+      - name: Tauri CLI
+        run: npm install -g @tauri-apps/cli@2.11.5
+
+      # What makes the installer worth downloading: the Python package and an
+      # interpreter, so the installed app runs a model with no internet and no
+      # system Python. --check executes the bundled interpreter against the
+      # bundled package, so a payload that cannot start the host fails here.
+      - name: Stage bundled runtime
+        run: |
+          py -3 tools/stage_desktop_resources.py --repo . || \
+            python3 tools/stage_desktop_resources.py --repo .
+
+      # Run from `desktop/`, which is where tauri.conf.json's
+      # `npm --prefix ../web run build` resolves from (see desktop/README.md:
+      # `cd desktop && cargo tauri dev`). Running from the repository root
+      # would look for `web` one directory above the checkout and fail before
+      # a single line of Rust is compiled.
+      - name: Build the installer
+        working-directory: desktop
+        run: |
+          ARGS="--bundles ${{ matrix.bundle }}"
+          if [ -n "${{ matrix.rust_target }}" ]; then
+            ARGS="$ARGS --target ${{ matrix.rust_target }}"
+          fi
+          # The version the app reports comes from the tag, not from the
+          # placeholder in tauri.conf.json, so Settings shows the same number
+          # as the release the button downloaded.
+          ARGS="$ARGS --config {\"version\":\"${RELEASE_TAG#v}\"}"
+          tauri build $ARGS
+          # The name is fixed; find the file whatever the bundler called it.
+          BUILT=$(find src-tauri/target -name "${{ matrix.glob }}" -type f \
+            -not -path "*/nsisx86/*" | head -1)
+          test -n "$BUILT" || { echo "FAIL: no ${{ matrix.bundle }} bundle was produced"; exit 1; }
+          # The file name IS the release asset name the website links to, so it
+          # is set here rather than left to the bundler's versioned naming.
+          mkdir -p out
+          cp "$BUILT" "out/${{ matrix.asset }}"
+          ls -lh "out/${{ matrix.asset }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.name }}
+          path: out/*
+
+  release:
+    name: Publish installers to the release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="$RELEASE_TAG"
+          # release.yml creates the release; this workflow runs beside it and
+          # may get there first. Waiting beats failing: a release with notes
+          # and no installers is exactly the state this is here to prevent.
+          for attempt in $(seq 1 20); do
+            if gh release view "$TAG" >/dev/null 2>&1; then break; fi
+            echo "release $TAG not published yet (attempt $attempt) - waiting 15s"
+            sleep 15
+          done
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            # release.yml failed. Publish what this workflow did build rather
+            # than throwing three installers away: a draft release, so a human
+            # still reviews the notes before anything is announced.
+            gh release create "$TAG" --draft --title "syntara $TAG" \
+              --notes "Portable archives were not built for this tag (see the Release workflow). Desktop installers below."
+          fi
+          gh release upload "$TAG" artifacts/* --clobber
+          echo "published:"; gh release view "$TAG" --json assets --jq '.assets[].name'
