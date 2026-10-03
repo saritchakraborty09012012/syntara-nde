@@ -5,6 +5,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-03
+
 ### Downloads from the site
 
 - **Download buttons point at real installers.** The macOS asset was still
