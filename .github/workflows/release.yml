@@ -266,8 +266,14 @@ jobs:
               # whichever exists next to itself, so assert exactly that one is
               # what engine_for() returns.
               candidates = (family.engine_artifact + exe, "glm" + exe)
+              # isfile, not exists: the GLM artifact on POSIX is `glm`, but the
+              # archive also contains the `syntara/` Python package directory,
+              # and exists() matched that directory and picked its name - so the
+              # assert compared the resolved `glm` engine against "syntara" and
+              # failed a correct archive. On Windows the .exe suffix kept the two
+              # apart, which is why only the POSIX archives hit this.
               expected_file = next(
-                  (n for n in candidates if os.path.exists(n)),
+                  (n for n in candidates if os.path.isfile(n)),
                   family.engine_artifact + exe)
             else:
               expected_file = family.engine_artifact + exe

@@ -108,10 +108,22 @@ jobs:
       # interpreter, so the installed app runs a model with no internet and no
       # system Python. --check executes the bundled interpreter against the
       # bundled package, so a payload that cannot start the host fails here.
+      # bash is pinned for every platform: the steps below are POSIX (`${VAR#v}`,
+      # `find -not -path`), and windows-latest's default shell is PowerShell,
+      # which parses that script into a ParserError. Git Bash is on PATH on the
+      # Windows runner, so the same step text works in the whole matrix.
       - name: Stage bundled runtime
+        shell: bash
         run: |
-          py -3 tools/stage_desktop_resources.py --repo . || \
+          # `py -3` exists only on Windows and `python3` only on POSIX, and a
+          # runner has one of them - never both. Probing beats a `||` fallback:
+          # these runners run bash with -e, so the missing first command fails
+          # the step before the fallback is ever reached.
+          if command -v python3 >/dev/null 2>&1; then
             python3 tools/stage_desktop_resources.py --repo .
+          else
+            py -3 tools/stage_desktop_resources.py --repo .
+          fi
 
       # Run from `desktop/`, which is where tauri.conf.json's
       # `npm --prefix ../web run build` resolves from (see desktop/README.md:
@@ -119,6 +131,7 @@ jobs:
       # would look for `web` one directory above the checkout and fail before
       # a single line of Rust is compiled.
       - name: Build the installer
+        shell: bash
         working-directory: desktop
         run: |
           ARGS="--bundles ${{ matrix.bundle }}"
