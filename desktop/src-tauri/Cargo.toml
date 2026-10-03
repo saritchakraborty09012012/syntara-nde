@@ -42,3 +42,10 @@ log = "0.4"
 url = "2"
 urlencoding = "2"
 base64 = "0.22"
+
+# Only storage.rs names it, and only under cfg(unix): statvfs is how the
+# model-folder picker reports free space on Linux/macOS. It is already in the
+# dependency tree through tauri, but a crate has to declare what it imports -
+# being in Cargo.lock is not the same as being available to rustc.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
