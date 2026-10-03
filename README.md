@@ -52,7 +52,10 @@ CPU · GPU · RAM · VRAM · SSD
 - MoE expert-aware execution and dense-model streaming paths
 - KV-cache and context-budgeting architecture
 - Chat Mode
-- Agent Mode with permission gates
+- Agent Mode with a local tool loop and per-project permission gates (file writes and process runs always ask; `always` grants are stored per project)
+- First-run starter-model suggestion from a local hardware scan (dismissible)
+- In-app host log viewer (reads a local file; nothing is uploaded)
+- Desktop shell auto-starts the local host on loopback — no account, no cloud
 - Model Hub and integrated download manager
 - Seamless and hassle-free downloads through Quantum Download Manager — no stuck transfers, no unnecessary restarts
 - Projects and persistent local memory

@@ -199,3 +199,81 @@ fn inspection_serializes_camel_case_for_the_webview() {
     assert!(json.get("libraryId").is_some());
     assert!(json.get("data_complete").is_none());
 }
+
+#[test]
+fn log_tail_keeps_last_lines_and_reports_missing_honestly() {
+    let dir = std::env::temp_dir().join(format!("syntara_tail_a_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("tail.log");
+    let body: String = (0..300).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(&path, body).unwrap();
+
+    let (shown, exists, lines) = syntara_desktop_lib::host::tail_lines(&path, 5);
+    assert!(exists);
+    assert!(shown.ends_with("tail.log"));
+    assert_eq!(
+        lines,
+        vec!["line 295", "line 296", "line 297", "line 298", "line 299"]
+    );
+
+    // An existing but empty log is "exists, no lines" - never an error.
+    let empty = dir.join("empty.log");
+    std::fs::write(&empty, "").unwrap();
+    let (_, exists, lines) = syntara_desktop_lib::host::tail_lines(&empty, 10);
+    assert!(exists);
+    assert!(lines.is_empty());
+
+    // A log that does not exist yet (host never started) is honest too.
+    let (_, exists, lines) = syntara_desktop_lib::host::tail_lines(&dir.join("absent.log"), 5);
+    assert!(!exists);
+    assert!(lines.is_empty());
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn log_tail_drops_the_partial_line_from_the_byte_window() {
+    let dir = std::env::temp_dir().join(format!("syntara_tail_b_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("big.log");
+    // 20_000 lines x ~11 bytes = ~220 KB, well past the 128 KiB window.
+    let body: String = (0..20_000).map(|i| format!("line {i:06}\n")).collect();
+    std::fs::write(&path, body).unwrap();
+
+    let (_, exists, lines) = syntara_desktop_lib::host::tail_lines(&path, 3);
+    assert!(exists);
+    assert_eq!(lines, vec!["line 019997", "line 019998", "line 019999"]);
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn log_tail_clamps_the_requested_line_count() {
+    let dir = std::env::temp_dir().join(format!("syntara_tail_c_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("clamp.log");
+    let body: String = (0..600).map(|i| format!("line {i}\n")).collect();
+    std::fs::write(&path, body).unwrap();
+
+    // 0 clamps up to 1 (never panics), an absurd count clamps down to 500.
+    let (_, _, lines) = syntara_desktop_lib::host::tail_lines(&path, 0);
+    assert_eq!(lines, vec!["line 599"]);
+    let (_, _, lines) = syntara_desktop_lib::host::tail_lines(&path, 9_999);
+    assert_eq!(lines.len(), 500);
+    assert_eq!(lines.first().unwrap(), "line 100");
+    assert_eq!(lines.last().unwrap(), "line 599");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn log_tail_serializes_camel_case_for_the_webview() {
+    let out = syntara_desktop_lib::host::HostLogTail {
+        path: "x.log".into(),
+        exists: true,
+        lines: vec!["ok".into()],
+    };
+    let json = serde_json::to_value(&out).unwrap();
+    assert_eq!(json.get("exists").and_then(|v| v.as_bool()), Some(true));
+    assert_eq!(json.get("path").and_then(|v| v.as_str()), Some("x.log"));
+}

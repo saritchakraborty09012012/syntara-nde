@@ -633,3 +633,10 @@ select option { background-color: var(--bg-soft); color: var(--text); }
 :root[data-theme="light"] .diff-line { color: #93a3b5; }
 :root[data-theme="light"] .diff-line.add { color: #5ff1ae; background: rgba(95,241,174,.1); }
 :root[data-theme="light"] .diff-line.del { color: #ff758f; background: rgba(255,117,143,.1); }
+/* Phase 5 — first-run starter suggestion on the welcome screen. */
+.starter-card { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; text-align: left; padding: 11px 13px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel-2); color: var(--text); }
+.starter-card svg { color: var(--accent); flex: 0 0 auto; }
+.starter-copy { display: grid; gap: 3px; flex: 1 1 260px; min-width: 0; }
+.starter-copy strong { font-size: 13px; }
+.starter-copy span { font-size: 11px; color: var(--muted); }
+.starter-card .ghost-btn { flex: 0 0 auto; }

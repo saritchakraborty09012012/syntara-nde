@@ -37,3 +37,23 @@ export function recommendationLabel(score: number) {
   if (score >= 55) return "Possible"
   return "Heavy"
 }
+
+/* Phase 5: first-run starter suggestion. Prefers what the user can act on
+   right now - an installed model beats an available one beats the rest -
+   and breaks ties inside each tier by hardware score. Partial/detached rows
+   are skipped (nothing runnable), and an empty library returns null so the
+   welcome screen stays silent instead of guessing. */
+export function bestStarterModel(models: ModelMeta[], hw: HardwareSnapshot): { model: ModelMeta; score: number } | null {
+  const rank = (model: ModelMeta): number => (model.status === "installed" ? 2 : model.status === "available" ? 1 : 0)
+  const usable = models.filter((model) => model.status !== "partial" && model.status !== "detached")
+  let best: { model: ModelMeta; score: number } | null = null
+  for (const model of usable) {
+    const score = scoreModel(model, hw)
+    const better =
+      !best ||
+      rank(model) > rank(best.model) ||
+      (rank(model) === rank(best.model) && score > best.score)
+    if (better) best = { model, score }
+  }
+  return best
+}

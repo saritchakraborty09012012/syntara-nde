@@ -147,6 +147,9 @@ export interface AppSettings {
      conversation-history panel collapsed. Persisted like other settings. */
   navCollapsed: boolean
   historyCollapsed: boolean
+  /* Phase 5: the first-run hardware-based model suggestion shows until the
+     user acts on or dismisses it. */
+  starterSuggestionSeen: boolean
 }
 
 export interface SyntaraState {
@@ -353,6 +356,7 @@ export function defaultState(): SyntaraState {
       selectedProjectId: null,
       navCollapsed: false,
       historyCollapsed: false,
+      starterSuggestionSeen: false,
     },
   }
 }

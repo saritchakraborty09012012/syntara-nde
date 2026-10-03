@@ -1,10 +1,10 @@
 # Syntara — Phase 0 baseline audit
 
-**Status:** Phase 0 complete. This document records what the repository
-actually does today, the brand-name purge that shipped with it, the licence
-position, and the approved phase plan (0 → 5). Everything below marked
-*verified* was checked against the tree in this pass; everything else is
-explicitly labelled.
+**Status:** Phases 0–5 complete (commit hashes in §5; verification in §6).
+This document records what the repository actually does, the brand-name purge
+that shipped with it, the licence position, and the approved phase plan
+(0 → 5). Everything below marked *verified* was checked against the tree in
+this pass; everything else is explicitly labelled.
 
 Scope: the Syntara product tree (this repository, branch `main`). The read-only
 reference material used during the audit lives in `_reference/` (git-ignored,
@@ -143,8 +143,8 @@ delivered them. Earlier commits used interim labels (host work landed as
 | **1 — Adaptive Engine** | see track table below | a local GGUF file can be inspected, loaded and streamed through the host on Windows, via a packaged build |
 | **2 — Chat mode** | rewire to host API; picker = local models only + badges, no key fields; resume/queue/throttled-markdown lessons; no workspace concept in chat | **done `58e4cf5`** — tracks 2a–2e below; exit criterion met: `tools/chat_e2e.py` drives the packaged host end-to-end (9/9, loopback-only), web build exit 0, web tests 120/120 |
 | **3 — Mode toggle** | single `Chat \| Agent` toggle replacing workspaces; per-mode history, shared picker, no reload, existing theme tokens | **done `ad13103`** — sidebar segmented tablist (`role="tab"`/`aria-selected`/roving tabindex/arrow keys) where the workspace switcher sat; modes are ordinary hash views (`#chat`, `#agents`) so switching never remounts or reloads the app and each mode keeps its history in App state (conversations vs. run log); shared `ModelPicker` now heads both panels; `VIEW_LABELS` is the single wording source for menu/eyebrow/document title; Alt+1…2 jump to the modes; exit criterion met by build exit 0 + **125/125** web tests incl. a server-rendered App-shell test asserting the toggle and panel wiring |
-| **4 — Agent mode** | see track table below: TS loop (`web/src/lib/agent/`), tools as Tauri commands, permission system (once/always/deny, per-project), local-model tool-call layer (schema-constrained JSON + repair), tool cards/diffs/todo UI | tracks 4a–4c below; exit criterion: agent tools run and are gated; parser/repair/compaction unit tests + integration test vs mock gateway |
-| **5 — Polish & hardening** | startup/memory/shutdown hygiene, child-process cleanup, in-app logs, first-run hardware scan → starter-model suggestion, final name-purge + full test matrix + production builds, docs/README sync | checklist from `AGENTS.md` §115 satisfied |
+| **4 — Agent mode** | see track table below: TS loop (`web/src/lib/agent/`), tools as Tauri commands, permission system (once/always/deny, per-project), local-model tool-call layer (schema-constrained JSON + repair), tool cards/diffs/todo UI | **done `42aeaae` → `9a93753` → `312d428`** — tracks 4a–4c below; exit criterion met: parser/repair/compaction unit tests + integration test vs a scripted mock gateway (4a), tool commands gated by root scoping + argv-only process runs and contract-tested in Rust (4b), the run flow wired end-to-end in the UI with permission prompts (4c). An on-screen run driven by a real model **not run** here (no model loads on this machine — honest not-run in the ledger) |
+| **5 — Polish & hardening** | startup/memory/shutdown hygiene, child-process cleanup, in-app logs, first-run hardware scan → starter-model suggestion, final name-purge + full test matrix + production builds, docs/README sync | **done this commit** — startup/shutdown/child-process hygiene already shipped and re-verified in this pass (1d Job-Object teardown + supervision, 1g 0-orphan smoke, host suite green); new: in-app host log tail (`host_logs` command + Settings panel, 128 KiB window, local only) with 4 Rust contract tests, first-run starter-model suggestion (`bestStarterModel`, dismissible, backfilled setting) with `model-hub.test.ts` + settings migration tests; full matrix below (host 191, engine 1144 baseline, web 199, cargo 17+15, site/web builds 0, name gate clean); README/docs synced; `AGENTS.md` §115 checklist recorded in §6 |
 
 ### Phase 1 tracks
 
@@ -297,6 +297,20 @@ proven embedding strategy (adjustment to the plan, as agreed).
 | Agent UI (4c): real agent run producing tool cards end-to-end (GUI) | **not run** — this 15.3 GiB machine loads no model (the 17.7 GiB Qwen3.8 GGUF exceeds RAM), and there is no webview automation here; loop behaviour is covered by the 4a unit/integration tests against the scripted gateway, tool commands by the 4b Rust contract tests |
 | Agent UI (4c): browser-session agent | **exercised only by code path, not manually** — `agentToolsAvailable()` false ⇒ `tools: []` ⇒ the loop's `tools_not_bound`/plain-answer path (both unit-tested in 4a) |
 | Agent UI (4c): `python tools/check_names.py` | **ran — clean (1119 files; +6 = AgentEvents component + its test, `agent/tools.ts`, `agent/ui.ts` + test, `agent/execute.ts`)** |
+| Phase 5: in-app host log tail | **implemented + contract-tested** — `tail_lines` reads the last 128 KiB of `syntara-host.log` (drops the window's partial first line, lossy decode, 1..=500 line clamp, `exists=false` for no log yet); 4 new `host_contract` tests incl. a 220 KB file crossing the window; Settings panel shows the tail on demand (desktop only, local file) |
+| Phase 5: first-run starter-model suggestion | **implemented + unit-tested** — `bestStarterModel` prefers installed > available and scores within tier, skips partial/detached, null for an empty library; `model-hub.test.ts` (8 tests: scoring bands, label bands, all selection rules) + 3 `syntara-state` migration tests (default false, backfill for pre-flag stores, round-trip); welcome card is dismissible and silenced once acted on |
+| Phase 5: host suite (`python -m unittest discover -t . -s syntara\tests`) | **ran — 191 tests, OK (2 skipped)** |
+| Phase 5: engine suite (`c/`, `test_*.py`) | **ran — 1144 tests, errors=7 (unchanged known baseline: 6 `test_rans_repack.py` cp1252 + 1 non-UTF-8 stdout), skipped=137** |
+| Phase 5: web `npm run build` + `npm test` | **ran — build exit 0; 199/199 (25 files, +11)** |
+| Phase 5: web tsc fix carried from 4c | **`web/src/lib/agent/ui.test.ts` gained `size: null` on a `DirEntryInfo` fixture** — vitest does not type-check, so 4c's green test run hid a `tsc -b` error; caught and fixed by this pass's production build |
+| Phase 5: site `npm run build` | **ran — exit 0** |
+| Phase 5: cargo `check --tests` / `fmt --check` / `test` | **ran — 0 errors, fmt clean; 7 warnings unchanged (pre-existing); agent_tools_contract 17/17, host_contract 15/15 (+4 log-tail), library_e2e still opt-in-ignored** |
+| Phase 5: `python tools/check_names.py` (final) | **ran — clean (1120 files; +1 = `web/src/lib/model-hub.test.ts`)** |
+| Phase 5: README + spec-matrix sync | **done** — README capability list gains the agent permission wording, starter suggestion, host-log viewer and loopback auto-start; matrix gains Phase 5 rows and the Phase 4 agents rows |
+| Phase 5: `AGENTS.md` §115 checklist | **self-checked**: requirement understood; existing code inspected (host log file, `pickQdmFolder`, grant store, scoreModel all reused); layer ownership respected (pure helpers in `lib/agent`, Rust file I/O in `host.rs`, presentational component separate); errors handled (log read failures land in the runtime-error strip; `exists=false` honest empty); security (log tail reads one fixed local path, no user path input, no network); cross-platform (portable Rust + Tauri log dir; web changes guarded by `qdmAvailable()`); builds/tests run; no unrelated changes; docs updated; no debug leftovers (grep clean); behavior reported honestly below |
+| Phase 5: GUI click-through of the log panel, starter card, permission modal | **not run** — no webview automation in this environment |
+| Phase 5: macOS/Linux production builds | **not run** — this is a Windows machine; cross-platform support is by construction (Tauri + portable code), not verified here |
+| Phase 5: real-model chat/agent session | **not run** — still no model loadable on this 15.3 GiB machine (17.7 GiB Qwen3.8 exceeds RAM) |
 
 Deviations from the original Phase 0 checklist: `docs/ARCHITECTURE.md` was
 **not** created — the repository already carries a root `ARCHITECTURE.md`

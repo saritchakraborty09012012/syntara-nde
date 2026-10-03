@@ -354,6 +354,48 @@ fn log_path(app: &AppHandle) -> PathBuf {
         .join("syntara-host.log")
 }
 
+/// Only this many trailing bytes of the log are ever read, so a host log
+/// that grew for weeks still costs a bounded amount to show.
+pub const TAIL_WINDOW_BYTES: u64 = 128 * 1024;
+
+/// Tail the host log for the in-app log panel. Returns `(path, exists, lines)`:
+/// `exists=false` means "no log yet" (honest empty, not an error). A fixed
+/// byte window can start mid-line and mid-character, so the first partial
+/// line is dropped and the window is decoded lossily - the file on disk is
+/// untouched. `max_lines` is clamped to 1..=500.
+pub fn tail_lines(path: &Path, max_lines: usize) -> (String, bool, Vec<String>) {
+    use std::io::{Read, Seek, SeekFrom};
+
+    let shown = path.display().to_string();
+    let Ok(mut file) = File::open(path) else {
+        return (shown, false, Vec::new());
+    };
+    let Ok(meta) = file.metadata() else {
+        return (shown, false, Vec::new());
+    };
+    let start = meta.len().saturating_sub(TAIL_WINDOW_BYTES);
+    if start > 0 && file.seek(SeekFrom::Start(start)).is_err() {
+        return (shown, false, Vec::new());
+    }
+    let mut bytes = Vec::new();
+    if file
+        .take(TAIL_WINDOW_BYTES)
+        .read_to_end(&mut bytes)
+        .is_err()
+    {
+        return (shown, false, Vec::new());
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    if start > 0 {
+        lines.remove(0); // partial first line created by the byte window
+    }
+    let max = max_lines.clamp(1, 500);
+    let drop_count = lines.len().saturating_sub(max);
+    lines.drain(..drop_count);
+    (shown, true, lines)
+}
+
 /// Start the hidden host process (app start, or `host_start` from the UI).
 pub fn start(app: &AppHandle, model: Option<String>, port: Option<u16>) -> HostProcess {
     let model = model.or_else(|| env_str("SYNTARA_MODEL"));
@@ -486,6 +528,27 @@ pub fn host_stop(app: AppHandle) -> HostStatus {
     let mut host = state.host.lock().expect("host lock");
     host.shutdown();
     host.status.clone()
+}
+
+/// Tail of the host log for the in-app Settings panel (Phase 5): local only,
+/// bounded by the byte window and the 1..=500 line clamp in `tail_lines`.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HostLogTail {
+    pub path: String,
+    /// False when the log file does not exist yet (host never started).
+    pub exists: bool,
+    pub lines: Vec<String>,
+}
+
+#[tauri::command]
+pub fn host_logs(app: AppHandle, lines: Option<usize>) -> HostLogTail {
+    let (path, exists, lines) = tail_lines(&log_path(&app), lines.unwrap_or(200));
+    HostLogTail {
+        path,
+        exists,
+        lines,
+    }
 }
 
 // Contract tests live in tests/host_contract.rs: unit-test harnesses cannot

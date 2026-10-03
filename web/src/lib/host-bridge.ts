@@ -37,6 +37,15 @@ export const hostStart = (model: string, port?: number | null): Promise<HostStat
 
 export const hostStatus = (): Promise<HostStatus> => invoke("host_status")
 
+/** Tail of the local host log (Phase 5): `exists=false` means the host has
+    never written one yet - an honest empty, not an error. */
+export interface HostLogTail {
+  path: string
+  exists: boolean
+  lines: string[]
+}
+export const hostLogs = (lines?: number): Promise<HostLogTail> => invoke("host_logs", { lines: lines ?? null })
+
 /* The gateway base URL a host status can be auto-connected to, or null
    when there is nothing to connect to yet (no model chosen, process not
    running). Track 2a: chat uses this on mount instead of a manual

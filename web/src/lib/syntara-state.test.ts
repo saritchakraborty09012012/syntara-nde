@@ -69,6 +69,27 @@ describe("sidebar collapse preferences", () => {
   })
 })
 
+describe("first-run starter suggestion flag", () => {
+  it("starts unseen so the welcome card can show", () => {
+    expect(defaultState().settings.starterSuggestionSeen).toBe(false)
+  })
+
+  it("backfills false for states saved before the flag existed", () => {
+    const legacy = JSON.stringify({ schema: 1, settings: { theme: "dark" } })
+    const state = loadState(memoryStorage(legacy))
+    expect(state.settings.starterSuggestionSeen).toBe(false)
+    expect(state.settings.theme).toBe("dark")
+  })
+
+  it("round-trips the seen flag through save and load", () => {
+    const storage = memoryStorage()
+    const next = defaultState()
+    next.settings.starterSuggestionSeen = true
+    saveState(next, storage)
+    expect(loadState(storage).settings.starterSuggestionSeen).toBe(true)
+  })
+})
+
 describe("downloaded-model memory", () => {
   it("starts empty and backfills for states saved before it existed", () => {
     expect(defaultState().downloadedModels).toEqual({})

@@ -66,7 +66,7 @@ import {
   setQdmConfig,
 } from "@/lib/native-download"
 import { installedEntries, installingGroups, type InstalledEntry, type InstallingGroup, type StorageFileEntry } from "@/lib/installed"
-import { detectHardware, recommendationLabel, scoreModel } from "@/lib/model-hub"
+import { bestStarterModel, detectHardware, recommendationLabel, scoreModel } from "@/lib/model-hub"
 import { formatBytes, formatEta } from "@/lib/format"
 import { activeRequests, supportsCacheSlots } from "@/lib/runtime"
 import { Markdown } from "@/components/Markdown"
@@ -93,7 +93,7 @@ import {
   type SyntaraState,
 } from "@/lib/syntara-state"
 import { ALL_VIEW_IDS, MODE_VIEWS, MODEL_TABS, parseHash, VIEW_LABELS, type ModelTab, type View } from "@/lib/routes"
-import { hostBaseFromStatus, hostStart, hostStatus, libraryInspect, waitHostReady } from "@/lib/host-bridge"
+import { hostBaseFromStatus, hostLogs, hostStart, hostStatus, libraryInspect, waitHostReady, type HostLogTail } from "@/lib/host-bridge"
 import { badgeLabel, groupComplete, metaFromInspect, pickInspectTarget } from "@/lib/inspect"
 import { mergePickerOptions, type PickerRow } from "@/lib/picker"
 import { canContinue, CONTINUE_NUDGE, createDeltaBuffer, retryAfterOf, retryDecision, statusOf } from "@/lib/send"
@@ -291,6 +291,9 @@ export default function App() {
   const [agentTodo, setAgentTodo] = useState<string[]>([])
   const [permissionAsk, setPermissionAsk] = useState<{ tool: string; args: Record<string, unknown> } | null>(null)
   const permissionResolver = useRef<((decision: PermissionDecision) => void) | null>(null)
+  /* Phase 5: in-app tail of the local host log (desktop shell only). */
+  const [hostLog, setHostLog] = useState<HostLogTail | null>(null)
+  const [hostLogBusy, setHostLogBusy] = useState(false)
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
   const [pendingImages, setPendingImages] = useState<string[]>([])
   const [pendingDocs, setPendingDocs] = useState<Array<{ name: string; content: string }>>([])
@@ -377,6 +380,12 @@ export default function App() {
     },
   }), [state.projects])
   const hardware = useMemo(() => detectHardware(health), [health])
+  /* Phase 5: first-run starter suggestion, silenced once acted on or
+     dismissed (null while seen or while there is nothing to suggest). */
+  const starterSuggestion = useMemo(
+    () => (state.settings.starterSuggestionSeen ? null : bestStarterModel(state.models, hardware)),
+    [state.settings.starterSuggestionSeen, state.models, hardware],
+  )
   const filteredModels = useMemo(() => state.models.filter((model) => {
     const needle = modelSearch.trim().toLowerCase()
     return !needle || `${model.name} ${model.provider} ${model.architecture} ${model.capabilities.join(" ")}`.toLowerCase().includes(needle)
@@ -1317,6 +1326,26 @@ export default function App() {
     settlePermission("deny")
   }
 
+  /* Phase 5: tail the local host log into the Settings panel. Failures land
+     in the shared runtime-error strip rather than fake log lines. */
+  const loadHostLog = async () => {
+    setHostLogBusy(true)
+    try {
+      setHostLog(await hostLogs(200))
+    } catch (error) {
+      setRuntimeError(error instanceof Error ? error.message : "The host log could not be read.")
+    } finally {
+      setHostLogBusy(false)
+    }
+  }
+
+  const openStarterHub = () => {
+    updateSettings({ starterSuggestionSeen: true })
+    setView("models")
+  }
+
+  const dismissStarter = () => updateSettings({ starterSuggestionSeen: true })
+
   const runAgent = async () => {
     const text = agentPrompt.trim()
     const model = activeConversation?.model || selectedModel
@@ -1794,6 +1823,17 @@ export default function App() {
                   <div className="welcome-kicker">Local AI, engineered around your machine.</div>
                   <h1>Build, chat, and run AI <span>locally.</span></h1>
                   <p>Universal model workflows, memory-aware execution, and agent tooling — with no account required.</p>
+                  {starterSuggestion ? (
+                    <div className="starter-card" role="status">
+                      <Cpu size={16} />
+                      <div className="starter-copy">
+                        <strong>Starter pick for this machine: {starterSuggestion.model.name}</strong>
+                        <span>{starterSuggestion.model.parameters} · needs {starterSuggestion.model.recommendedRam} · {recommendationLabel(starterSuggestion.score)}{hardware.ramGb ? ` · you have ${hardware.ramGb} GB RAM` : ""}</span>
+                      </div>
+                      <button className="ghost-btn" onClick={openStarterHub}><Boxes size={14} /> Open Model Hub</button>
+                      <button className="icon-btn" onClick={dismissStarter} aria-label="Dismiss starter suggestion"><X size={15} /></button>
+                    </div>
+                  ) : null}
                   <div className="suggestion-grid">
                     {["Explain a hard concept simply", "Review a codebase architecture", "Plan a local AI workflow", "Compare two model configurations"].map((prompt) => <button key={prompt} onClick={() => setDraft(prompt)}>{prompt}<ArrowUp size={13} /></button>)}
                   </div>
@@ -1890,7 +1930,7 @@ export default function App() {
 
         {view === "developer" && <section className="view scroll-view"><div className="section-head"><div><span className="section-kicker">DEVELOPER PLATFORM</span><h2>One local API for everything.</h2><p>Desktop, CLI, Python, n8n and IDE integrations all use the same Syntara local control surface.</p></div></div><div className="dev-grid"><DevCard icon={Server} title="Local API" body="OpenAI-compatible HTTP endpoints on localhost by default." code={`${state.settings.baseUrl}`} onCopy={copy} copied={copied === "api"} copyKey="api" /><DevCard icon={Code2} title="Python SDK" body="Use locally installed models from Python without hosting weights anywhere." code={`from syntara import Syntara\nclient = Syntara()\nprint(client.chat(model="qwen", message="Hello"))`} onCopy={copy} copied={copied === "python"} copyKey="python" /><DevCard icon={Terminal} title="Developer CLI" body="Manage models, serve the runtime, create backups and run local agents." code={`syntara models list\nsyntara chat\nsyntara serve`} onCopy={copy} copied={copied === "cli"} copyKey="cli" /><DevCard icon={Zap} title="n8n" body="Point an HTTP Request/OpenAI node at localhost and keep inference on-device." code={`POST ${state.settings.baseUrl}/chat/completions`} onCopy={copy} copied={copied === "n8n"} copyKey="n8n" /></div><div className="integration-strip"><div><Code2 size={17} /><strong>VS Code</strong><span>Local chat + coding workflows through Syntara API.</span></div><div><Sparkles size={17} /><strong>Cursor-type IDEs</strong><span>Use OpenAI-compatible local endpoints.</span></div><div><Boxes size={17} /><strong>MCP / Plugins</strong><span>Permissioned tools and extensible integrations.</span></div></div></section>}
 
-        {view === "settings" && <section className="view scroll-view"><div className="section-head"><div><span className="section-kicker">SETTINGS</span><h2>Your machine, your data, your controls.</h2><p>No account is required; settings and persistent state live locally.</p></div></div><div className="settings-grid"><div className="card-panel"><div className="panel-title"><span>About</span><Sparkles size={15} /></div><p className="panel-note">Syntara: The Universal Local AI Runtime by NDe: NoirDemons.</p><p className="panel-note">Local-first, privacy-first, open source. Your models run on your device.</p></div><div className="card-panel"><div className="panel-title"><span>Advanced</span><Terminal size={15} /></div><p className="panel-note">Reset removes chats, memories, agent configs and imported-model metadata from this browser. Files you already saved to disk are untouched.</p><button className="ghost-btn danger-text" onClick={() => setConfirmReset(true)}><Trash2 size={15} /> Reset app data</button></div><div className="card-panel"><div className="panel-title"><span>Help</span><CircleHelp size={15} /></div><div className="help-list">{helpItems.map((item) => <details key={item.q} className="help-item"><summary>{item.q}</summary><p>{item.a}</p></details>)}</div></div><div className="card-panel"><div className="panel-title"><span>Appearance</span><Settings2 size={15} /></div><label className="setting-row"><span>Theme</span><select value={state.settings.theme} onChange={(e) => updateSettings({ theme: e.target.value as ThemeMode })}><option value="dark">Dark</option><option value="light">Light</option><option value="system">System</option></select></label><label className="setting-row"><span>Reduced motion</span><input type="checkbox" checked={state.settings.reducedMotion} onChange={(e) => updateSettings({ reducedMotion: e.target.checked })} /></label></div><div className="card-panel"><div className="panel-title"><span>Runtime</span><Server size={15} /></div><label className="field-label">Local API base URL<input value={state.settings.baseUrl} onChange={(e) => updateSettings({ baseUrl: e.target.value })} /></label><label className="field-label">Default model<input value={state.settings.model} onChange={(e) => updateSettings({ model: e.target.value })} placeholder="Selected at runtime" /></label><label className="field-label">Performance mode<select value={state.settings.performanceMode} onChange={(e) => updateSettings({ performanceMode: e.target.value as AppSettings["performanceMode"] })}><option value="maximum">Maximum Performance</option><option value="balanced">Balanced</option><option value="efficiency">Efficiency</option><option value="battery">Battery Saving</option></select></label></div><div className="card-panel"><div className="panel-title"><span>Desktop behavior</span><SlidersHorizontal size={15} /></div><label className="setting-row"><span>Start with OS</span><input type="checkbox" checked={state.settings.autoStart} onChange={(e) => updateSettings({ autoStart: e.target.checked })} /></label><label className="setting-row"><span>Keep runtime in tray</span><input type="checkbox" checked={state.settings.tray} onChange={(e) => updateSettings({ tray: e.target.checked })} /></label></div><div className="card-panel"><div className="panel-title"><span>Backup & migration</span><FileDown size={15} /></div><p className="panel-note">Backups include chats, memories, projects, settings, agent configurations and model metadata — never model weights.</p><div className="backup-actions"><button className="primary-btn" onClick={exportBackup}><FileDown size={15} /> Create backup</button><button className="ghost-btn" onClick={() => backupRef.current?.click()}><FileUp size={15} /> Restore</button></div><input ref={backupRef} hidden type="file" accept=".syntara-backup,.json" onChange={(e) => void importBackup(e.target.files)} /></div></div></section>}
+        {view === "settings" && <section className="view scroll-view"><div className="section-head"><div><span className="section-kicker">SETTINGS</span><h2>Your machine, your data, your controls.</h2><p>No account is required; settings and persistent state live locally.</p></div></div><div className="settings-grid"><div className="card-panel"><div className="panel-title"><span>About</span><Sparkles size={15} /></div><p className="panel-note">Syntara: The Universal Local AI Runtime by NDe: NoirDemons.</p><p className="panel-note">Local-first, privacy-first, open source. Your models run on your device.</p></div><div className="card-panel"><div className="panel-title"><span>Advanced</span><Terminal size={15} /></div><p className="panel-note">Reset removes chats, memories, agent configs and imported-model metadata from this browser. Files you already saved to disk are untouched.</p><button className="ghost-btn danger-text" onClick={() => setConfirmReset(true)}><Trash2 size={15} /> Reset app data</button></div><div className="card-panel"><div className="panel-title"><span>Help</span><CircleHelp size={15} /></div><div className="help-list">{helpItems.map((item) => <details key={item.q} className="help-item"><summary>{item.q}</summary><p>{item.a}</p></details>)}</div></div><div className="card-panel"><div className="panel-title"><span>Appearance</span><Settings2 size={15} /></div><label className="setting-row"><span>Theme</span><select value={state.settings.theme} onChange={(e) => updateSettings({ theme: e.target.value as ThemeMode })}><option value="dark">Dark</option><option value="light">Light</option><option value="system">System</option></select></label><label className="setting-row"><span>Reduced motion</span><input type="checkbox" checked={state.settings.reducedMotion} onChange={(e) => updateSettings({ reducedMotion: e.target.checked })} /></label></div><div className="card-panel"><div className="panel-title"><span>Runtime</span><Server size={15} /></div><label className="field-label">Local API base URL<input value={state.settings.baseUrl} onChange={(e) => updateSettings({ baseUrl: e.target.value })} /></label><label className="field-label">Default model<input value={state.settings.model} onChange={(e) => updateSettings({ model: e.target.value })} placeholder="Selected at runtime" /></label><label className="field-label">Performance mode<select value={state.settings.performanceMode} onChange={(e) => updateSettings({ performanceMode: e.target.value as AppSettings["performanceMode"] })}><option value="maximum">Maximum Performance</option><option value="balanced">Balanced</option><option value="efficiency">Efficiency</option><option value="battery">Battery Saving</option></select></label></div><div className="card-panel"><div className="panel-title"><span>Desktop behavior</span><SlidersHorizontal size={15} /></div><label className="setting-row"><span>Start with OS</span><input type="checkbox" checked={state.settings.autoStart} onChange={(e) => updateSettings({ autoStart: e.target.checked })} /></label><label className="setting-row"><span>Keep runtime in tray</span><input type="checkbox" checked={state.settings.tray} onChange={(e) => updateSettings({ tray: e.target.checked })} /></label></div><div className="card-panel"><div className="panel-title"><span>Backup & migration</span><FileDown size={15} /></div><p className="panel-note">Backups include chats, memories, projects, settings, agent configurations and model metadata — never model weights.</p><div className="backup-actions"><button className="primary-btn" onClick={exportBackup}><FileDown size={15} /> Create backup</button><button className="ghost-btn" onClick={() => backupRef.current?.click()}><FileUp size={15} /> Restore</button></div><input ref={backupRef} hidden type="file" accept=".syntara-backup,.json" onChange={(e) => void importBackup(e.target.files)} /></div>{qdmAvailable() ? <div className="card-panel"><div className="panel-title"><span>Host log</span><Terminal size={15} /></div><p className="panel-note">Tail of the local host log on this device — nothing leaves your machine.</p><div className="task-actions"><button className="ghost-btn" onClick={() => void loadHostLog()} disabled={hostLogBusy}>{hostLogBusy ? <LoaderCircle className="spin" size={15} /> : <Terminal size={15} />} {hostLogBusy ? "Reading…" : "Show last 200 lines"}</button>{hostLog && hostLog.exists ? <span className="panel-note">{hostLog.path}</span> : null}</div>{hostLog ? <pre className="health-json">{hostLog.exists ? (hostLog.lines.join("\n") || "(log exists but is empty)") : "No host log yet — it appears once the host starts."}</pre> : null}</div> : null}</div></section>}
       {confirmReset ? (
           <div className="modal-backdrop" onMouseDown={() => setConfirmReset(false)}>
             <div className="modal-card" onMouseDown={(e) => e.stopPropagation()}>

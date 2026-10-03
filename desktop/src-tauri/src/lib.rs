@@ -33,6 +33,7 @@ pub fn run() {
             host::host_status,
             host::host_start,
             host::host_stop,
+            host::host_logs,
             library::library_inspect,
             agent_tools::fs_read,
             agent_tools::fs_list,

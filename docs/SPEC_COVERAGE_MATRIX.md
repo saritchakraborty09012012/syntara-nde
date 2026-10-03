@@ -81,6 +81,8 @@ row names the concrete files that own the behavior.
 | Offline `.syntara-backup` create/list/verify/restore, selective restore, zip path-traversal guards | ✅ | `syntara/store.py`, CLI `backup`, tests |
 | Settings that never persist credentials | ✅ | `syntara/store.py`, `syntara/tests/test_store.py` |
 | App-data reset with confirmation ("Reset app data") | ✅ | `web/src/App.tsx` (Advanced panel; renamed from "Reset workspace" in Phase 2) |
+| In-app host log tail (local file, 128 KiB window, honest "no log yet") | ✅ | `desktop/src-tauri/src/host.rs` `tail_lines`/`host_logs`, `web/src/App.tsx` Settings (Phase 5) |
+| First-run starter-model suggestion from a hardware scan (dismissible, backfilled setting) | ✅ | `web/src/lib/model-hub.ts` `bestStarterModel`, `web/src/App.tsx` welcome card (Phase 5) |
 | Remote/cloud database | 🔴 | Deliberately absent (local-first) |
 
 ## Agents

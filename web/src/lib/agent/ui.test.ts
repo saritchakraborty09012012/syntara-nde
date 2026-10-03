@@ -43,7 +43,7 @@ describe("formatListOutput", () => {
     const text = formatListOutput({
       path: "/repo",
       entries: [
-        { name: "src", kind: "dir" },
+        { name: "src", kind: "dir", size: null },
         { name: "readme.md", kind: "file", size: 120 },
         { name: "alias", kind: "symlink", size: null },
         { name: "socket", kind: "other", size: null },
