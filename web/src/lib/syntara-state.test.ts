@@ -118,7 +118,7 @@ describe("download history persistence", () => {
     expect(loadState(storage).downloads.map((row) => row.id)).toEqual(["dl_1"])
   })
 
-  it("clearState removes both the workspace key and the history key", () => {
+  it("clearState removes both the state key and the history key", () => {
     const storage = memoryStorage()
     saveState(stateWith([task({ id: "dl_1" })]), storage)
     clearState(storage)

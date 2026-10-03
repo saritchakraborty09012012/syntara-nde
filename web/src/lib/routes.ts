@@ -1,4 +1,4 @@
-/* Hash routing for the workspace.
+/* Hash routing for the app.
 
    Every view is an addressable page (#models, #downloads, …) so deep links,
    refresh and browser back/forward work. Each model family gets its own page
@@ -12,7 +12,6 @@ export type View =
   | "agents"
   | "models"
   | "downloads"
-  | "projects"
   | "memory"
   | "performance"
   | "developer"

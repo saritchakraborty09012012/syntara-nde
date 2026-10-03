@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import { MODEL_TABS, parseHash } from "./routes"
 
-const VIEW_IDS = ["chat", "agents", "models", "downloads", "projects", "memory", "performance", "developer", "settings"] as const
+const VIEW_IDS = ["chat", "agents", "models", "downloads", "memory", "performance", "developer", "settings"] as const
 
 describe("parseHash", () => {
   it("keeps a plain view route", () => {
@@ -34,6 +34,10 @@ describe("parseHash", () => {
     expect(parseHash("#nope", VIEW_IDS)).toEqual({ view: "chat", family: null, tab: null })
     expect(parseHash("", VIEW_IDS)).toEqual({ view: "chat", family: null, tab: null })
     expect(parseHash("#nope/anything", VIEW_IDS).family).toBeNull()
+  })
+
+  it("sends legacy #projects bookmarks to chat (view removed in Phase 2)", () => {
+    expect(parseHash("#projects", VIEW_IDS)).toEqual({ view: "chat", family: null, tab: null })
   })
 
   it("exposes all three tabs with 'all' first", () => {

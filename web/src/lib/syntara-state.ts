@@ -116,7 +116,7 @@ export interface DownloadTask {
   filePath?: string
 }
 
-/* A finished download this workspace has seen before. Kept separately from the
+/* A finished download Syntara has seen before. Kept separately from the
    download list (rows get trashed) so a repeat install can warn the user they
    are about to pull a large file they already fetched once. */
 export interface DownloadedModelRecord {
@@ -134,8 +134,10 @@ export interface AppSettings {
   tray: boolean
   reducedMotion: boolean
   memoryEnabled: boolean
+  /* Kept for agent-mode per-project settings; chat no longer selects
+     projects (Phase 2 removed the workspace concept from the UI). */
   selectedProjectId: string | null
-  /* UI chrome: workspace rail collapsed (logo stays visible) and
+  /* UI chrome: sidebar rail collapsed (logo stays visible) and
      conversation-history panel collapsed. Persisted like other settings. */
   navCollapsed: boolean
   historyCollapsed: boolean
@@ -145,6 +147,9 @@ export interface SyntaraState {
   schema: 1
   conversations: Conversation[]
   memories: MemoryItem[]
+  /* Project records persist for agent mode (per-project permissions);
+     the Projects view itself was removed in Phase 2, so existing rows
+     are preserved but not rendered. */
   projects: ProjectItem[]
   agents: AgentConfig[]
   models: ModelMeta[]

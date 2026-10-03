@@ -1,6 +1,6 @@
 const en: Record<string, string> = {
   "ui.settings": "Settings",
-  "ui.settingsIntro": "Your workspace, model and engine connection.",
+  "ui.settingsIntro": "Your models, settings and engine connection.",
   "ui.general": "General",
   "ui.model": "Model",
   "ui.connection": "Connection",

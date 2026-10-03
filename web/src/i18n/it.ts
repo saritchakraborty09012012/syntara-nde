@@ -1,6 +1,6 @@
 const it: Record<string, string> = {
   "ui.settings": "Impostazioni",
-  "ui.settingsIntro": "Il tuo spazio, il modello e la connessione al motore.",
+  "ui.settingsIntro": "I tuoi modelli, le impostazioni e la connessione al motore.",
   "ui.general": "Generale",
   "ui.model": "Modello",
   "ui.connection": "Connessione",

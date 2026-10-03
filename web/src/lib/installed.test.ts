@@ -150,7 +150,7 @@ describe("installedEntries", () => {
     expect(entries.map((entry) => entry.modelId)).toEqual(["import-9"])
   })
 
-  it("returns nothing for an empty workspace", () => {
+  it("returns nothing for an empty library", () => {
     expect(installedEntries({ models: [], downloads: [], storageFiles: [] })).toEqual([])
     expect(installedEntries({ models: [], downloads: [], storageFiles: null })).toEqual([])
   })
