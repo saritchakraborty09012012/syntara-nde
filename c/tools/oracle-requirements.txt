@@ -1,9 +1,24 @@
-# Deps for the Inkling tiny-model oracle (tools/make_tiny_inkling.py) — the
-# ci.yml `inkling-oracle` job installs exactly this file, and setup-python
-# hashes it for the pip cache key. CPU torch: the oracle is a tiny random-init
-# model, no GPU wanted.
+# Deps for the tiny-model oracles (tools/make_tiny_inkling.py,
+# tools/make_glm_oracle.py, the qwen36/olmoe/dsv41 converters' fixtures). The
+# ci.yml `inkling-oracle` and `efficiency` jobs install exactly this file, and
+# setup-python hashes it for the pip cache key. CPU torch: the oracles are tiny
+# random-init models, no GPU wanted.
+#
+# PINNED, and that is the whole point of this file. These gates compare a C
+# engine against a reference implementation TOKEN-EXACTLY, so a new torch or
+# transformers release is not a routine bump -- it can change a tensor's dtype,
+# a module's init order or the on-disk layout the converter writes, and the
+# engine then reads a checkpoint the reference never described. That is not
+# hypothetical: unpinned `torch` + `transformers>=5.14` resolved to 2.14.1 /
+# 5.18.0 on 2026-10-03, and the inkling gate went from 24/24 to 0/24 while
+# make_tiny_inkling.py, inkling.c and ref_inkling.json were all byte-identical
+# to the run that passed the day before. Same spelling as the sibling pins in
+# requirements-deepseek-v4-tiny.txt and requirements-qwen38-tiny.txt: the
+# +cpu local tag exists in the Linux and Windows wheels of the CPU index, while
+# macOS wheels are CPU-only by construction and carry the plain version.
 --index-url https://download.pytorch.org/whl/cpu
 --extra-index-url https://pypi.org/simple
-torch
-transformers>=5.14   # Inkling architecture support (InklingForCausalLM)
-safetensors
+torch==2.14.0+cpu; sys_platform != "darwin"
+torch==2.14.0; sys_platform == "darwin"
+transformers==5.17.0
+safetensors==0.8.0

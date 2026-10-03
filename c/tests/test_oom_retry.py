@@ -159,6 +159,15 @@ class NonGlmChatRetryTest(unittest.TestCase):
         saved = os.environ.get("Q36_MAXT")
         os.environ["Q36_MAXT"] = "8192"
         try:
+            # resource_plan.physical_cpu_count() (reached through env_for_engine)
+            # shells out on POSIX -- lscpu on Linux, sysctl on macOS -- and it
+            # goes through the SAME subprocess module the fake below replaces.
+            # Unstubbed, the probe therefore ran against _FakeProc and died with
+            # "'_FakeProc' object does not support the context manager protocol"
+            # inside subprocess.run, so both tests below errored on Linux and
+            # macOS and passed on Windows (which takes the ctypes branch). This
+            # suite is about the OOM retry ladder, not core detection: pin the
+            # probe the way test_env_defaults / test_cli_output / test_v4_cli do.
             with mock.patch.object(syntara, "need_model"), \
                  mock.patch.object(syntara, "resolve_model",
                                    lambda *_: type("R", (), {"descriptor": family})()), \
@@ -169,6 +178,7 @@ class NonGlmChatRetryTest(unittest.TestCase):
                  mock.patch.object(syntara, "chat_attached",
                                    lambda *a, **k: attached.append(a)), \
                  mock.patch.object(syntara, "TTY", False), \
+                 mock.patch("resource_plan.physical_cpu_count", return_value=8), \
                  mock.patch.object(syntara.subprocess, "Popen", fake_popen):
                 try:
                     syntara.cmd_chat(self._namespace())

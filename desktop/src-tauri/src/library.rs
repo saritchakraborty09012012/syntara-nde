@@ -16,7 +16,11 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
-use crate::host::{CREATE_NO_WINDOW, resolve_pkg_root, resolve_python};
+// CREATE_NO_WINDOW is NOT imported here: host.rs gates it #[cfg(windows)],
+// so a plain `use` of it would only resolve on Windows and broke `cargo check`
+// on Linux and macOS. The one call site below reaches for it through the crate
+// path inside its own #[cfg(windows)] block, exactly as host.rs does.
+use crate::host::{resolve_pkg_root, resolve_python};
 
 /// `library add` and `inspect` only read headers and rewrite a small JSON
 /// index, but a cold Python start plus antivirus scanning can be slow on
@@ -313,7 +317,7 @@ fn python_command(python: &Path, pkg_root: &Path, argv: &[String]) -> Command {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        command.creation_flags(CREATE_NO_WINDOW);
+        command.creation_flags(crate::host::CREATE_NO_WINDOW);
     }
     command
 }
