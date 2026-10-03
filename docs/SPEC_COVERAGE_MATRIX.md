@@ -53,6 +53,13 @@ row names the concrete files that own the behavior.
 | Attach documents into the prompt (text docs + images) | ✅ | `web/src/App.tsx` (this iteration) |
 | Searchable conversation list, Ctrl/Cmd+K focus | ✅ | `web/src/App.tsx` (this iteration) |
 | Conversation export (JSON, incl. attachments) | ✅ | `web/src/App.tsx` |
+| Local-model picker (installed library only, quant/ctx badges, no API-key fields) | ✅ | `web/src/lib/picker.ts`, `web/src/components/ModelPicker.tsx` (Phase 2a) |
+| Auto-connect to the packaged host (desktop `host_status` / stored base URL) | ✅ | `web/src/lib/host-bridge.ts`, `web/src/App.tsx` (Phase 2a) |
+| Queue while busy (FIFO chips, flush from post-commit effect) | ✅ | `web/src/App.tsx` (Phase 2b) |
+| Bounded retry on 503/502/504/no-HTTP with capped Retry-After; never after partial output | ✅ | `web/src/lib/send.ts`, `web/src/lib/api.ts` `ApiError` (Phase 2b) |
+| Resume stopped answers (Continue into the same assistant message) | ✅ | `web/src/App.tsx` `continueAnswer`, `web/src/lib/send.ts` (Phase 2c) |
+| Throttled stream writes + memoised Markdown; flush on pagehide/hidden/unmount | ✅ | `web/src/lib/send.ts` `createDeltaBuffer`, `web/src/components/Markdown.tsx`, `web/src/App.tsx` (Phase 2c) |
+| Queue-wait surfaced (`x-syntara-queue-wait-ms` emitted by host, shown in run log) | ✅ | `syntara/gateway.py`, `web/src/lib/api.ts` (Phase 2e) |
 | Modalities beyond text/image | 🔴 | Extension point |
 
 ## Memory and persistence
@@ -69,10 +76,10 @@ row names the concrete files that own the behavior.
 
 | Feature | Status | Where |
 | --- | --- | --- |
-| Local projects CRUD | ✅ | `syntara/store.py`, `syntara/client.py` `_Projects`, CLI `project` |
+| Local projects CRUD | ✅ | `syntara/store.py`, `syntara/client.py` `_Projects`, CLI `project` (web Projects view removed in Phase 2; persisted state kept for agent mode) |
 | Offline `.syntara-backup` create/list/verify/restore, selective restore, zip path-traversal guards | ✅ | `syntara/store.py`, CLI `backup`, tests |
 | Settings that never persist credentials | ✅ | `syntara/store.py`, `syntara/tests/test_store.py` |
-| Workspace reset with confirmation | ✅ | `web/src/App.tsx` (Advanced panel) |
+| App-data reset with confirmation ("Reset app data") | ✅ | `web/src/App.tsx` (Advanced panel; renamed from "Reset workspace" in Phase 2) |
 | Remote/cloud database | 🔴 | Deliberately absent (local-first) |
 
 ## Agents
@@ -95,6 +102,7 @@ row names the concrete files that own the behavior.
 | CLI: models/chat/agents/serve/health/profile/project/backup/library/inspect/convert, `--json`, stable exit codes | ✅ | `syntara/cli.py`, tests |
 | CLI engine delegation (`SYNTARA_ENGINE`, no PATH guessing to avoid recursion) | ✅ | `syntara/cli.py` (this iteration), tests |
 | Conversion wrappers: streaming/resumable/cancellable/cached + planner auto-trigger (`syntara convert --plan`) | ✅ | `syntara/conversion.py`, `syntara/cli.py` (this iteration), plan proposal in `c/resource_plan.py`, `--print-argv` in `c/syntara`, tests |
+| CORS exposes `retry-after` + `x-syntara-queue-wait-ms` to granted origins only | ✅ | `syntara/gateway.py` `_cors` (Phase 2e) |
 
 ## Integrations
 

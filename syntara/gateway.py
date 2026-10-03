@@ -649,8 +649,14 @@ class HostGateway:
         # Admission control: capacity/queue policy lives in the scheduler, so
         # a saturated host answers 429 (queue full) or 504 (waited too long)
         # instead of stalling a socket until the client gives up.
+        queued_at = time.monotonic()
         try:
             with self.scheduler.admit():
+                # How long THIS request waited for a generation slot. The web
+                # client reads it as x-syntara-queue-wait-ms and shows it in
+                # the run log; 0 for an immediate admission.
+                wait_ms = int((time.monotonic() - queued_at) * 1000)
+                respond.extra_headers["x-syntara-queue-wait-ms"] = str(wait_ms)
                 self._run_chat(body, respond)
         except QueueFull as exc:
             respond.error(429, str(exc), "rate_limit_error", "queue_full",
@@ -719,6 +725,10 @@ class _Responder:
         self.h = handler
         self.g = gateway
         self.streaming = False
+        # Headers that must accompany a SUCCESS reply on both paths (json and
+        # stream); set by the handler before producing the body, e.g. the
+        # queue-wait measurement.
+        self.extra_headers: dict[str, str] = {}
 
     # -- headers -----------------------------------------------------------
     def _cors(self) -> None:
@@ -730,6 +740,13 @@ class _Responder:
                                "GET, POST, OPTIONS")
             self.h.send_header("Access-Control-Allow-Headers",
                                "content-type, authorization, x-request-id")
+            # Browsers hide non-safelisted response headers from cross-origin
+            # JS unless they are listed here (the desktop UI and the dev
+            # server are both cross-origin to localhost). Without this,
+            # Retry-After and the queue-wait measurement would read as null
+            # in exactly the environments the retry policy is built for.
+            self.h.send_header("Access-Control-Expose-Headers",
+                               "retry-after, x-syntara-queue-wait-ms, x-request-id")
 
     def json(self, status: int, obj: Any, *,
              extra_headers: dict[str, str] | None = None) -> None:
@@ -737,7 +754,7 @@ class _Responder:
         self.h.send_response(status)
         self.h.send_header("Content-Type", "application/json")
         self.h.send_header("Content-Length", str(len(payload)))
-        for key, value in (extra_headers or {}).items():
+        for key, value in {**self.extra_headers, **(extra_headers or {})}.items():
             self.h.send_header(key, value)
         self._cors()
         self.h.end_headers()
@@ -759,6 +776,8 @@ class _Responder:
         self.h.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.h.send_header("Cache-Control", "no-cache")
         self.h.send_header("Connection", "close")
+        for key, value in self.extra_headers.items():
+            self.h.send_header(key, value)
         self._cors()
         self.h.end_headers()
         self.h.close_connection = True

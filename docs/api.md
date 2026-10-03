@@ -85,7 +85,10 @@ API-key authentication.
 Browser access from the Vite development server and Tauri local origins is
 enabled by default. Repeat `--cors-origin https://your-ui.example` to allow
 another exact origin, or use `--cors-origin '*'` only on a trusted local
-network.
+network. Granted origins can also *read* `retry-after` and
+`x-syntara-queue-wait-ms` from responses (exposed via
+`Access-Control-Expose-Headers`; ungranted origins receive neither the CORS
+grant nor the expose list).
 
 The engine owns its KV contexts, so HTTP generation uses a bounded FIFO
 admission queue instead of pretending to run unsafe parallel sequences.

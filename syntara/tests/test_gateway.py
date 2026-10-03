@@ -198,6 +198,30 @@ class GatewayTest(unittest.TestCase):
         self.assertIn("data: [DONE]", text)
         self.assertIn('"usage"', text)
 
+    def test_chat_success_carries_queue_wait_header(self):
+        # The web client reads x-syntara-queue-wait-ms on BOTH paths; an
+        # immediate admission must still produce the header (value 0).
+        gw = self.start_gateway()
+        status, headers, _ = self.post_json(
+            gw, "/v1/chat/completions",
+            {"model": "fake-model",
+             "messages": [{"role": "user", "content": "hi"}],
+             "max_completion_tokens": 8})
+        self.assertEqual(status, 200)
+        wait = headers.get("x-syntara-queue-wait-ms")
+        self.assertIsNotNone(wait, "queue-wait header missing on json path")
+        self.assertGreaterEqual(int(wait), 0)
+
+        status, headers, _ = self.post_json(
+            gw, "/v1/chat/completions",
+            {"model": "fake-model",
+             "messages": [{"role": "user", "content": "hi"}],
+             "stream": True})
+        self.assertEqual(status, 200)
+        wait = headers.get("x-syntara-queue-wait-ms")
+        self.assertIsNotNone(wait, "queue-wait header missing on stream path")
+        self.assertGreaterEqual(int(wait), 0)
+
     def test_chat_wrong_model_is_404(self):
         gw = self.start_gateway()
         status, _, raw = self.post_json(
@@ -389,10 +413,16 @@ class GatewayTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(headers.get("Access-Control-Allow-Origin"),
                          "tauri://localhost")
+        # Cross-origin JS may only read headers that are exposed; the retry
+        # policy and the queue-wait log depend on both.
+        exposed = (headers.get("Access-Control-Expose-Headers") or "").lower()
+        self.assertIn("retry-after", exposed)
+        self.assertIn("x-syntara-queue-wait-ms", exposed)
 
         _, headers, _ = self.get(gw, "/health",
                                  headers={"Origin": "https://evil.example"})
         self.assertIsNone(headers.get("Access-Control-Allow-Origin"))
+        self.assertIsNone(headers.get("Access-Control-Expose-Headers"))
 
     def test_api_key_enforced_when_configured(self):
         gw = HostGateway(_entry(), port=0, runtime_factory=FakeRuntime,
