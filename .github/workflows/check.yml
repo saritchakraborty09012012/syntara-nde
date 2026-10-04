@@ -38,6 +38,33 @@ jobs:
       - name: gate tests (planted violation + allowlist window)
         run: python -m unittest -v syntara.tests.test_name_purge
 
+  desktop-packaging:
+    # Packaging gates for the published installers. These exist because the
+    # release job was green while every installer was broken: the Windows asset
+    # was a dependency's cargo build script (302,592 bytes, printed an $RUSTC
+    # error instead of installing) and no platform shipped an inference
+    # backend at all. Both defects were invisible to every other check here,
+    # because a build script is a file with the right name.
+    #
+    # Cheap on purpose - synthetic fixtures, no downloads - so it runs on every
+    # push rather than only near a release. The checks that need the real
+    # artifacts live in desktop-installers.yml.
+    name: Desktop packaging gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Installer format + backend pin gates
+        run: python -m unittest -v syntara.tests.test_desktop_packaging
+      # The guard against the v1.0.1 regression lives in that suite
+      # (WorkflowGuardTest), where it can assert precisely which lines do the
+      # artifact discovery. A grep here could only match whole lines, and both
+      # the "this used to be ..." comment and the diagnostic that prints the
+      # bundle directories on failure contain the patterns it would look for.
+
   linux:
     name: Linux
     runs-on: ubuntu-latest

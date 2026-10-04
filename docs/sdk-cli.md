@@ -225,10 +225,11 @@ syntara serve --model qwen --port 9000 --context 8192
   the real counters: `capacity`, `active`, `queued`, `admitted`,
   `rejected`, `timed_out`.
 - The runtime backend is the pinned llama.cpp server binary, fetched by
-  `tools/fetch_llama_cpp.ps1` (URL + SHA-256 checked) or located via
-  `SYNTARA_LLAMA_BIN`; without it, `serve --model` exits `1` with install
-  instructions. Requests with `enable_thinking`/`cache_slot` (engine-only
-  keys) are translated before they reach the backend.
+  `tools/fetch_llama_cpp.py` (URL + SHA-256 checked; works on Windows, macOS
+  and Linux, and `tools/fetch_llama_cpp.ps1` is a PowerShell front end for it)
+  or located via `SYNTARA_LLAMA_BIN`; without it, `serve --model` exits `1`
+  with install instructions. Requests with `enable_thinking`/`cache_slot`
+  (engine-only keys) are translated before they reach the backend.
 - `SYNTARA_GATEWAY_KEY` (optional) requires `Authorization: Bearer <key>`
   on every gateway request. Binding beyond `127.0.0.1` is opt-in via
   `--host`; do not expose the gateway to a network unintentionally.
@@ -263,6 +264,8 @@ py -m unittest discover -s syntara/tests -t . -v
 
 `mock_gateway.py` is a mini implementation of the gateway endpoints used by
 the SDK/CLI tests. Tests for the real GGUF backend skip themselves unless the
-pinned binary is installed (`tools/fetch_llama_cpp.ps1`); when installed they
+pinned binary is installed (`tools/fetch_llama_cpp.py`); when installed they
 drive an actual server process against a synthetic tiny model, still without
-any network beyond loopback.
+any network beyond loopback. The installer packaging gates
+(`syntara/tests/test_desktop_packaging.py`) need neither the backend nor a
+network: they run on synthetic fixtures.

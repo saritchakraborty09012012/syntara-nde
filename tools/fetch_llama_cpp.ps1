@@ -3,109 +3,74 @@
     Fetches the pinned llama.cpp server binary for Syntara's GGUF runtime.
 
 .DESCRIPTION
-    Downloads one release archive from the official llama.cpp GitHub releases
-    at a pinned URL, verifies its SHA-256 before touching it, and extracts
-    only the server executable into syntara/runtime/bin/ (gitignored).
+    A thin front end for tools/fetch_llama_cpp.py, kept because the docs point
+    at this path and Windows developers reach for PowerShell first. The logic
+    lives in Python so there is exactly one pin table.
 
-    Windows x64 CPU builds are pinned here. On other platforms this script
-    explains the honest alternative (SYNTARA_LLAMA_BIN) instead of guessing
-    a URL: the runtime adapter reads that environment variable first.
+    That duplication is the point: this script used to carry its own URL and
+    SHA-256 and hard-error on anything but Windows, so the macOS and Linux
+    installers shipped with no inference backend at all - the app installed
+    cleanly and then failed at RuntimeNotAvailable. One implementation covers
+    all three platforms and cannot drift from the release the runtime expects.
 
-    Nothing from llama.cpp is vendored in this repository; see
-    THIRD_PARTY_NOTICES.md for the licence.
+    The fetcher checks the SHA-256 before extracting anything, validates every
+    archive member name, installs the whole flat payload beside the server
+    binary (it is a stub that loads companion shared libraries), and runs
+    `--version` to prove the result actually loads.
+
+.PARAMETER Force
+    Re-download and replace an already-installed backend.
+
+.PARAMETER Dest
+    Also copy the installed server binary to this directory.
+
+.PARAMETER FromArchive
+    Install from a local archive instead of downloading. Still checksum-verified.
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File tools/fetch_llama_cpp.ps1
+
+.EXAMPLE
+    powershell -ExecutionPolicy Bypass -File tools/fetch_llama_cpp.ps1 -Force
+
+.NOTES
+    Nothing from llama.cpp is vendored in this repository; see
+    THIRD_PARTY_NOTICES.md for the licence.
 #>
 [CmdletBinding()]
 param(
-    # Re-download and replace an already-installed binary.
-    [switch]$Force
+    [switch]$Force,
+    [string]$Dest,
+    [string]$FromArchive
 )
 
 $ErrorActionPreference = 'Stop'
 
-$Release   = 'b11321'
-$ArchiveUrl = "https://github.com/ggml-org/llama.cpp/releases/download/$Release/llama-$Release-bin-win-cpu-x64.zip"
-$ArchiveSha256 = '8f8c0c6501b075f52deff59537c05acd57d8621a0a7935f29b7d7c4812892569'
-$ExeName   = 'llama-server.exe'
-$BinName   = if ($IsWindows -or $env:OS -eq 'Windows_NT') { 'llama-server.exe' } else { 'llama-server' }
-
-$RepoRoot = Split-Path -Parent $PSScriptRoot
-$TargetDir = Join-Path $RepoRoot 'syntara\runtime\bin'
-$TargetExe = Join-Path $TargetDir $BinName
-
-if (-not ($IsWindows -or $env:OS -eq 'Windows_NT')) {
-    Write-Error ("this installer pins a Windows x64 build (llama.cpp $Release). " +
-        "On this platform build llama.cpp from source (https://github.com/ggml-org/llama.cpp) " +
-        "and set SYNTARA_LLAMA_BIN to the resulting server binary; " +
-        "syntara/runtime/llama_cpp.py reads that variable before any bundled path.")
+# `py -3` is the launcher on a stock Windows install; `python` is the App
+# Execution Alias stub that Windows 10+ puts on PATH and which fails unless
+# the Store version has been opened once. Probing beats trusting either, and
+# beats a `||` fallback because PowerShell throws on the first miss.
+$python = $null
+foreach ($candidate in @('py', 'python', 'python3')) {
+    if (Get-Command $candidate -ErrorAction SilentlyContinue) {
+        $python = $candidate
+        break
+    }
+}
+if (-not $python) {
+    Write-Error ("no Python interpreter found (tried py, python, python3). " +
+        "Syntara bundles one for the installer build; this script only needs " +
+        "any Python 3.8+ to fetch the backend. Alternatively build llama.cpp " +
+        "from source and set SYNTARA_LLAMA_BIN.")
     exit 1
 }
 
-$DllName   = 'llama-server-impl.dll'   # the stub exe cannot run without it
-if ((Test-Path -LiteralPath $TargetExe) -and
-    (Test-Path -LiteralPath (Join-Path $TargetDir $DllName)) -and
-    -not $Force) {
-    Write-Host "already installed: $TargetExe (use -Force to re-fetch)"
-    exit 0
-}
+$args = @("-3", "$PSScriptRoot\fetch_llama_cpp.py")
+if ($Force)          { $args += '--force' }
+if ($Dest)           { $args += @('--dest', $Dest) }
+if ($FromArchive)    { $args += @('--from-archive', $FromArchive) }
 
-New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null
-$zip = Join-Path ([System.IO.Path]::GetTempPath()) "syntara-llama-$Release.zip"
-try {
-    Write-Host "downloading llama.cpp $Release ..."
-    # Older PowerShell defaults can miss TLS 1.2, which GitHub requires.
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $old = $ProgressPreference
-    $ProgressPreference = 'SilentlyContinue'   # Invoke-WebRequest is very slow otherwise
-    try {
-        Invoke-WebRequest -Uri $ArchiveUrl -OutFile $zip -UseBasicParsing
-    } finally {
-        $ProgressPreference = $old
-    }
-
-    $actual = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($actual -ne $ArchiveSha256) {
-        Write-Error ("archive checksum mismatch - refusing to extract.`n" +
-            "  expected: $ArchiveSha256`n  actual:   $actual`n" +
-            "The download was corrupted or the pinned value is stale; " +
-            "do not proceed until this is explained.")
-        exit 1
-    }
-    Write-Host "checksum ok"
-
-    # The server executable is a small stub that loads companion DLLs
-    # (llama-server-impl.dll, llama-common.dll, ggml-*.dll, libomp.dll, ...),
-    # so the whole flat distribution must be extracted. Entries are validated
-    # before extraction (no absolute paths, no traversal, no subdirectories).
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $archive = [System.IO.Compression.ZipFile]::OpenRead($zip)
-    try {
-        $entries = @($archive.Entries)
-        if (-not ($entries | Where-Object { $_.Name -eq $ExeName })) {
-            Write-Error "archive does not contain $ExeName - pinned URL may be wrong"
-            exit 1
-        }
-        foreach ($entry in $entries) {
-            if ([string]::IsNullOrEmpty($entry.Name)) { continue }  # directory marker
-            # The pinned archive is flat; anything else fails loudly instead
-            # of silently reproducing a layout we have not audited.
-            $rel = $entry.FullName
-            if ($rel -match '[\\/]' -or $rel -match '(^|[\\/])\.\.([\\/]|$)') {
-                Write-Error "archive entry is not a flat file: $rel - refusing to extract"
-                exit 1
-            }
-            $dest = Join-Path $TargetDir $rel
-            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $dest, $true)
-        }
-    } finally {
-        $archive.Dispose()
-    }
-} finally {
-    Remove-Item -LiteralPath $zip -Force -ErrorAction SilentlyContinue
-}
-
-& $TargetExe --version
-Write-Host "installed: $TargetExe"
-Write-Host "try: python -m syntara serve --model <path-to-model.gguf>"
+# Exit code is propagated, not merely logged: the installer workflow runs this
+# under a step that must fail loudly rather than publish without a backend.
+& $python @args
+exit $LASTEXITCODE

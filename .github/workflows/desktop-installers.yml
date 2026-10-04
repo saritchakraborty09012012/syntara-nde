@@ -104,9 +104,10 @@ jobs:
       - name: Tauri CLI
         run: npm install -g @tauri-apps/cli@2.11.5
 
-      # What makes the installer worth downloading: the Python package and an
-      # interpreter, so the installed app runs a model with no internet and no
-      # system Python. --check executes the bundled interpreter against the
+      # What makes the installer worth downloading: the Python package, an
+      # interpreter, and the llama.cpp backend the GGUF runtime drives, so the
+      # installed app runs a model with no internet, no system Python and no
+      # runtime to install. --check executes the bundled interpreter against the
       # bundled package, so a payload that cannot start the host fails here.
       # bash is pinned for every platform: the steps below are POSIX (`${VAR#v}`,
       # `find -not -path`), and windows-latest's default shell is PowerShell,
@@ -115,15 +116,28 @@ jobs:
       - name: Stage bundled runtime
         shell: bash
         run: |
-          # `py -3` exists only on Windows and `python3` only on POSIX, and a
-          # runner has one of them - never both. Probing beats a `||` fallback:
-          # these runners run bash with -e, so the missing first command fails
-          # the step before the fallback is ever reached.
-          if command -v python3 >/dev/null 2>&1; then
-            python3 tools/stage_desktop_resources.py --repo .
+          # `python3` is the real interpreter on the macOS and Linux runners
+          # and `py -3` the launcher on Windows, but Windows also puts an
+          # "App Execution Alias" stub for python3 on PATH which exists and then
+          # prints "Python was not found" when run. `command -v` cannot tell
+          # that apart from a working interpreter, so the probe executes the
+          # candidate instead of merely locating it - and fails with an
+          # actionable message rather than letting the alias's own error be
+          # mistaken for a packaging failure.
+          if python3 -c '' 2>/dev/null; then
+            PY=python3
+          elif py -3 -c '' 2>/dev/null; then
+            PY="py -3"
           else
-            py -3 tools/stage_desktop_resources.py --repo .
+            echo "FAIL: no working Python 3 on this runner (tried python3, py -3)"
+            exit 1
           fi
+          # The pinned backend goes in first, because --require-backend below
+          # fails the build when it is missing. It used to print a NOTE and
+          # publish anyway, so every installer shipped without it: the app
+          # installed cleanly and then died at RuntimeNotAvailable.
+          $PY tools/fetch_llama_cpp.py
+          $PY tools/stage_desktop_resources.py --repo . --require-backend
 
       # Run from `desktop/`, which is where tauri.conf.json's
       # `npm --prefix ../web run build` resolves from (see desktop/README.md:
@@ -143,10 +157,40 @@ jobs:
           # as the release the button downloaded.
           ARGS="$ARGS --config {\"version\":\"${RELEASE_TAG#v}\"}"
           tauri build $ARGS
-          # The name is fixed; find the file whatever the bundler called it.
-          BUILT=$(find src-tauri/target -name "${{ matrix.glob }}" -type f \
-            -not -path "*/nsisx86/*" | head -1)
-          test -n "$BUILT" || { echo "FAIL: no ${{ matrix.bundle }} bundle was produced"; exit 1; }
+
+          # The bundler writes into one predictable place:
+          #   target[/<triple>]/release/bundle/<bundler-kind>/
+          # with --target the triple directory appears, and without it the path
+          # collapses to target/release/....
+          #
+          # This used to be `find src-tauri/target -name "$glob" | head -1`,
+          # which searched the *whole* target tree. On Windows the glob is
+          # `*.exe` and the target tree holds a build script per dependency
+          # crate, so v1.0.1 published one of those: 302,592 bytes of cargo
+          # build script that prints an $RUSTC error and exits instead of
+          # installing. Every job was green and only a user saw it. A fixed
+          # glob is never a safe way to find a build output.
+          if [ -n "${{ matrix.rust_target }}" ]; then
+            PROFILE_DIR="src-tauri/target/${{ matrix.rust_target }}/release"
+          else
+            PROFILE_DIR="src-tauri/target/release"
+          fi
+          BUNDLE_DIR="$PROFILE_DIR/bundle/${{ matrix.bundle }}"
+          if [ ! -d "$BUNDLE_DIR" ]; then
+            echo "FAIL: the bundler wrote no $BUNDLE_DIR"
+            find src-tauri/target -type d -name bundle 2>/dev/null || true
+            exit 1
+          fi
+          mapfile -t FOUND < <(find "$BUNDLE_DIR" -maxdepth 1 -type f -name "${{ matrix.glob }}")
+          # Exactly one. Zero is a bundler that did not run; two means the
+          # bundler started emitting a second candidate and the choice needs a
+          # human. Guessing is what shipped the build script.
+          if [ "${#FOUND[@]}" -ne 1 ]; then
+            echo "FAIL: expected exactly one ${{ matrix.glob }} in $BUNDLE_DIR, found ${#FOUND[@]}:"
+            printf '  %s\n' "${FOUND[@]:-<none>}"
+            exit 1
+          fi
+          BUILT="${FOUND[0]}"
           # The file name IS the release asset name the website links to, so it
           # is set here rather than left to the bundler's versioned naming.
           mkdir -p out
@@ -211,6 +255,40 @@ jobs:
             find artifacts -type f -name "$want" >> installers.txt
           done
           echo "collected:"; cat installers.txt
+
+      # Existence is not validity, and for v1.0.1 existence was exactly the
+      # problem: the Windows asset existed, had the right name, satisfied every
+      # other check in this file, and was a cargo build script. This runs on
+      # the bytes that are about to be published - after the upload/download
+      # round trip, not on the file still sitting in the builder's out/ - and
+      # demands the container magic each format must have. It is the last gate
+      # before the download button starts serving it.
+      - name: Verify each installer is a real installer
+        run: |
+          failed=0
+          check() {
+            kind="$1"; name="$2"
+            # One file per name, so -print -quit rather than a second full walk.
+            path="$(find artifacts -type f -name "$name" -print -quit)"
+            if [ -z "$path" ]; then
+              echo "FAIL: $name is not in the artifacts at all"
+              failed=1; return
+            fi
+            if ! python3 tools/verify_installer.py --kind "$kind" "$path"; then
+              failed=1
+            fi
+          }
+          check nsis     Syntara-Windows-x64-Setup.exe
+          check dmg      Syntara-macOS-arm64.dmg
+          check appimage Syntara-Linux-x86_64.AppImage
+          if [ "$failed" -ne 0 ]; then
+            echo "FAIL: refusing to publish. At least one asset is not the"
+            echo "      installer it claims to be; see the messages above."
+            echo "      If this is a first-time release, re-run the release;"
+            echo "      the previous tag's assets stay downloadable meanwhile."
+            exit 1
+          fi
+          echo "all three assets are real installers"
 
       - name: Wait for the release from release.yml
         run: |

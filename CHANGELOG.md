@@ -5,6 +5,60 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The published Windows installer was not an installer.** v1.0.1 shipped
+  `Syntara-Windows-x64-Setup.exe` as a 302,592-byte Cargo build script belonging
+  to one of the dependencies' crates. Running it printed
+  `Environment variable $RUSTC is not set during execution of build script` and
+  exited; it installed nothing. The release job searched the whole Cargo target
+  tree for `*.exe` and took the first match, and the target tree holds a build
+  script per dependency. Artifact discovery is now confined to the bundler's
+  output directory (`target[/<triple>]/release/bundle/<bundler>/`) and requires
+  exactly one candidate rather than picking whichever the filesystem listed
+  first. **Windows users on v1.0.1 must re-download once a fixed installer is
+  published; nothing on their machine was installed or changed by the bad file.**
+- **No platform shipped an inference backend.** `syntara/runtime/bin` is
+  gitignored, so the staging script found nothing to copy, printed a note, and
+  the installer was published anyway. The installed app started and then failed
+  with `RuntimeNotAvailable: the GGUF runtime binary is not installed`. The
+  pinned llama.cpp `b11321` payload is now fetched during the installer build
+  (`tools/fetch_llama_cpp.py`, SHA-256 verified before extraction) and staging
+  fails the build if the server binary is not staged.
+  `tools/fetch_llama_cpp.ps1` previously hard-errored on anything but Windows,
+  so this affected the macOS and Linux installers too; it is now a PowerShell
+  front end for the cross-platform fetcher, so there is one pin table.
+
+### Added
+
+- **`tools/verify_installer.py`**: refuses to publish an artifact that is not
+  the container it claims to be — NSIS (`0xDEADBEEF` first-header magic plus the
+  `NullsoftInst` signature), UDIF (`koly` trailer), or AppImage (ELF with the
+  `AI` type marker). It runs on the downloaded artifacts in the publish job,
+  after the upload/download round trip, so the gate applies to the bytes users
+  actually fetch. The bare AppImage ELF that a bundler leaves beside the real
+  image is rejected by the type marker even though its size is plausible.
+- **`tools/fetch_llama_cpp.py`**: installs the pinned llama.cpp server on
+  Windows, macOS and Linux. It checks the SHA-256 before extracting anything,
+  validates every archive member name (no absolute paths, traversal, backslash
+  separators or Windows drive letters), installs the whole flat payload beside
+  the server binary — the server is a stub that loads companion shared
+  libraries — and runs `--version` afterwards so a backend that is present but
+  unloadable is caught at build time rather than on a user's machine.
+  `--from-archive` supports an offline rebuild and is still checksum-verified.
+- **`syntara/tests/test_desktop_packaging.py`** (45 tests) plus a
+  `desktop-packaging` job in `check.yml` running on every push: installer format
+  gates, archive-layout and path-traversal handling, checksum refusal, the
+  `--require-backend` staging rule, and assertions that the installer workflow
+  cannot regress to a whole-tree `*.exe` search. Runs on synthetic fixtures, so
+  it needs no downloads.
+
+### Changed
+
+- `tools/stage_desktop_resources.py` gained `--require-backend`, which fails
+  when no server binary is staged. It is off by default: running the app from
+  source does not require a downloaded backend, publishing an installer does.
+
 ## [1.0.1] - 2026-10-03
 
 ### Downloads from the site

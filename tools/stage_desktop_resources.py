@@ -45,6 +45,14 @@ import tempfile
 import urllib.request
 import zipfile
 
+# Read rather than restate the pin the runtime reports, so the version this
+# script tells a packager to install and the version
+# syntara/runtime/llama_cpp.py expects at runtime cannot drift apart. The
+# module's top-level imports are stdlib-only, so this costs nothing at build
+# time and does not drag the runtime's dependencies into the staging run.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+from syntara.runtime.llama_cpp import PINNED_RELEASE  # noqa: E402
+
 # Pinned, not "latest": an installer that suddenly changes interpreter
 # version between two builds of the same tag is not reproducible, and a URL
 # that 404s takes the whole release with it. python.org's embeddable zip is
@@ -175,7 +183,21 @@ def _point_path_file_at_the_app(python_dir: pathlib.Path) -> None:
         pth.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def stage_app(repo: pathlib.Path, out: pathlib.Path) -> None:
+def backend_binary() -> pathlib.Path:
+    """Where discover_binary() expects the server inside a staged bundle.
+
+    Relative to the staged app root, so callers join it under `app`
+    themselves rather than double-counting that prefix.
+
+    Mirrors BIN_NAME in syntara/runtime/llama_cpp.py; the two are asserted
+    against each other by the packaging tests so they cannot drift.
+    """
+    name = "llama-server.exe" if sys.platform == "win32" else "llama-server"
+    return pathlib.Path("syntara") / "runtime" / "bin" / name
+
+
+def stage_app(repo: pathlib.Path, out: pathlib.Path,
+              require_backend: bool = False) -> None:
     """Copy the python package and the flat c/ modules into <out>/app."""
     app = out / "app"
     _reset(app)
@@ -198,12 +220,24 @@ def stage_app(repo: pathlib.Path, out: pathlib.Path) -> None:
     )
 
     # llama.cpp binaries for the host runtime. Untracked by design, so this is
-    # optional - but a bundle that claims to serve models and cannot is worse
-    # than one that says so at build time.
+    # optional for a developer running the app from source - but a *published
+    # installer* must carry them, and that is what --require-backend enforces.
+    # Shipping an installer that installs cleanly and then cannot serve a
+    # model is the failure this replaces: see the "NOTE" this used to print,
+    # which every installer run emitted while still publishing the bundle.
     runtime_bin = repo / "syntara" / "runtime" / "bin"
     if runtime_bin.is_dir():
         shutil.copytree(runtime_bin, app / "syntara" / "runtime" / "bin", dirs_exist_ok=True)
         print(f"[stage] llama.cpp runtime copied from {runtime_bin}")
+    elif require_backend:
+        print(
+            "FAIL: syntara/runtime/bin is absent, so this bundle would install "
+            "without an inference backend.\n"
+            "  Run tools/fetch_llama_cpp.py first (it installs the pinned\n"
+            f"  llama.cpp {PINNED_RELEASE} payload there), or set\n"
+            "  SYNTARA_LLAMA_BIN if you are pointing at your own build."
+        )
+        raise SystemExit(1)
     else:
         print(
             "[stage] NOTE: syntara/runtime/bin is absent (it is not tracked); "
@@ -212,15 +246,40 @@ def stage_app(repo: pathlib.Path, out: pathlib.Path) -> None:
     print(f"[stage] python package staged at {app}")
 
 
-def check(out: pathlib.Path) -> int:
-    """Assert the staged tree can actually run the host."""
-    app = out / "app"
+def interpreters(out: pathlib.Path) -> tuple[pathlib.Path, pathlib.Path]:
+    """The staged interpreter's preferred and fallback paths for this platform.
+
+    Split out of missing_pieces so the presence rule can be tested without
+    staging a real interpreter.
+    """
     root = out / "python"
+    if sys.platform == "win32":
+        return root / "pythonw.exe", root / "python.exe"
+    return root / "bin" / "python3", root / "python3"
+
+
+def missing_pieces(out: pathlib.Path, require_backend: bool = False) -> list[str]:
+    """Every file the staged tree must contain before it may be bundled.
+
+    Split out of check() because the rules are the contract the installer
+    build depends on, and a rule that can only be exercised by staging a whole
+    bundle is a rule nobody tests.
+    """
+    app = out / "app"
     missing = [name for name in REQUIRED_PACKAGE_FILES if not (app / name).is_file()]
-    where = root / ("pythonw.exe" if sys.platform == "win32" else "bin/python3")
-    fallback = root / ("python.exe" if sys.platform == "win32" else "python3")
+    where, fallback = interpreters(out)
     if not (where.is_file() or fallback.is_file()):
         missing.append(str(where.relative_to(out)))
+    if require_backend and not (app / backend_binary()).is_file():
+        missing.append(str(backend_binary()))
+    return missing
+
+
+def check(out: pathlib.Path, require_backend: bool = False) -> int:
+    """Assert the staged tree can actually run the host."""
+    app = out / "app"
+    missing = missing_pieces(out, require_backend)
+    where, fallback = interpreters(out)
     if not missing:
         # Presence is not enough: run the bundled interpreter against the
         # bundled package. This is the same command the desktop host builds
@@ -256,6 +315,10 @@ def main(argv: list[str]) -> int:
                         help="resources directory (default: <repo>/desktop/src-tauri/resources)")
     parser.add_argument("--skip-python", action="store_true",
                         help="do not download the interpreter (offline dev runs)")
+    parser.add_argument("--require-backend", action="store_true",
+                        help="fail unless a llama.cpp server binary is staged; "
+                             "use this when the tree is going to be published, "
+                             "not when running the app from source")
     parser.add_argument("--check", action="store_true",
                         help="only verify an already staged tree")
     args = parser.parse_args(argv[1:])
@@ -265,11 +328,11 @@ def main(argv: list[str]) -> int:
     out.mkdir(parents=True, exist_ok=True)
 
     if args.check:
-        return check(out)
-    stage_app(repo, out)
+        return check(out, require_backend=args.require_backend)
+    stage_app(repo, out, require_backend=args.require_backend)
     if not args.skip_python:
         stage_python(out)
-    return check(out)
+    return check(out, require_backend=args.require_backend)
 
 
 if __name__ == "__main__":
