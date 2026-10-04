@@ -105,6 +105,33 @@ def download(url: str, destination: pathlib.Path) -> None:
         shutil.copyfileobj(response, handle)
 
 
+def _without_archive_root(tf: tarfile.TarFile) -> list[tarfile.TarInfo]:
+    """Drop the archive's own top-level directory from every member.
+
+    python-build-standalone ships a `python/` root (the Windows zip is flat,
+    which is why only this branch ever needed this). `extractall` does not
+    strip it, so unpacking into `<out>/python` produced
+    `<out>/python/python/bin/python3` while `resolve_python` and `check()` both
+    look one level down - every macOS and Linux staging run died on "the staged
+    desktop resources are incomplete". TarFile only grew `strip_components` in
+    3.14 and this runs on whatever interpreter the runner has, so the prefix is
+    removed from the members here instead.
+    """
+    members: list[tarfile.TarInfo] = []
+    for member in tf.getmembers():
+        root, _, name = member.name.partition("/")
+        if not name:
+            continue  # the root directory entry itself
+        member.name = name
+        # A hardlink's target is archive-root relative, so it needs the same
+        # prefix removed; a symlink's target is relative to its own directory,
+        # which stripping the root does not change.
+        if (member.issym() or member.islnk()) and member.linkname.startswith(f"{root}/"):
+            member.linkname = member.linkname[len(root) + 1:]
+        members.append(member)
+    return members
+
+
 def stage_python(out: pathlib.Path) -> None:
     """Extract the interpreter into <out>/python.
 
@@ -124,7 +151,7 @@ def stage_python(out: pathlib.Path) -> None:
             _point_path_file_at_the_app(target)
         else:
             with tarfile.open(archive) as tf:
-                tf.extractall(target, filter="data")
+                tf.extractall(target, members=_without_archive_root(tf), filter="data")
     print(f"[stage] interpreter staged at {target}")
 
 
