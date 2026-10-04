@@ -156,7 +156,14 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: installer-${{ matrix.name }}
-          path: out/*
+          # The bundling step above runs with working-directory: desktop, so the
+          # asset it copies into out/ lands in desktop/out/. Uploading `out/*`
+          # from the repository root matched nothing, and upload-artifact only
+          # warns on an empty glob: three empty artifacts were uploaded, the
+          # step reported success, and the publish job then failed with no files
+          # to upload. if-no-files-found: error makes that loud at the source.
+          path: desktop/out/*
+          if-no-files-found: error
 
   release:
     name: Publish installers to the release
@@ -183,26 +190,25 @@ jobs:
       # job status alone.
       - name: Collect the built installers
         run: |
-          # merge-multiple keeps each artifact's internal layout, so the files
-          # can land under a subdirectory. Collecting them with find and uploading
-          # the collected paths explicitly means the shape of that directory can
-          # never turn the upload glob into a directory argument.
-          find artifacts -type f -print0 | xargs -0 -r ls -l
-          find artifacts -type f -printf '%p\n' | sort > installers.txt
-          find artifacts -type f -printf '%f\n' | sort > names.txt
-          count=$(wc -l < installers.txt)
-          if [ "$count" -ne 3 ]; then
-            echo "FAIL: expected 3 installer files, found $count"
+          # merge-multiple keeps whatever layout each artifact had, so a file can
+          # land in a subdirectory and a bare "artifacts/*" glob would hand gh a
+          # directory. What actually matters is that the three asset names the
+          # website links to exist somewhere under artifacts/, so they are
+          # located by name and uploaded by explicit path, at whatever depth.
+          find artifacts -type f -printf '%f\n' | sort -u > names.txt
+          missing=""
+          for want in $EXPECTED_ASSETS; do
+            grep -qFx "$want" names.txt || missing="$missing $want"
+          done
+          if [ -n "$missing" ]; then
+            echo "FAIL: no built file is named:$missing"
             echo "--- tree ---"; find artifacts | sort
-            echo "--- wanted asset names ---"; echo "$EXPECTED_ASSETS" | tr ' ' '\n'
+            echo "--- file names present ---"; cat names.txt
             exit 1
           fi
+          : > installers.txt
           for want in $EXPECTED_ASSETS; do
-            if ! grep -qFx "$want" names.txt; then
-              echo "FAIL: no built file is named $want"
-              cat names.txt
-              exit 1
-            fi
+            find artifacts -type f -name "$want" >> installers.txt
           done
           echo "collected:"; cat installers.txt
 

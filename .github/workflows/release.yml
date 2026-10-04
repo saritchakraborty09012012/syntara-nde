@@ -208,12 +208,10 @@ jobs:
             test -x $e${{ matrix.ext }} || { echo "FAIL: $e missing from archive"; ls -la; exit 1; }
           done
           # The GLM engine's real name is per-platform (Makefile ENGINE_REAL) and
-          # is asserted by name a few lines up: syntara.exe on Windows, plain glm
-          # on POSIX. The dispatch check is told that name instead of probing for
-          # it, because the archive ALSO contains `syntara` -- the extensionless
-          # Python launcher (c/syntara). Any exists()/isfile() scan over the
-          # candidate names therefore matches the launcher first, and a correct
-          # archive gets reported as misrouting every GLM request to glm/syntara.
+          # the step above asserts it by name: syntara.exe on Windows, plain glm
+          # on POSIX. The dispatch check is told that name rather than finding it,
+          # because the archive also ships `syntara` - the extensionless Python
+          # launcher - which any scan of the candidate names matches first.
           GLM_ENGINE=$([ "${{ matrix.ext }}" = ".exe" ] && echo syntara || echo glm)
           # Kimi K3 needs tokenizer.json synthesized from tiktoken.model; without this
           # script in the archive the engine ships but cannot be driven by syntara chat.
@@ -269,20 +267,22 @@ jobs:
                   engine = os.path.basename(cli.engine_for(d))
                   arch = cli.model_arch(d)
             if family.id == "glm":
-              # Not probed: the archive ships the `syntara` launcher next to the
-              # engine, so a filesystem scan cannot tell the two apart. The build
-              # step above already asserted the engine by name (test -x glm /
-              # test -x syntara.exe); this asserts the launcher dispatches to it.
+              # Told, not probed. The archive also contains `syntara`, the
+              # extensionless Python launcher, so an exists()/isfile() scan over
+              # the candidate names matches the launcher first and a correct
+              # POSIX archive is reported as "-> glm/glm, expected glm/syntara".
+              # matrix.ext is the same signal the build step used to copy the
+              # engine and the step above used to assert it with `test -x`.
               expected_file = os.environ["SYNTARA_GLM_ENGINE"] + exe
             else:
               expected_file = family.engine_artifact + exe
             if not os.path.exists(expected_file):
-              bad.append("%s: expected artifact %s is absent" %
-                         (label, expected_file))
+                bad.append("%s: expected artifact %s is absent" %
+                          (label, expected_file))
             elif arch != family.id or engine != expected_file:
-              bad.append("%s (%s) -> %s/%s, expected %s/%s" %
-                         (label, model_type, arch, engine,
-                          family.id, expected_file))
+                bad.append("%s (%s) -> %s/%s, expected %s/%s" %
+                          (label, model_type, engine,
+                           family.id, expected_file))
           if bad:
               sys.exit("FAIL: packaged launcher misroutes:\n  " + "\n  ".join(bad))
           print("OK: every engine is packaged AND syntara dispatches to it:", " ".join(expect))
