@@ -10,6 +10,12 @@ permissions:
 jobs:
   build:
     strategy:
+      # One platform's packaging failure must not cancel the others. The v1.0.1
+      # tag build lost the linux leg to "The operation was canceled" a minute
+      # after the Windows zip went red, so two independent problems surfaced as
+      # one and the linux log was never finished. Every leg is worth building on
+      # its own: a cancelled leg is a platform nobody has a build for.
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
@@ -110,6 +116,18 @@ jobs:
         run: |
           TAG=${GITHUB_REF#refs/tags/}
           mkdir -p dist
+          # The launcher goes in FIRST, before anything named syntara.exe exists
+          # in dist/, and that order is load-bearing on Windows. MSYS2 resolves a
+          # bare path the way it resolves a command name, extensions included, so
+          # once dist/syntara.exe is there, `cp c/syntara dist/` redirects its own
+          # DESTINATION onto that .exe: dist/syntara is never created, and the
+          # engine is overwritten by the launcher text. The v1.0.1 tag build ran
+          # the copy the other way round, so its archive shipped no launcher at
+          # all -- 7-Zip exited 1 with "syntara : The system cannot find the file
+          # specified" naming a file that was genuinely absent -- while
+          # `test -f dist/syntara` passed the whole time on the strength of
+          # syntara.exe. Stage the name that has no .exe yet, then the .exe.
+          cp c/syntara dist/
           # The engine goes in under its per-platform PLAIN name (Makefile
           # ENGINE_REAL): `syntara.exe` on Windows, `glm` on POSIX. The launcher
           # locates the GLM engine by looking for "syntara"/"syntara.exe" (then
@@ -147,11 +165,11 @@ jobs:
           # run it -- the second half of #720.
           mkdir -p dist/tools
           cp c/tools/k3_tokenizer.py dist/tools/
-          cp c/syntara dist/
           # Windows has nothing to click otherwise: `syntara` is an extensionless
           # Python script, and the .exe files are engines that exit at once
           # without a model (#1241). syntara.cmd is both the double-click entry
           # point and what `syntara chat ...` resolves to in cmd/PowerShell.
+          # (Its own name, so unlike the launcher above it needs no ordering.)
           if [ "${{ matrix.ext }}" = ".exe" ]; then cp c/syntara.cmd dist/; fi
           # I file Python non sono piu' elencati qui. Erano sette, scelti a mano,
           # con i commenti che spiegavano quale importava quale: un inseguimento
@@ -170,20 +188,61 @@ jobs:
           # here is reached through it. Assert it was staged before zipping, so a
           # missing launcher is a packaging error with a name, not a 7-Zip
           # complaint about a file 7-Zip was never told to expect.
-          test -f dist/syntara || { echo "FAIL: dist/syntara was not staged"; ls -la dist; exit 1; }
+          # `test -f dist/syntara` is NOT this check. On MSYS2/Windows a bare
+          # name resolves the way a command name does, extensions included, so
+          # `syntara` is satisfied by the `syntara.exe` engine sitting beside it
+          # -- dist/ holds both, one step apart -- and the guard passes for a
+          # launcher that was never staged. A check that cannot fail is not a
+          # check. find() compares the entry's real name against the pattern, so
+          # only the extensionless launcher satisfies it.
+          find dist -maxdepth 1 -type f -name syntara -print -quit | grep -q . \
+            || { echo "FAIL: dist/syntara was not staged"; ls -la dist; exit 1; }
           cd dist
+          # The archive is written INTO the directory it archives, so a copy left
+          # by an earlier attempt is picked up by the very enumeration that builds
+          # the next one -- and 7-Zip, which skips the archive it is writing,
+          # reports it as a scan warning and exits 1. Take the old copy out first.
+          rm -f "syntara-${TAG}-${{ matrix.name }}.zip" "syntara-${TAG}-${{ matrix.name }}.tar.gz"
           if [ "${{ matrix.ext }}" = ".exe" ]; then
-            # `syntara` is the one archive entry with no extension, and it is the
-            # launcher every other file in here is reached through: the published
-            # Windows zip came out of 7z without it, and the archive check failed
-            # later with a FileNotFoundError from inside importlib, which named the
-            # symptom and not the packaging. Name it explicitly instead of hoping
-            # the glob picks it up -- `grep -vx` takes the copy the glob already
-            # made out of the list first, because naming a file twice is a
-            # hard 7z error ("Duplicate filename on disk"), not a no-op.
-            7z a "syntara-${TAG}-${{ matrix.name }}.zip" $(ls -A | grep -vx syntara) syntara
+            # `./*` and never a list rebuilt from `ls`. The extensionless launcher
+            # is an ordinary match for `*` -- it lacks an extension, not a name --
+            # and 7-Zip descends into tools/ and web/ on its own, so there is
+            # nothing left for the shell to enumerate.
+            #
+            # What this replaces was `$(ls -A | grep -vx syntara) syntara`: the
+            # same directory listing re-derived outside 7-Zip, minus one name,
+            # plus that name again as a bare argument. The v1.0.1 tag build died
+            # on precisely that -- 7-Zip could not resolve the bare `syntara` and
+            # exited 1 with "Scan WARNINGS: 1 / syntara : The system cannot find
+            # the file specified" for a file `test -f` had just confirmed was
+            # sitting in the directory being archived. A name handed to 7-Zip is a
+            # resolution 7-Zip has to get right, from a list the shell rebuilt by
+            # hand; a glob is not.
+            7z a "syntara-${TAG}-${{ matrix.name }}.zip" ./*
           else
+            # `*` and not `./*`: GNU tar stores a member under the name it was
+            # given, so `./*` would publish the launcher as "./syntara" and every
+            # other entry likewise, changing the archive that already shipped.
             tar czf "syntara-${TAG}-${{ matrix.name }}.tar.gz" *
+          fi
+          # What ships is the archive, so ask the archive. 7-Zip's exit code is
+          # its opinion of a scan it ran, and that opinion is what failed the last
+          # tag build over a file that was present. Whether the launcher is a
+          # member is not an opinion, and it is the only question here that matters:
+          # every other entry is reached through that one. Anchored, so neither
+          # syntara.exe nor syntara.cmd can stand in for the launcher.
+          if [ "${{ matrix.ext }}" = ".exe" ]; then
+            7z l "syntara-${TAG}-${{ matrix.name }}.zip" | grep -qE '[[:space:]]syntara$' || {
+              echo "FAIL: the zip was built without the extensionless launcher"
+              7z l "syntara-${TAG}-${{ matrix.name }}.zip"
+              exit 1
+            }
+          else
+            tar tzf "syntara-${TAG}-${{ matrix.name }}.tar.gz" | grep -qx 'syntara' || {
+              echo "FAIL: the tarball was built without the extensionless launcher"
+              tar tzf "syntara-${TAG}-${{ matrix.name }}.tar.gz"
+              exit 1
+            }
           fi
 
       # Unpack what we are about to publish, in a clean directory, and prove `syntara` finds the
@@ -203,7 +262,11 @@ jobs:
           # name, and when it was missing the failure was a FileNotFoundError
           # from inside importlib, which says nothing about packaging. Say it
           # here instead, with the archive listing next to it.
-          test -f syntara || {
+          #
+          # find(), not `test -f`: this directory holds syntara AND syntara.exe,
+          # and on MSYS2/Windows the bare name is satisfied by the .exe, so the
+          # check this replaces could not fail on the platform that needs it.
+          find . -maxdepth 1 -type f -name syntara -print -quit | grep -q . || {
             echo "FAIL: the unpacked archive has no extensionless launcher"
             ls -la
             exit 1
