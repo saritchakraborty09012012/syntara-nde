@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#020409" />
+    <title>FAQ — Syntara Questions Answered | NDe</title>
+    <meta
+      name="description"
+      content="Answers to common Syntara questions: is it free, do I need an account, which model formats are supported, do I need a GPU, where models are stored and how the local API, SDK and integrations work."
+    />
+    <meta
+      name="keywords"
+      content="Syntara FAQ, local AI FAQ, NDe, NoirDemons, GGUF, local AI privacy, OpenAI compatible local API, Python SDK, n8n local AI, offline AI"
+    />
+    <meta name="author" content="NDe" />
+    <link rel="canonical" href="https://syntara-nde.vercel.app/faq.html" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="Syntara by NDe" />
+    <meta property="og:title" content="FAQ — Syntara Questions Answered | NDe" />
+    <meta
+      property="og:description"
+      content="Free and open source? No account? Needs a GPU? Where are models stored? Answers to the questions people actually ask about Syntara."
+    />
+    <meta property="og:image" content="syntara-suit.png" />
+    <meta property="og:url" content="https://syntara-nde.vercel.app/faq.html" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="FAQ — Syntara Questions Answered | NDe" />
+    <meta
+      name="twitter:description"
+      content="Free and open source? No account? Needs a GPU? Where are models stored? Answers to the questions people actually ask about Syntara."
+    />
+    <meta name="twitter:image" content="syntara-suit.png" />
+    <link rel="icon" type="image/png" href="syntara-logo.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Chakra+Petch:wght@400;500;600;700&family=Share+Tech+Mono&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      // Apply saved theme before first paint (default: dark).
+      (function () {
+        try {
+          var t = localStorage.getItem("syntara-theme");
+          document.documentElement.dataset.theme = t === "light" ? "light" : "dark";
+        } catch (e) {
+          document.documentElement.dataset.theme = "dark";
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <noscript>
+      <main>
+        <h1>Syntara FAQ</h1>
+        <p>Answers to the questions people actually ask about Syntara.</p>
+
+        <h2>Basics</h2>
+        <p>
+          <b>Is Syntara free to use?</b> Yes. Syntara is free and open source. There is no
+          account, subscription or signup required to run local models.
+        </p>
+        <p>
+          <b>Do I need an account to use Syntara?</b> No. Syntara has no login, no signup, no
+          email verification and no activation step. Open the app, pick a model and start
+          generating.
+        </p>
+
+        <h2>Privacy</h2>
+        <p>
+          <b>Does Syntara send my data to the cloud?</b> No. Inference runs on your machine
+          against local model files. Chats, projects, memory and settings are stored locally
+          and remain under your control.
+        </p>
+        <p>
+          <b>Does Syntara work offline?</b> Yes. Once the application and the model files are
+          on disk, model loading, chat, agent runs, the local API and local configuration all
+          work without an internet connection.
+        </p>
+
+        <h2>Models</h2>
+        <p>
+          <b>Which model formats are supported?</b> Syntara supports GGUF directly, Hugging
+          Face repositories and safetensors-based checkpoints (with architecture detection and
+          conversion where needed), plus adapter-driven additional formats.
+        </p>
+        <p>
+          <b>Can I bring a model I already have?</b> Yes. Import an existing local file or
+          folder instead of downloading it again. Syntara inspects the file, reads its metadata
+          and reports whether it can run before you commit to it.
+        </p>
+        <p>
+          <b>Will Syntara convert or re-quantize my model?</b> Only when you ask it to.
+          Conversion and quantization are explicit operations, and the original files are
+          preserved. Syntara never silently replaces the model you downloaded.
+        </p>
+        <p>
+          <b>Where are my models stored?</b> In a user-visible local models directory you can
+          inspect, back up and manage from the Model Hub. Syntara never silently deletes a
+          model.
+        </p>
+        <p>
+          <b>How do I remove a model?</b> Use the Model Hub, which shows the model name, size
+          and location before you confirm. Removing a model is always an explicit action with a
+          confirmation step.
+        </p>
+
+        <h2>Hardware</h2>
+        <p>
+          <b>Do I need a GPU?</b> No. A CPU with AVX2 and enough RAM is the baseline. NVIDIA
+          CUDA, Apple Metal, Vulkan and ROCm backends are used when detected; Syntara falls back
+          to CPU automatically.
+        </p>
+        <p>
+          <b>How large should my model file be?</b> Model size depends on parameters and
+          quantization. Smaller quantized models can run in 8 GB RAM; larger or higher-quality
+          models benefit from 16 GB+ and a discrete GPU.
+        </p>
+        <p>
+          <b>What is the difference between RAM and VRAM?</b> RAM holds the model weights for
+          CPU execution; VRAM holds them for GPU execution. A discrete GPU usually gives much
+          higher token rates, but a well-chosen quantized model on CPU can still be perfectly
+          usable.
+        </p>
+        <p>
+          <b>Why is generation slow on my machine?</b> Speed depends on the model size, the
+          quantization, how much of the model fits in memory and which backend was selected.
+        </p>
+
+        <h2>Features</h2>
+        <p>
+          <b>What is the difference between Chat and Agents?</b> Chat is a conversational
+          interface to a local model. Agents are permission-gated automation loops that can use
+          files, terminal, Git, tests and project context to complete tasks.
+        </p>
+        <p>
+          <b>Can agents run commands on my machine?</b> Agents can propose file writes and
+          process runs, but those actions are permission-gated. File writes and command
+          execution always ask first, and any standing grant is stored per project so you can
+          revoke it.
+        </p>
+        <p>
+          <b>Can I back up my chats and projects?</b> Yes. Syntara can export chats, memories,
+          projects, settings, agent configuration and model metadata into a portable local backup
+          you control.
+        </p>
+        <p>
+          <b>Does Syntara support projects and persistent memory?</b> Yes. Projects keep their
+          own context and configuration, and local memory persists across sessions on your
+          device.
+        </p>
+
+        <h2>Developers</h2>
+        <p>
+          <b>How do I expose Syntara to other tools?</b> Start the local API server
+          (OpenAI-compatible, bound to localhost by default) and point the Python SDK, n8n, an
+          IDE or any HTTP client at it.
+        </p>
+        <p>
+          <b>Is the local API safe to expose to my network?</b> Not by default, and it should
+          stay that way. Syntara binds to localhost. If you deliberately bind beyond localhost,
+          you are exposing an unauthenticated inference server to that network, so only do it on
+          a network you trust.
+        </p>
+        <p>
+          <b>Which integrations are supported?</b> An OpenAI-compatible local API, a Python SDK,
+          a developer CLI, plus n8n and IDE integration surfaces.
+        </p>
+        <p>
+          <b>How do I report a bug or request a model family?</b> Use the repository issue
+          tracker.
+        </p>
+
+        <p>
+          Enable JavaScript for the full experience, or read the documentation in the repository.
+        </p>
+      </main>
+    </noscript>
+    <div id="root"></div>
+    <script type="module" src="/src/entries/faq.tsx"></script>
+  </body>
+</html>

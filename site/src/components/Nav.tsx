@@ -1,15 +1,15 @@
 import { useEffect, useState } from "react"
 import { Container } from "./ui"
 
-const LINKS: Array<{ href: string; label: string }> = [
-  { href: "#why", label: "Why" },
-  { href: "#install", label: "Install" },
-  { href: "#models", label: "Models" },
-  { href: "#agents", label: "Agents" },
-  { href: "#developers", label: "Developers" },
-  { href: "#open", label: "Open source" },
-  { href: "#faq", label: "FAQ" },
-  { href: "#roadmap", label: "Roadmap" },
+const LINKS: Array<{ id: string; label: string }> = [
+  { id: "why", label: "Why" },
+  { id: "install", label: "Install" },
+  { id: "models", label: "Models" },
+  { id: "agents", label: "Agents" },
+  { id: "developers", label: "Developers" },
+  { id: "open", label: "Open source" },
+  { id: "faq", label: "FAQ" },
+  { id: "roadmap", label: "Roadmap" },
 ]
 
 function readTheme(): "dark" | "light" {
@@ -17,7 +17,11 @@ function readTheme(): "dark" | "light" {
   return document.documentElement.dataset.theme === "light" ? "light" : "dark"
 }
 
-export function Nav() {
+/**
+ * `home` prefixes every in-page anchor so the same header works on the landing
+ * page (empty) and on the standalone pages such as /about.html ("./").
+ */
+export function Nav({ home = "" }: { home?: string }) {
   const [theme, setTheme] = useState<"dark" | "light">(readTheme)
 
   useEffect(() => {
@@ -32,7 +36,7 @@ export function Nav() {
   return (
     <header className="sticky top-0 z-50 border-b border-line bg-void/80 backdrop-blur-xl">
       <Container className="flex h-[72px] items-center gap-8">
-        <a href="#top" className="flex shrink-0 items-center gap-3">
+        <a href={`${home}#top`} className="flex shrink-0 items-center gap-3">
           <img
             src="syntara-logo.png"
             alt="Syntara"
@@ -50,7 +54,7 @@ export function Nav() {
 
         <nav className="hidden flex-1 items-center justify-center gap-6 lg:flex" aria-label="Primary">
           {LINKS.map((link) => (
-            <a key={link.href} href={link.href} className="nav-link">
+            <a key={link.id} href={`${home}#${link.id}`} className="nav-link">
               {link.label}
             </a>
           ))}
@@ -74,10 +78,10 @@ export function Nav() {
           >
             GitHub
           </a>
-          <a className="hud-btn hud-btn-ghost cut-sm !px-3" href="app/">
+          <a className="hud-btn hud-btn-ghost cut-sm !px-3" href={`${home}app/`}>
             Try Online <span aria-hidden="true">↗</span>
           </a>
-          <a className="hud-btn hud-btn-primary cut-sm !px-3" href="#download">
+          <a className="hud-btn hud-btn-primary cut-sm !px-3" href={`${home}#download`}>
             Download
           </a>
         </div>

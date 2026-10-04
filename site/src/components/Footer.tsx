@@ -1,30 +1,42 @@
 import { Container } from "./ui"
 
-const LINKS: Array<{ label: string; href: string }> = [
-  { label: "Download", href: "#download" },
-  { label: "Install", href: "#install" },
-  { label: "Why Syntara", href: "#why" },
-  { label: "Models", href: "#models" },
-  { label: "Agents", href: "#agents" },
-  { label: "Developers", href: "#developers" },
-  { label: "Requirements", href: "#requirements" },
-  { label: "Open source", href: "#open" },
-  { label: "FAQ", href: "#faq" },
-  { label: "Roadmap", href: "#roadmap" },
+const REPO = "https://github.com/saritchakraborty09012012/syntara-nde"
+
+const LINKS: Array<{ label: string; id: string }> = [
+  { label: "Download", id: "download" },
+  { label: "Install", id: "install" },
+  { label: "Why Syntara", id: "why" },
+  { label: "Models", id: "models" },
+  { label: "Agents", id: "agents" },
+  { label: "Developers", id: "developers" },
+  { label: "Requirements", id: "requirements" },
+  { label: "Open source", id: "open" },
+  { label: "FAQ", id: "faq" },
+  { label: "Roadmap", id: "roadmap" },
+]
+
+const PAGES: Array<{ label: string; href: string }> = [
+  { label: "About Syntara", href: "about.html" },
+  { label: "Privacy Policy", href: "privacy.html" },
+  { label: "FAQ", href: "faq.html" },
 ]
 
 const OFFSITE: Array<{ label: string; href: string }> = [
-  { label: "GitHub", href: "https://github.com/saritchakraborty09012012/syntara-nde" },
-  { label: "Releases", href: "https://github.com/saritchakraborty09012012/syntara-nde/releases" },
-  { label: "Docs", href: "https://github.com/saritchakraborty09012012/syntara-nde/tree/main/docs" },
-  { label: "Issues", href: "https://github.com/saritchakraborty09012012/syntara-nde/issues" },
-  { label: "Contributing", href: "https://github.com/saritchakraborty09012012/syntara-nde/blob/main/CONTRIBUTING.md" },
+  { label: "GitHub", href: REPO },
+  { label: "Releases", href: `${REPO}/releases` },
+  { label: "Docs", href: `${REPO}/tree/main/docs` },
+  { label: "Issues", href: `${REPO}/issues` },
+  { label: "Contributing", href: `${REPO}/blob/main/CONTRIBUTING.md` },
 ]
 
-export function Footer() {
+/**
+ * `home` prefixes every in-page anchor so the same footer works on the landing
+ * page (empty) and on the standalone pages such as /about.html ("./").
+ */
+export function Footer({ home = "" }: { home?: string }) {
   return (
     <footer className="relative border-t border-line bg-panel/60">
-      <Container className="grid gap-10 py-14 md:grid-cols-[1.4fr_1fr_1fr]">
+      <Container className="grid gap-10 py-14 md:grid-cols-2 lg:grid-cols-[1.4fr_1fr_1fr_1fr]">
         <div>
           <div className="flex items-center gap-3">
             <img src="syntara-logo.png" alt="" className="h-9 w-9 object-contain" width={64} height={64} />
@@ -45,8 +57,21 @@ export function Footer() {
           <div className="kicker mb-4">On this page</div>
           <ul className="grid grid-cols-2 gap-2">
             {LINKS.map((link) => (
+              <li key={link.id}>
+                <a className="nav-link" href={`${home}#${link.id}`}>
+                  {link.label}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+
+        <nav aria-label="Syntara pages">
+          <div className="kicker mb-4">Syntara</div>
+          <ul className="grid gap-2">
+            {PAGES.map((link) => (
               <li key={link.href}>
-                <a className="nav-link" href={link.href}>
+                <a className="nav-link" href={`${home}${link.href}`}>
                   {link.label}
                 </a>
               </li>
@@ -71,17 +96,25 @@ export function Footer() {
       <div className="border-t border-line">
         <Container className="flex flex-wrap items-center justify-between gap-3 py-5 font-mono text-[11px] tracking-[0.16em] text-muted uppercase">
           <span>© Syntara · Open source local AI</span>
-          <span className="text-right">
-            Built by{" "}
-            <a
-              className="text-cyan hover:text-ink"
-              href="https://github.com/saritchakraborty09012012"
-              target="_blank"
-              rel="noreferrer"
-              title="NDe"
-            >
-              NDe
+          <span className="flex flex-wrap gap-x-4 gap-y-1">
+            <a className="hover:text-cyan" href={`${home}privacy.html`}>
+              Privacy
             </a>
+            <a className="hover:text-cyan" href={`${home}about.html`}>
+              About
+            </a>
+            <span>
+              Built by{" "}
+              <a
+                className="text-cyan hover:text-ink"
+                href="https://github.com/saritchakraborty09012012"
+                target="_blank"
+                rel="noreferrer"
+                title="NDe"
+              >
+                NDe
+              </a>
+            </span>
           </span>
         </Container>
       </div>

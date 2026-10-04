@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#020409" />
+    <title>About Syntara — Universal Local AI Platform | NDe</title>
+    <meta
+      name="description"
+      content="Syntara by NDe (NoirDemons) is an open-source local-AI platform: model discovery, hardware-aware execution, Chat, Agents and developer APIs. Learn what Syntara is, what it does and who builds it."
+    />
+    <meta
+      name="keywords"
+      content="About Syntara, NDe, NoDe, NoirDemons, Syntara, local AI, local AI platform, open source AI, run models locally, MIT license"
+    />
+    <meta name="author" content="NDe" />
+    <link rel="canonical" href="https://syntara-nde.vercel.app/about.html" />
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="Syntara by NDe" />
+    <meta property="og:title" content="About Syntara — Universal Local AI Platform | NDe" />
+    <meta
+      property="og:description"
+      content="Syntara is the universal local-AI layer by NDe: your models, your machine, your control. Open source under the MIT License."
+    />
+    <meta property="og:image" content="syntara-suit.png" />
+    <meta property="og:url" content="https://syntara-nde.vercel.app/about.html" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="About Syntara — Universal Local AI Platform | NDe" />
+    <meta
+      name="twitter:description"
+      content="Syntara is the universal local-AI layer by NDe: your models, your machine, your control. Open source under the MIT License."
+    />
+    <meta name="twitter:image" content="syntara-suit.png" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "AboutPage",
+        "name": "About Syntara",
+        "url": "https://syntara-nde.vercel.app/about.html",
+        "description": "Syntara by NDe (NoirDemons) is an open-source local-AI platform for model discovery, hardware-aware execution, Chat, Agents and developer APIs.",
+        "isPartOf": {
+          "@type": "WebSite",
+          "name": "Syntara by NDe",
+          "url": "https://syntara-nde.vercel.app/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "NDe",
+          "alternateName": ["NoirDemons", "node"],
+          "url": "https://github.com/saritchakraborty09012012"
+        },
+        "license": "https://opensource.org/licenses/MIT"
+      }
+    </script>
+    <link rel="icon" type="image/png" href="syntara-logo.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Chakra+Petch:wght@400;500;600;700&family=Share+Tech+Mono&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      // Apply saved theme before first paint (default: dark).
+      (function () {
+        try {
+          var t = localStorage.getItem("syntara-theme");
+          document.documentElement.dataset.theme = t === "light" ? "light" : "dark";
+        } catch (e) {
+          document.documentElement.dataset.theme = "dark";
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <noscript>
+      <main>
+        <h1>About Syntara — Universal Local AI Platform by NDe</h1>
+        <p>
+          Syntara is an open-source local-AI platform by NDe (NoirDemons). It makes locally
+          downloaded AI models usable from a desktop app, a local API, an SDK and automation
+          flows, without sending your prompts to someone else's server.
+        </p>
+        <h2>Principles</h2>
+        <ul>
+          <li><b>Local-first</b> — prompts, model files and inference stay on your machine.</li>
+          <li><b>No account, ever</b> — no login, no signup, no email verification, no activation step.</li>
+          <li><b>Your models stay yours</b> — visible storage, no silent deletion, no unrequested conversion.</li>
+          <li><b>Universal, not proprietary</b> — model formats, runtimes and accelerators are separate concerns.</li>
+          <li><b>Honest about hardware</b> — capability-based detection with a CPU fallback that always works.</li>
+          <li><b>Open source</b> — released under the MIT License.</li>
+        </ul>
+        <h2>What it does</h2>
+        <ul>
+          <li>Model Hub with discovery, import, detach and removal; GGUF, safetensors and Hugging Face ingestion.</li>
+          <li>Backend routing across CPU, CUDA, Metal, Vulkan and ROCm, with RAM/VRAM/storage planning.</li>
+          <li>Chat and permission-gated Agent workflows, projects and persistent local memory.</li>
+          <li>Local backup, import and restore, plus an in-app host log viewer that uploads nothing.</li>
+          <li>OpenAI-compatible local API bound to localhost, a Python SDK, a CLI and n8n/IDE integrations.</li>
+        </ul>
+        <h2>Who builds Syntara</h2>
+        <p>
+          Syntara is built by NDe (NoirDemons), the project name of Sarit Chakraborty, and is
+          released under the MIT License.
+        </p>
+        <p>
+          Enable JavaScript for the full experience, visit
+          <a href="https://syntara-nde.vercel.app/">syntara-nde.vercel.app</a>, or read the README in
+          the repository.
+        </p>
+      </main>
+    </noscript>
+    <div id="root"></div>
+    <script type="module" src="/src/entries/about.tsx"></script>
+  </body>
+</html>

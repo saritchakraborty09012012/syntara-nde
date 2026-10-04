@@ -417,6 +417,43 @@
     padding-top: 16px;
   }
 
+  /* Legal / long-form prose on the standalone pages. */
+  .prose-syntara {
+    color: var(--color-muted);
+    font-size: 15px;
+    line-height: 1.8;
+  }
+
+  .prose-syntara p + p {
+    margin-top: 14px;
+  }
+
+  .prose-syntara strong {
+    color: var(--color-ink);
+    font-weight: 600;
+  }
+
+  .prose-syntara ul {
+    margin: 14px 0;
+    display: grid;
+    gap: 8px;
+    padding-left: 0;
+  }
+
+  .prose-syntara li {
+    position: relative;
+    padding-left: 22px;
+  }
+
+  .prose-syntara li::before {
+    content: "▸";
+    position: absolute;
+    left: 0;
+    top: 0;
+    color: var(--color-cyan);
+    font-size: 12px;
+  }
+
   .suit-scan {
     position: relative;
     overflow: hidden;

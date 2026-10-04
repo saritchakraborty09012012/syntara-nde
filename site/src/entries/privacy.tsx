@@ -1,13 +1,13 @@
 import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
-import App from "./App"
-import { syncTheme } from "./theme"
-import "./index.css"
+import { PrivacyPage } from "../components/pages/PrivacyPage"
+import { syncTheme } from "../theme"
+import "../index.css"
 
 syncTheme()
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <App />
+    <PrivacyPage />
   </StrictMode>,
 )
