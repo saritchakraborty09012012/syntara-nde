@@ -166,11 +166,24 @@ jobs:
           # probe that layout as well as the source checkout's one-level-up form.
           mkdir -p dist/web
           cp -r web/dist dist/web/dist
+          # The launcher is the archive's only entry point; everything else in
+          # here is reached through it. Assert it was staged before zipping, so a
+          # missing launcher is a packaging error with a name, not a 7-Zip
+          # complaint about a file 7-Zip was never told to expect.
+          test -f dist/syntara || { echo "FAIL: dist/syntara was not staged"; ls -la dist; exit 1; }
           cd dist
           if [ "${{ matrix.ext }}" = ".exe" ]; then
-            7z a syntara-${TAG}-${{ matrix.name }}.zip *
+            # `syntara` is the one archive entry with no extension, and it is the
+            # launcher every other file in here is reached through: the published
+            # Windows zip came out of 7z without it, and the archive check failed
+            # later with a FileNotFoundError from inside importlib, which named the
+            # symptom and not the packaging. Name it explicitly instead of hoping
+            # the glob picks it up -- `grep -vx` takes the copy the glob already
+            # made out of the list first, because naming a file twice is a
+            # hard 7z error ("Duplicate filename on disk"), not a no-op.
+            7z a "syntara-${TAG}-${{ matrix.name }}.zip" $(ls -A | grep -vx syntara) syntara
           else
-            tar czf syntara-${TAG}-${{ matrix.name }}.tar.gz *
+            tar czf "syntara-${TAG}-${{ matrix.name }}.tar.gz" *
           fi
 
       # Unpack what we are about to publish, in a clean directory, and prove `syntara` finds the
@@ -181,10 +194,20 @@ jobs:
           TAG=${GITHUB_REF#refs/tags/}
           mkdir -p verify && cd verify
           if [ "${{ matrix.ext }}" = ".exe" ]; then
-            7z x ../dist/syntara-${TAG}-${{ matrix.name }}.zip > /dev/null
+            7z x "../dist/syntara-${TAG}-${{ matrix.name }}.zip" > /dev/null
           else
-            tar xzf ../dist/syntara-${TAG}-${{ matrix.name }}.tar.gz
+            tar xzf "../dist/syntara-${TAG}-${{ matrix.name }}.tar.gz"
           fi
+          # Assert the launcher is in the unpacked archive before anything loads
+          # it. The dispatch check at the end of this step imports this file by
+          # name, and when it was missing the failure was a FileNotFoundError
+          # from inside importlib, which says nothing about packaging. Say it
+          # here instead, with the archive listing next to it.
+          test -f syntara || {
+            echo "FAIL: the unpacked archive has no extensionless launcher"
+            ls -la
+            exit 1
+          }
           # The GLM engine in this archive is the per-platform artifact (syntara.exe /
           # glm, c/Makefile ENGINE_REAL); the launcher's own resolver finds it
           # next to itself under exactly that name. The sibling engines are
