@@ -162,31 +162,90 @@ jobs:
     name: Publish installers to the release
     needs: build
     runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # Renaming an asset here without renaming it in site/src/lib/releases.ts
+      # breaks every download button, so the two lists are checked, not trusted.
+      EXPECTED_ASSETS: >-
+        Syntara-Windows-x64-Setup.exe
+        Syntara-macOS-arm64.dmg
+        Syntara-Linux-x86_64.AppImage
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
-      - name: Upload
-        env:
-          GH_TOKEN: ${{ github.token }}
+
+      # Each step below names one action. This used to be a single step called
+      # "Upload" holding the wait, the create and the upload, so a failure could
+      # only say "Upload" and the actual gh command had to be guessed at from the
+      # job status alone.
+      - name: Collect the built installers
+        run: |
+          # merge-multiple keeps each artifact's internal layout, so the files
+          # can land under a subdirectory. Collecting them with find and uploading
+          # the collected paths explicitly means the shape of that directory can
+          # never turn the upload glob into a directory argument.
+          find artifacts -type f -print0 | xargs -0 -r ls -l
+          find artifacts -type f -printf '%p\n' | sort > installers.txt
+          find artifacts -type f -printf '%f\n' | sort > names.txt
+          count=$(wc -l < installers.txt)
+          if [ "$count" -ne 3 ]; then
+            echo "FAIL: expected 3 installer files, found $count"
+            echo "--- tree ---"; find artifacts | sort
+            echo "--- wanted asset names ---"; echo "$EXPECTED_ASSETS" | tr ' ' '\n'
+            exit 1
+          fi
+          for want in $EXPECTED_ASSETS; do
+            if ! grep -qFx "$want" names.txt; then
+              echo "FAIL: no built file is named $want"
+              cat names.txt
+              exit 1
+            fi
+          done
+          echo "collected:"; cat installers.txt
+
+      - name: Wait for the release from release.yml
         run: |
           TAG="$RELEASE_TAG"
-          # release.yml creates the release; this workflow runs beside it and
-          # may get there first. Waiting beats failing: a release with notes
-          # and no installers is exactly the state this is here to prevent.
+          # release.yml creates the release; this workflow runs beside it and may
+          # get there first. Waiting beats failing: a release with notes and no
+          # installers is exactly the state this is here to prevent.
           for attempt in $(seq 1 20); do
-            if gh release view "$TAG" >/dev/null 2>&1; then break; fi
+            if gh release view "$TAG" >/dev/null 2>&1; then
+              echo "release $TAG is up after $((attempt - 1)) waits"
+              exit 0
+            fi
             echo "release $TAG not published yet (attempt $attempt) - waiting 15s"
             sleep 15
           done
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            # release.yml failed. Publish what this workflow did build rather
-            # than throwing three installers away: a draft release, so a human
-            # still reviews the notes before anything is announced.
-            gh release create "$TAG" --draft --title "syntara $TAG" \
-              --notes "Portable archives were not built for this tag (see the Release workflow). Desktop installers below."
+          echo "release $TAG still absent after 20 waits"
+
+      - name: Create the release if release.yml did not
+        run: |
+          TAG="$RELEASE_TAG"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists"
+            exit 0
           fi
-          gh release upload "$TAG" artifacts/* --clobber
-          echo "published:"; gh release view "$TAG" --json assets --jq '.assets[].name'
+          # release.yml failed. Publish what this workflow did build rather than
+          # throwing three installers away -- and publish it, not as a draft: a
+          # draft serves nothing, and the whole point of this job is that
+          # /releases/latest/download/<asset> resolves to a real file. The notes
+          # say plainly which archives are missing so the gap is not a surprise.
+          gh release create "$TAG" --verify-tag --title "syntara $TAG" \
+            --notes "Desktop installers for $TAG. The portable source-free archives in the Release workflow did not build for this tag; see that workflow's log."
+
+      - name: Upload the installers
+        run: |
+          TAG="$RELEASE_TAG"
+          while read -r f; do
+            echo "uploading $f"
+            gh release upload "$TAG" "$f" --clobber
+          done < installers.txt
+
+      - name: Report the published assets
+        run: |
+          gh release view "$RELEASE_TAG" --json isDraft,assets \
+            --jq '"draft=\(.isDraft)", "assets=\(.assets | length)", (.assets[].name)'
