@@ -243,6 +243,23 @@ jobs:
           gh release create "$TAG" --verify-tag --title "syntara $TAG" \
             --notes "Desktop installers for $TAG. The portable source-free archives in the Release workflow did not build for this tag; see that workflow's log."
 
+      - name: Publish the release if it was left a draft
+        run: |
+          TAG="$RELEASE_TAG"
+          if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft)" != "true" ]; then
+            echo "release $TAG is already published"
+            exit 0
+          fi
+          # An earlier run of this workflow leaves a draft behind, and a draft is
+          # the exact state this workflow exists to prevent: it is invisible to
+          # the public API, so /releases/latest/download/<asset> keeps 404ing,
+          # while `gh release view` still finds it for anyone with push access --
+          # so the release looks published to this job while serving nothing to
+          # the people downloading. Publish it.
+          gh release edit "$TAG" --draft=false --title "syntara $TAG" \
+            --notes "Desktop installers for $TAG. The portable source-free archives in the Release workflow did not build for this tag; see that workflow's log."
+          echo "published the leftover draft for $TAG"
+
       - name: Upload the installers
         run: |
           TAG="$RELEASE_TAG"
