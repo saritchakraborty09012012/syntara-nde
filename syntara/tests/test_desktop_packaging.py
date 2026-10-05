@@ -26,6 +26,8 @@ Run: python -m unittest -v syntara.tests.test_desktop_packaging
 
 from __future__ import annotations
 
+import io
+import os
 import pathlib
 import subprocess
 import sys
@@ -390,6 +392,126 @@ class PayloadLayoutTest(unittest.TestCase):
             self.assertIn("no llama-server", str(caught.exception))
 
 
+class PosixBackendInstallTest(unittest.TestCase):
+    """The POSIX legs must install a backend that can actually be run.
+
+    v1.0.2 failed here on macOS and Linux while Windows passed, which is the
+    whole reason this class exists. The Windows payload is a zip, so it never
+    reaches extract_tar; macos-latest puts Xcode's Python 3.9 on PATH, and
+    `filter=` on TarFile.extract arrived in 3.11.4, so the tarball path raised
+    TypeError on an interpreter the workflow never pinned.
+    """
+
+    def _tarball(self, tmp: str, mode: int = 0o755) -> pathlib.Path:
+        archive = pathlib.Path(tmp) / "payload.tar.gz"
+        with tarfile.open(archive, "w:gz") as tf:
+            for name, blob in [("llama-server", b"stub"), ("libllama.so", b"lib")]:
+                info = tarfile.TarInfo(f"llama-{fetch.RELEASE}/{name}")
+                info.size = len(blob)
+                info.mode = mode
+                tf.addfile(info, io.BytesIO(blob))
+        return archive
+
+    def test_tar_payload_keeps_the_executable_bit(self):
+        """extract_tar sets the mode extract() would have applied.
+
+        The pinned tarballs ship llama-server as 0755. Extracting by hand
+        without restoring it yields a backend that installs successfully and
+        then dies at exec() with EACCES on the user's machine.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = pathlib.Path(tmp) / "bin"
+            dest.mkdir()
+            fetch.extract_tar(self._tarball(tmp), dest, "llama-server")
+            server = dest / "llama-server"
+            self.assertTrue(server.is_file())
+            if os.name != "nt":
+                self.assertTrue(os.access(server, os.X_OK),
+                                "llama-server was extracted without +x")
+                # The shared library stays non-executable, as it ships.
+                self.assertFalse(os.access(dest / "libllama.so", os.X_OK))
+
+    def test_a_non_executable_member_is_not_promoted(self):
+        """chmod follows the archive rather than blanket-marking everything."""
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = pathlib.Path(tmp) / "bin"
+            dest.mkdir()
+            fetch.extract_tar(self._tarball(tmp, mode=0o644), dest, "llama-server")
+            if os.name != "nt":
+                self.assertFalse(os.access(dest / "llama-server", os.X_OK))
+
+    def test_extraction_does_not_require_tarfile_filter(self):
+        """Guard the CPython floor that broke the POSIX legs.
+
+        A 3.9 interpreter has no `filter=` parameter, so calling it is a
+        TypeError. This asserts the tarball is written out member by member
+        rather than handed to extract(), instead of trying to run a 3.9
+        interpreter on a newer CI machine.
+        """
+        import inspect
+        source = inspect.getsource(fetch.extract_tar)
+        self.assertNotIn("tf.extract(", source)
+        self.assertIn("extractfile(", source)
+
+    def test_missing_backend_is_reported_as_unlaunchable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            absent = pathlib.Path(tmp) / "llama-server"
+            with self.assertRaises(fetch.FetchError) as caught:
+                fetch.smoke_test(absent)
+            self.assertIn("could not be launched", str(caught.exception))
+
+
+class SmokeTestOutputTest(unittest.TestCase):
+    """smoke_test must turn every outcome into a reason, not a traceback."""
+
+    def _fake_run(self, returncode: int, stdout: bytes = b"", stderr: bytes = b""):
+        class Done:
+            pass
+        done = Done()
+        done.returncode = returncode
+        done.stdout = stdout
+        done.stderr = stderr
+        original = subprocess.run
+        subprocess.run = lambda *a, **k: done
+        self.addCleanup(setattr, subprocess, "run", original)
+
+    def _stub(self, tmp: str) -> pathlib.Path:
+        binary = pathlib.Path(tmp) / "llama-server"
+        binary.write_bytes(b"stub")
+        return binary
+
+    def test_first_line_is_reported(self):
+        self._fake_run(0, stdout=b"version: 0.5.0-dev (build 11321)\nmore\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(fetch.smoke_test(self._stub(tmp)),
+                             "version: 0.5.0-dev (build 11321)")
+
+    def test_silence_is_treated_as_an_unusable_backend(self):
+        """An empty splitlines()[0] used to raise IndexError."""
+        self._fake_run(0, stdout=b"", stderr=b"")
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(fetch.FetchError) as caught:
+                fetch.smoke_test(self._stub(tmp))
+            self.assertIn("printed nothing", str(caught.exception))
+
+    def test_undecodable_output_does_not_raise(self):
+        """text=True would raise UnicodeDecodeError out of subprocess."""
+        self._fake_run(0, stdout=b"\xff\xfe not utf-8\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            # Decoded with U+FFFD for the bad bytes, so the readable part
+            # survives instead of the whole run dying on a decode error.
+            self.assertIn("not utf-8", fetch.smoke_test(self._stub(tmp)))
+
+    def test_nonzero_exit_reports_the_status_and_output(self):
+        self._fake_run(-4, stderr=b"Illegal instruction\n")
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(fetch.FetchError) as caught:
+                fetch.smoke_test(self._stub(tmp))
+            message = str(caught.exception)
+            self.assertIn("exited -4", message)
+            self.assertIn("Illegal instruction", message)
+
+
 class ChecksumTest(unittest.TestCase):
     def test_a_corrupted_archive_is_refused(self):
         """The checksum is checked before anything is extracted (S62)."""
@@ -464,6 +586,35 @@ class WorkflowGuardTest(unittest.TestCase):
         joined = "\n".join(self.script)
         self.assertIn("tools/fetch_llama_cpp.py", joined)
         self.assertIn("--require-backend", joined)
+
+    def test_the_packaging_interpreter_is_pinned(self):
+        """The staging scripts are stdlib-only, so nothing else pins it.
+
+        v1.0.2 failed macOS and Linux because the runner image's `python3` was
+        older than the code required. Pinning turns the interpreter into a
+        declared build input instead of an accident of the image.
+        """
+        joined = "\n".join(self.all_lines)
+        self.assertIn("actions/setup-python@", joined)
+        pinned = [line for line in self.all_lines if "python-version:" in line]
+        self.assertTrue(pinned, "setup-python declares no python-version")
+
+    def test_staging_failures_are_readable_afterwards(self):
+        """Actions logs need a session to read; an artifact does not.
+
+        A staging failure that cannot be inspected from the public API is a
+        failure that has to be reproduced before it can be fixed.
+        """
+        joined = "\n".join(self.all_lines)
+        self.assertIn("staging.log", joined)
+        self.assertIn("staging-log-", joined)
+        # Uploaded unconditionally, so it exists on the run that failed.
+        self.assertIn("if: always()", joined)
+
+    def test_staging_status_is_not_masked_by_the_log_tee(self):
+        """`| tee` would hide a failing fetcher behind tee's exit status."""
+        joined = "\n".join(self.script)
+        self.assertIn("PIPESTATUS", joined)
 
     def test_the_publish_job_verifies_format_before_uploading(self):
         joined = "\n".join(self.script)

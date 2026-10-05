@@ -7,6 +7,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **The macOS and Linux installers could not be built at all.** The installer
+  workflow pinned no interpreter for the stdlib-only staging scripts, so they ran
+  under whatever `python3` the runner image shipped. `tools/fetch_llama_cpp.py`
+  passed `filter=` to `tarfile`'s extraction, a keyword that only exists on
+  CPython 3.11.4 and later; macos-latest puts Xcode's 3.9 `python3` first on
+  `PATH`. Only the POSIX payloads are tarballs, so the Windows leg (a zip) passed
+  and both POSIX legs failed. The tarball is now extracted member by member —
+  names were already validated individually, so the filter was redundant — which
+  removes the interpreter floor, and the executable bit the member carried is
+  restored explicitly so the server binary cannot install present-but-unrunnable.
+  The workflow also pins `actions/setup-python` to 3.12, so the interpreter is a
+  declared build input rather than an accident of the image. v1.0.2 failed here
+  and never published; **no release exists for it.**
+- **A smoke test that could not report its own failure.** `--version` was captured
+  with `text=True`, so undecodable bytes in the backend's output raised
+  `UnicodeDecodeError` out of `subprocess`, and a successful run that printed
+  nothing raised `IndexError` from `splitlines()[0]` — both surfaced as a bare
+  traceback instead of a reason. Output is now decoded leniently and every
+  outcome, including silence, is reported as a reason. A missing `--from-archive`
+  path likewise reports itself instead of raising `FileNotFoundError`.
+- **Staging failures were undiagnosable from outside the run.** Actions logs
+  require a signed-in session to read. Staging now tees its output to
+  `staging.log` and uploads it as an artifact on every run, including the failing
+  one, so the reason a release could not be built is fetchable from the public API.
 - **The published Windows installer was not an installer.** v1.0.1 shipped
   `Syntara-Windows-x64-Setup.exe` as a 302,592-byte Cargo build script belonging
   to one of the dependencies' crates. Running it printed

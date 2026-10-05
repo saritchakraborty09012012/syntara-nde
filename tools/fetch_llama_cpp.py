@@ -238,10 +238,28 @@ def extract_tar(archive: pathlib.Path, dest: pathlib.Path, server: str) -> None:
                 continue
             if name[len(prefix):].find("/") >= 0:
                 continue
-            member.name = name[len(prefix):]
-            # `data` refuses absolute paths, traversal and links that leave the
-            # destination, so an archive cannot write outside --dest.
-            tf.extract(member, path=dest, filter="data")
+            source = tf.extractfile(member)
+            if source is None:
+                continue
+            out = dest / name[len(prefix):]
+            out.parent.mkdir(parents=True, exist_ok=True)
+            with source, out.open("wb") as handle:
+                shutil.copyfileobj(source, handle)
+            # Deliberately not tarfile.extract(filter="data"): the `filter`
+            # keyword only exists on CPython >=3.11.4, and macos-latest still
+            # puts Xcode's 3.9 `python3` on PATH ahead of any newer build. That
+            # made both POSIX legs fail with a TypeError on a keyword the
+            # Windows leg never reaches, because Windows ships a zip. Every
+            # member reaching this point is already a plain file with a
+            # validated relative name, directly beside the server binary, so
+            # nothing here can link, escape or overwrite outside --dest.
+            #
+            # extract() would have applied the member's mode, so the exec bit
+            # has to be set explicitly: without it the server binary installs
+            # present-but-unrunnable and dies at exec() with EACCES, which is
+            # exactly the defect this script exists to prevent.
+            if member.mode & 0o100:
+                out.chmod(0o755)
             picked += 1
     if not picked:
         raise FetchError(f"no payload files were extracted from {archive.name}")
@@ -255,21 +273,41 @@ def smoke_test(binary: pathlib.Path) -> str:
     present but unloadable is the same defect as one that is missing.
     """
     try:
+        # Bytes, not text=True: llama.cpp's banner is ASCII today, but a
+        # stray non-UTF-8 byte in stderr would raise UnicodeDecodeError out of
+        # subprocess and surface as a traceback instead of a reason.
         done = subprocess.run(
             [str(binary), "--version"],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True, timeout=120,
         )
     except (OSError, subprocess.SubprocessError) as problem:
         raise FetchError(
             f"{binary} could not be launched ({problem}); the companion "
-            "libraries beside it may not have been extracted"
+            "libraries beside it may not have been extracted, or the file lost "
+            "its executable bit"
         ) from None
+    output = _text(done.stdout) or _text(done.stderr)
     if done.returncode != 0:
         raise FetchError(
-            f"{binary} --version exited {done.returncode}: "
-            f"{(done.stderr or done.stdout).strip()[:400]}"
+            f"{binary} --version exited {done.returncode}: {output[:400]}"
         )
-    return (done.stdout or done.stderr).strip().splitlines()[0]
+    # Guarded rather than splitlines()[0]: a successful run that printed
+    # nothing used to raise IndexError, i.e. an unexplained traceback instead
+    # of "this binary is not a usable backend".
+    first = next((line.strip() for line in output.splitlines() if line.strip()), "")
+    if not first:
+        raise FetchError(
+            f"{binary} --version exited 0 but printed nothing; this is not a "
+            "usable llama.cpp server, so refusing to ship it"
+        )
+    return first
+
+
+def _text(raw: bytes | None) -> str:
+    """Decode captured output without ever raising on undecodable bytes."""
+    if not raw:
+        return ""
+    return raw.decode("utf-8", "replace").strip()
 
 
 def install(repo: pathlib.Path, *, force: bool = False,
@@ -322,6 +360,13 @@ def install(repo: pathlib.Path, *, force: bool = False,
 
 
 def _verify(archive: pathlib.Path, expected: str, name: str) -> None:
+    # Checked before hashing so a mistyped --from-archive reads as the mistake
+    # it is, rather than as a FileNotFoundError traceback from pathlib.
+    if not archive.is_file():
+        raise FetchError(
+            f"{archive} does not exist; --from-archive needs the pinned "
+            f"{name}, which is downloaded from {BASE_URL}"
+        )
     actual = sha256_of(archive)
     if actual != expected:
         raise FetchError(

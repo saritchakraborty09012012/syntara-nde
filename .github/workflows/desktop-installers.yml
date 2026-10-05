@@ -104,6 +104,17 @@ jobs:
       - name: Tauri CLI
         run: npm install -g @tauri-apps/cli@2.11.5
 
+      # Pinned rather than left to whatever `python3` the image happens to
+      # ship. The staging scripts are stdlib-only precisely so they run before
+      # any dependency install, but that leaves them at the mercy of the
+      # runner image: macos-latest puts Xcode's Python 3.9 on PATH, and 3.9
+      # lacks tarfile's `filter=` keyword that the POSIX backend fetch used to
+      # rely on. Pinning keeps the interpreter a build input instead of an
+      # accident of the image.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       # What makes the installer worth downloading: the Python package, an
       # interpreter, and the llama.cpp backend the GGUF runtime drives, so the
       # installed app runs a model with no internet, no system Python and no
@@ -132,12 +143,39 @@ jobs:
             echo "FAIL: no working Python 3 on this runner (tried python3, py -3)"
             exit 1
           fi
+          echo "staging interpreter: $($PY -VV)"
           # The pinned backend goes in first, because --require-backend below
           # fails the build when it is missing. It used to print a NOTE and
           # publish anyway, so every installer shipped without it: the app
           # installed cleanly and then died at RuntimeNotAvailable.
-          $PY tools/fetch_llama_cpp.py
-          $PY tools/stage_desktop_resources.py --repo . --require-backend
+          #
+          # Both commands are teed into staging.log and their exit statuses
+          # read back through PIPESTATUS, because tee would otherwise mask the
+          # failure the runner has to act on. Redirecting the whole block with
+          # `exec > >(tee ...)` would lose output to a process that may not be
+          # scheduled again before the step ends.
+          : > staging.log
+          $PY tools/fetch_llama_cpp.py 2>&1 | tee -a staging.log
+          fetch_status=${PIPESTATUS[0]}
+          $PY tools/stage_desktop_resources.py --repo . --require-backend 2>&1 \
+            | tee -a staging.log
+          stage_status=${PIPESTATUS[0]}
+          if [ "$fetch_status" -ne 0 ] || [ "$stage_status" -ne 0 ]; then
+            echo "FAIL: staging failed (fetch_llama_cpp=$fetch_status, stage_desktop_resources=$stage_status)"
+            exit 1
+          fi
+
+      # Runs even when the step above failed. Actions logs need a signed-in
+      # session to read, which makes a staging failure painful to diagnose from
+      # a bug report; an artifact is fetchable from the public API, so the
+      # reason a release could not be built travels with the run.
+      - name: Upload staging log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-log-${{ matrix.name }}
+          path: staging.log
+          if-no-files-found: warn
 
       # Run from `desktop/`, which is where tauri.conf.json's
       # `npm --prefix ../web run build` resolves from (see desktop/README.md:
