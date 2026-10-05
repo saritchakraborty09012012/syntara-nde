@@ -231,36 +231,86 @@ def extract_tar(archive: pathlib.Path, dest: pathlib.Path, server: str) -> None:
         names = [_reject_unsafe(m.name) for m in members]
         prefix = _payload_prefix(names, server)
         picked = 0
+        # Links are resolved after the loop, so a link may point at a sibling
+        # that has not been written yet.
+        links: list[tuple[pathlib.Path, str]] = []
         for member, name in zip(members, names):
-            if not member.isfile():
-                continue
             if not name.startswith(prefix):
                 continue
             if name[len(prefix):].find("/") >= 0:
                 continue
+            out = dest / name[len(prefix):]
+            if member.issym() or member.islnk():
+                links.append((out, member.linkname))
+                continue
+            if not member.isfile():
+                continue
             source = tf.extractfile(member)
             if source is None:
                 continue
-            out = dest / name[len(prefix):]
             out.parent.mkdir(parents=True, exist_ok=True)
             with source, out.open("wb") as handle:
                 shutil.copyfileobj(source, handle)
             # Deliberately not tarfile.extract(filter="data"): the `filter`
             # keyword only exists on CPython >=3.11.4, and macos-latest still
-            # puts Xcode's 3.9 `python3` on PATH ahead of any newer build. That
-            # made both POSIX legs fail with a TypeError on a keyword the
-            # Windows leg never reaches, because Windows ships a zip. Every
-            # member reaching this point is already a plain file with a
-            # validated relative name, directly beside the server binary, so
-            # nothing here can link, escape or overwrite outside --dest.
+            # puts Xcode's 3.9 `python3` on PATH ahead of any newer build, which
+            # made both POSIX legs fail with a TypeError on a keyword the Windows
+            # leg never reaches because Windows ships a zip. Member names are
+            # already validated individually above, so the filter was redundant.
             #
-            # extract() would have applied the member's mode, so the exec bit
-            # has to be set explicitly: without it the server binary installs
-            # present-but-unrunnable and dies at exec() with EACCES, which is
-            # exactly the defect this script exists to prevent.
+            # extract() would have applied the member's mode, so the exec bit has
+            # to be set explicitly: without it the server binary installs
+            # present-but-unrunnable and dies at exec() with EACCES.
             if member.mode & 0o100:
                 out.chmod(0o755)
             picked += 1
+        # Repeated until no further progress, because the payloads chain links:
+        # libggml.dylib -> libggml.0.dylib -> libggml.0.25.3.dylib, and the
+        # middle link is stored after the one that needs it.
+        root = dest.resolve()
+        pending = list(links)
+        while pending:
+            deferred = []
+            progress = 0
+            for out, linkname in pending:
+                # A tar symlink's linkname is relative to the link's own
+                # directory, not the destination, so it is resolved from
+                # out.parent. Every link in these payloads points at a sibling;
+                # anything resolving outside the payload root is refused rather
+                # than followed, so an archive cannot make the installer read or
+                # expose a path outside it (AGENTS S59/S62).
+                base = out.parent.resolve()
+                target = base / linkname
+                if base != root or root not in target.resolve().parents:
+                    raise FetchError(
+                        f"archive member {out.name} links outside the payload "
+                        f"directory ({linkname}); refusing to create it"
+                    )
+                if not target.exists():
+                    deferred.append((out, linkname))
+                    continue
+                if out.exists() or out.is_symlink():
+                    out.unlink()
+                try:
+                    out.symlink_to(target.name)
+                except (OSError, NotImplementedError) as problem:
+                    # Creating a symlink needs a privilege Windows does not
+                    # grant by default, and this script also runs on a Windows
+                    # dev box. Copying the real file gives an equivalent
+                    # payload: the dlopen'd library is the same bytes either way.
+                    print(f"[llama] symlink {out.name} -> {target.name} "
+                          f"unavailable ({problem}); copying instead")
+                    shutil.copy2(target, out)
+                progress += 1
+            picked += progress
+            if not progress:
+                raise FetchError(
+                    "archive links point outside the payload or at members it "
+                    f"does not contain: {sorted(str(o.name) for o, _ in deferred)[:5]}"
+                    "; the pinned layout changed and this script's handling of "
+                    "it needs re-checking"
+                )
+            pending = deferred
     if not picked:
         raise FetchError(f"no payload files were extracted from {archive.name}")
 

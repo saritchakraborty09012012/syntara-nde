@@ -440,6 +440,108 @@ class PosixBackendInstallTest(unittest.TestCase):
             if os.name != "nt":
                 self.assertFalse(os.access(dest / "llama-server", os.X_OK))
 
+    def _symlink_tarball(self, tmp: str) -> pathlib.Path:
+        """A payload in the shape llama.cpp actually ships.
+
+        The POSIX tarballs are 50 files plus 10 symlinks (Linux) and 42 files
+        plus 18 (macOS), and the names llama-server dlopen()s - libllama.so,
+        libllama.dylib - exist ONLY as symlinks. An extractor that takes plain
+        files alone therefore produces a backend that installs cleanly and
+        then cannot load its own libraries.
+        """
+        archive = pathlib.Path(tmp) / "payload.tar.gz"
+        with tarfile.open(archive, "w:gz") as tf:
+            for name, blob in [("llama-server", b"stub"),
+                               ("libllama.so.0.5.0", b"real-library-bytes")]:
+                info = tarfile.TarInfo(f"llama-{fetch.RELEASE}/{name}")
+                info.size = len(blob)
+                info.mode = 0o755
+                tf.addfile(info, io.BytesIO(blob))
+            link = tarfile.TarInfo(f"llama-{fetch.RELEASE}/libllama.so")
+            link.type = tarfile.SYMTYPE
+            link.linkname = "libllama.so.0.5.0"
+            tf.addfile(link)
+        return archive
+
+    def test_symlinked_libraries_are_installed_not_dropped(self):
+        """The v1.0.3 POSIX regression, in miniature.
+
+        Both POSIX legs failed because extraction skipped every symlink, so the
+        backend shipped without the libraries it loads at startup.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = pathlib.Path(tmp) / "bin"
+            dest.mkdir()
+            fetch.extract_tar(self._symlink_tarball(tmp), dest, "llama-server")
+            link = dest / "libllama.so"
+            self.assertTrue(link.exists() or link.is_symlink(),
+                            "the dlopen()'d library name was not installed")
+            self.assertEqual((dest / "libllama.so.0.5.0").read_bytes(),
+                             b"real-library-bytes")
+
+    def test_chained_symlinks_are_resolved(self):
+        """libggml.dylib -> libggml.0.dylib -> libggml.0.25.3.dylib.
+
+        The middle link is stored after the one that needs it, so links cannot
+        be created in a single archive-order pass.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = pathlib.Path(tmp) / "chained.tar.gz"
+            with tarfile.open(archive, "w:gz") as tf:
+                info = tarfile.TarInfo(f"llama-{fetch.RELEASE}/libggml.0.25.3.dylib")
+                info.size = len(b"real")
+                info.mode = 0o755
+                tf.addfile(info, io.BytesIO(b"real"))
+                for leaf, target in (("libggml.0.dylib", "libggml.0.25.3.dylib"),
+                                     ("libggml.dylib", "libggml.0.dylib")):
+                    link = tarfile.TarInfo(f"llama-{fetch.RELEASE}/{leaf}")
+                    link.type = tarfile.SYMTYPE
+                    link.linkname = target
+                    tf.addfile(link)
+            dest = pathlib.Path(tmp) / "bin"
+            dest.mkdir()
+            fetch.extract_tar(archive, dest, "libggml.0.25.3.dylib")
+            for leaf in ("libggml.0.dylib", "libggml.dylib"):
+                with self.subTest(leaf=leaf):
+                    self.assertTrue((dest / leaf).exists() or (dest / leaf).is_symlink())
+
+    def test_a_link_escaping_the_payload_is_refused(self):
+        """An archive must not make the installer read or expose a path outside."""
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = pathlib.Path(tmp) / "escape.tar.gz"
+            with tarfile.open(archive, "w:gz") as tf:
+                info = tarfile.TarInfo(f"llama-{fetch.RELEASE}/llama-server")
+                info.size = len(b"stub")
+                info.mode = 0o755
+                tf.addfile(info, io.BytesIO(b"stub"))
+                escape = tarfile.TarInfo(f"llama-{fetch.RELEASE}/libllama.so")
+                escape.type = tarfile.SYMTYPE
+                escape.linkname = "../../../../etc/passwd"
+                tf.addfile(escape)
+            dest = pathlib.Path(tmp) / "bin"
+            dest.mkdir()
+            with self.assertRaises(fetch.FetchError) as caught:
+                fetch.extract_tar(archive, dest, "llama-server")
+            self.assertIn("links outside the payload", str(caught.exception))
+
+    def test_a_dangling_link_is_refused_rather_than_written(self):
+        """A link to a member the payload lacks is a layout change, not a link."""
+        with tempfile.TemporaryDirectory() as tmp:
+            archive = pathlib.Path(tmp) / "dangling.tar.gz"
+            with tarfile.open(archive, "w:gz") as tf:
+                info = tarfile.TarInfo(f"llama-{fetch.RELEASE}/llama-server")
+                info.size = len(b"stub")
+                info.mode = 0o755
+                tf.addfile(info, io.BytesIO(b"stub"))
+                orphan = tarfile.TarInfo(f"llama-{fetch.RELEASE}/libllama.so")
+                orphan.type = tarfile.SYMTYPE
+                orphan.linkname = "libllama.so.0.5.0"
+                tf.addfile(orphan)
+            dest = pathlib.Path(tmp) / "bin"
+            dest.mkdir()
+            with self.assertRaises(fetch.FetchError):
+                fetch.extract_tar(archive, dest, "llama-server")
+
     def test_extraction_does_not_require_tarfile_filter(self):
         """Guard the CPython floor that broke the POSIX legs.
 

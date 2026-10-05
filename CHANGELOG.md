@@ -18,8 +18,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   removes the interpreter floor, and the executable bit the member carried is
   restored explicitly so the server binary cannot install present-but-unrunnable.
   The workflow also pins `actions/setup-python` to 3.12, so the interpreter is a
-  declared build input rather than an accident of the image. v1.0.2 failed here
-  and never published; **no release exists for it.**
+  declared build input rather than an accident of the image.
+- **A follow-up attempt at the above dropped every shared library.** The POSIX
+  payloads are not a flat set of files: the pinned Linux and macOS tarballs ship
+  10 and 18 symlinks respectively, and the names the server `dlopen`s
+  (`libllama.so`, `libllama.dylib`) exist *only* as symlinks pointing at
+  versioned files beside them. Extraction that kept plain files alone therefore
+  produced a backend with no libraries next to it, which installs cleanly and
+  then cannot start — the same present-but-unusable defect as shipping none at
+  all. Links are now installed and resolved through chains
+  (`libggml.dylib → libggml.0.dylib → libggml.0.25.3.dylib`, stored out of
+  order), a link that resolves outside the payload or to a member the archive
+  lacks is refused rather than written, and on a host without symlink privilege
+  the target is copied, which yields the same bytes. v1.0.2 and v1.0.3 both
+  failed here and **neither was ever published**.
 - **A smoke test that could not report its own failure.** `--version` was captured
   with `text=True`, so undecodable bytes in the backend's output raised
   `UnicodeDecodeError` out of `subprocess`, and a successful run that printed
