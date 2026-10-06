@@ -408,7 +408,14 @@ class PosixBackendInstallTest(unittest.TestCase):
             for name, blob in [("llama-server", b"stub"), ("libllama.so", b"lib")]:
                 info = tarfile.TarInfo(f"llama-{fetch.RELEASE}/{name}")
                 info.size = len(blob)
-                info.mode = mode
+                # The payload must model how the real tarballs ship: only the
+                # server binary carries the exec bit the `mode` argument
+                # controls, the shared library ships 0644. Giving every member
+                # the same mode made the fixture contradict the assertions
+                # below (extract_tar follows the archive, by design), which
+                # failed the exec-bit test on every POSIX runner while the
+                # `os.name != "nt"` guard let Windows stay green.
+                info.mode = mode if name == "llama-server" else 0o644
                 tf.addfile(info, io.BytesIO(blob))
         return archive
 
