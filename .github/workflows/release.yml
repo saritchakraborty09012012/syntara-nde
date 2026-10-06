@@ -231,14 +231,23 @@ jobs:
           # member is not an opinion, and it is the only question here that matters:
           # every other entry is reached through that one. Anchored, so neither
           # syntara.exe nor syntara.cmd can stand in for the launcher.
+          #
+          # No `-q`, deliberately: `grep -q` exits at the first match and closes
+          # the pipe, and under this workflow's `bash -eo pipefail` the
+          # producer's SIGPIPE/write error then fails the guard even though the
+          # archive is fine - the linux leg died on "tar: stdout: write error"
+          # for a tarball whose listing contained `syntara`. Draining the
+          # whole listing keeps the producer's real exit status meaningful:
+          # a corrupt archive still fails, a listing without the member still
+          # fails.
           if [ "${{ matrix.ext }}" = ".exe" ]; then
-            7z l "syntara-${TAG}-${{ matrix.name }}.zip" | grep -qE '[[:space:]]syntara$' || {
+            7z l "syntara-${TAG}-${{ matrix.name }}.zip" | grep -E '[[:space:]]syntara$' > /dev/null || {
               echo "FAIL: the zip was built without the extensionless launcher"
               7z l "syntara-${TAG}-${{ matrix.name }}.zip"
               exit 1
             }
           else
-            tar tzf "syntara-${TAG}-${{ matrix.name }}.tar.gz" | grep -qx 'syntara' || {
+            tar tzf "syntara-${TAG}-${{ matrix.name }}.tar.gz" | grep -x 'syntara' > /dev/null || {
               echo "FAIL: the tarball was built without the extensionless launcher"
               tar tzf "syntara-${TAG}-${{ matrix.name }}.tar.gz"
               exit 1

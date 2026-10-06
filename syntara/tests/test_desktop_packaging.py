@@ -733,6 +733,89 @@ class WorkflowGuardTest(unittest.TestCase):
             with self.subTest(asset=name):
                 self.assertIn(name, text)
 
+    def test_every_published_asset_is_built_by_the_matrix(self):
+        """The publish job demands all three asset names by name.
+
+        A matrix entry that gets deleted while EXPECTED_ASSETS keeps the name
+        turns the publish step red on every successful build; the two lists
+        must move together.
+        """
+        joined = "\n".join(self.script)
+        for name in ("Syntara-Windows-x64-Setup.exe",
+                     "Syntara-macOS-arm64.dmg",
+                     "Syntara-Linux-x86_64.AppImage"):
+            with self.subTest(asset=name):
+                self.assertIn(f"asset: {name}", joined)
+        for kind in ("nsis", "dmg", "appimage"):
+            with self.subTest(bundle=kind):
+                self.assertIn(f"bundle: {kind}", joined)
+
+    def test_the_windows_leg_does_not_cross_compile(self):
+        """The macOS rust_target must stay on the macOS entry.
+
+        When it leaked onto the windows entry, `tauri build` ran with
+        `--target aarch64-apple-darwin` on windows-latest and died compiling
+        objc2-exception-helper (`-arch arm64` unrecognized): the windows
+        installer job failed for a target only macOS should ever see.
+        """
+        block, in_windows = [], False
+        for line in self.script:
+            stripped = line.strip()
+            if stripped.startswith("- os:"):
+                in_windows = stripped == "- os: windows-latest"
+                continue
+            if in_windows:
+                block.append(line)
+        offenders = [line for line in block if "rust_target:" in line]
+        self.assertEqual(offenders, [], (
+            "the windows leg is handed a cross-compilation target; the NSIS "
+            f"installer must be built for the runner's host: {offenders}"
+        ))
+
+    def test_the_workflow_needs_no_bash4_builtin(self):
+        """macOS runners execute these scripts with /bin/bash 3.2.
+
+        `mapfile` there exits 127 - after the dmg has already been built - so
+        the macOS leg failed at discovery even though the bundler succeeded.
+        """
+        joined = "\n".join(self.script)
+        for builtin in ("mapfile", "readarray"):
+            with self.subTest(builtin=builtin):
+                self.assertNotIn(builtin, joined)
+
+
+class ReleaseArchiveGuardTest(unittest.TestCase):
+    """The launcher-member guards in release.yml must be able to fail correctly.
+
+    `grep -q` exits at the first match, closing the pipe; under the workflow's
+    `bash -eo pipefail` the producer's write error then fails the guard for an
+    archive that is perfectly fine. The linux x86-64-v3 leg failed exactly
+    that way (`tar: stdout: write error` on a tarball that listed `syntara`).
+    """
+
+    WORKFLOW = REPO / ".github" / "workflows" / "release.yml"
+
+    def setUp(self):
+        text = self.WORKFLOW.read_text(encoding="utf-8")
+        self.script = [line for line in text.splitlines()
+                       if line.strip() and not line.strip().startswith("#")]
+
+    def test_listing_guards_must_drain_the_stream(self):
+        offenders = [
+            line for line in self.script
+            if "grep -q" in line and ("tar tzf" in line or "7z l " in line)
+        ]
+        self.assertEqual(offenders, [], (
+            "`grep -q` on an archive listing closes the pipe early; pipefail "
+            f"then reports the producer's write error as a guard failure: {offenders}"
+        ))
+
+    def test_the_launcher_member_is_still_asserted(self):
+        """Draining the stream must not have dropped the actual assertion."""
+        joined = "\n".join(self.script)
+        self.assertIn("grep -x 'syntara'", joined)
+        self.assertIn("grep -E '[[:space:]]syntara$'", joined)
+
 
 class StagedBackendRequirementTest(unittest.TestCase):
     """--require-backend is what stops a backend-less bundle being published."""
