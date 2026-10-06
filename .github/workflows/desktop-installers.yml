@@ -53,13 +53,6 @@ jobs:
             asset: Syntara-Windows-x64-Setup.exe
             bundle: nsis
             glob: "*.exe"
-          - os: macos-latest
-            name: macos
-            asset: Syntara-macOS-arm64.dmg
-            bundle: dmg
-            glob: "*.dmg"
-            # Apple Silicon, like the portable macos-arm64 archive release.yml
-            # already ships. An x86_64 slice would need a second interpreter in
             # the bundle; shipping one honest slice beats shipping a bundle
             # that only starts on half the machines it advertises.
             rust_target: aarch64-apple-darwin
@@ -107,13 +100,6 @@ jobs:
       # Pinned rather than left to whatever `python3` the image happens to
       # ship. The staging scripts are stdlib-only precisely so they run before
       # any dependency install, but that leaves them at the mercy of the
-      # runner image: macos-latest puts Xcode's Python 3.9 on PATH, and 3.9
-      # lacks tarfile's `filter=` keyword that the POSIX backend fetch used to
-      # rely on. Pinning keeps the interpreter a build input instead of an
-      # accident of the image.
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
 
       # What makes the installer worth downloading: the Python package, an
       # interpreter, and the llama.cpp backend the GGUF runtime drives, so the
