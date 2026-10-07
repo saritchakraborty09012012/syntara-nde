@@ -49,6 +49,9 @@ export const PLATFORM_LABEL: Record<Platform, string> = {
 
 export const PLATFORMS: Platform[] = ["windows", "macos", "linux"]
 
+/** Same floor as tools/verify_installer.py — catches v1.0.1’s 302 KB Windows impostor. */
+export const MIN_INSTALLER_BYTES = 5 * 1024 * 1024
+
 export function detectPlatform(): Platform | "" {
   const raw =
     (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData
@@ -70,6 +73,8 @@ export type ReleaseState = {
   hrefs: Record<Platform, string>
   sizes: Partial<Record<Platform, string>>
   kinds: Partial<Record<Platform, ReleaseKind>>
+  /** Set when GitHub lists an installer asset that fails the size/format gate. */
+  installerIssues: Partial<Record<Platform, string>>
 }
 
 export const initialRelease = (): ReleaseState => ({
@@ -81,14 +86,28 @@ export const initialRelease = (): ReleaseState => ({
   },
   sizes: {},
   kinds: {},
+  installerIssues: {},
 })
 
 type GithubAsset = { name?: unknown; size?: unknown; browser_download_url?: unknown }
 type GithubRelease = { tag_name?: unknown; published_at?: unknown; assets?: unknown }
 
-const assetSize = (size: unknown): string | undefined => {
-  const mb = Math.max(1, Math.round((Number(size) || 0) / 1048576))
-  return Number.isFinite(mb) ? `${mb} MB` : undefined
+const installerBytes = (size: unknown): number => {
+  const bytes = Number(size) || 0
+  return Number.isFinite(bytes) ? bytes : 0
+}
+
+export const isUsableInstallerAsset = (size: unknown): boolean =>
+  installerBytes(size) >= MIN_INSTALLER_BYTES
+
+const assetSize = (size: unknown, kind: ReleaseKind | undefined): string | undefined => {
+  const bytes = installerBytes(size)
+  if (bytes <= 0) return undefined
+  if (kind === "installer" && bytes < MIN_INSTALLER_BYTES) {
+    return `${Math.round(bytes / 1024)} KB · not a valid installer`
+  }
+  const mb = Math.max(1, Math.round(bytes / 1048576))
+  return `${mb} MB`
 }
 
 /* Enrich the direct installer links with what the release actually contains.
@@ -117,15 +136,24 @@ export async function fetchLatestRelease(): Promise<ReleaseState | null> {
       const portable = assets.find(
         (asset) => typeof asset?.name === "string" && asset.name.includes(PORTABLE_ASSET[os]),
       )
-      // An installer in this release wins; otherwise fall back to the
-      // portable archive of the same release rather than to a page.
-      const chosen = installer ?? portable
-      if (!chosen) continue
+      const installerOk =
+        installer && isUsableInstallerAsset(installer.size) ? installer : undefined
+      if (installer && !installerOk) {
+        next.installerIssues[os] =
+          "This release’s installer file is too small to be real (a broken build was published on v1.0.1). Use Release notes below — a rebuilt installer or portable archive — or ask the maintainer to re-run the Desktop installers workflow."
+      }
+      // A verified installer wins; otherwise fall back to the portable archive
+      // of the same release rather than to a page.
+      const chosen = installerOk ?? portable
+      if (!chosen) {
+        if (installer && !installerOk) next.hrefs[os] = RELEASES_PAGE
+        continue
+      }
       if (typeof chosen.browser_download_url === "string") {
         next.hrefs[os] = chosen.browser_download_url
       }
-      next.kinds[os] = installer ? "installer" : "portable"
-      const size = assetSize(chosen.size)
+      next.kinds[os] = installerOk ? "installer" : "portable"
+      const size = assetSize(chosen.size, next.kinds[os])
       if (size) next.sizes[os] = size
     }
 

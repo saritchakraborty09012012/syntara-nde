@@ -23,14 +23,19 @@ export function DownloadBox({
         {PLATFORMS.map((os) => {
           const primary = os === "windows" || os === detected
           const size = release.sizes[os]
+          const issue = release.installerIssues[os]
+          const blocked = Boolean(issue) && release.kinds[os] !== "portable"
           return (
             <a
               key={os}
               href={release.hrefs[os]}
+              aria-disabled={blocked ? true : undefined}
               className={`cut-sm flex flex-col items-start gap-1 border px-4 py-3 transition-all duration-200 ${
-                primary
-                  ? "border-transparent bg-gradient-to-br from-cyan to-electric text-[#03131f] shadow-[0_0_28px_rgb(69_224_255/0.4)]"
-                  : "border-line bg-cyan/5 text-ink hover:border-line-strong hover:shadow-[0_0_20px_rgb(69_224_255/0.18)]"
+                blocked
+                  ? "pointer-events-none border-line bg-void/40 text-muted opacity-80"
+                  : primary
+                    ? "border-transparent bg-gradient-to-br from-cyan to-electric text-[#03131f] shadow-[0_0_28px_rgb(69_224_255/0.4)]"
+                    : "border-line bg-cyan/5 text-ink hover:border-line-strong hover:shadow-[0_0_20px_rgb(69_224_255/0.18)]"
               }`}
             >
               <span className="font-display text-sm font-bold tracking-[0.14em] uppercase">
@@ -48,6 +53,14 @@ export function DownloadBox({
           )
         })}
       </div>
+
+      {PLATFORMS.some((os) => release.installerIssues[os]) ? (
+        <p className="mt-4 font-mono text-[12px] leading-relaxed text-amber-200/90">
+          {PLATFORMS.map((os) => release.installerIssues[os])
+            .filter(Boolean)
+            .join(" ")}
+        </p>
+      ) : null}
 
       <p className="mt-4 font-mono text-[12px] leading-relaxed text-muted">
         Real installers, not source archives — your models stay on your disk and inference runs locally.
