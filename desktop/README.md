@@ -44,12 +44,21 @@ until this workflow is run again. v1.0.1’s Windows asset was a 302 KB cargo bu
 script, not an NSIS installer — the site and `tools/verify_installer.py` now reject
 anything that small.
 
-**Republish without a new tag** (uses current `main` to rebuild, uploads with
-`--clobber` onto the existing release):
+**Republish or publish by hand** (rebuilds from current `main`, uploads with
+`--clobber` onto the release):
 
 1. GitHub → Actions → **Desktop installers** → **Run workflow**.
 2. Branch: `main`.
-3. Tag: the release to update (e.g. `v1.0.1` or `v1.0.2`).
+3. Tag: an existing release to update (`v1.0.1`), or a **new** version string
+   to release (`1.0.6`). A preflight job validates the name in seconds and
+   creates the git tag at `main` when it does not exist, so the publish step
+   no longer fails after a full build; an invalid name (or one colliding with
+   a branch, e.g. `main`) fails before any build starts.
+
+A manual dispatch never waits on `release.yml` — that wait only applies when
+both workflows start from the same `v*` tag push. Portable source-free
+archives only come from a `v*` tag a **human** pushes (a tag pushed with the
+workflow token does not trigger other workflows).
 
 **Ship a new version**: push a `v*` tag; `desktop-installers.yml` and
 `release.yml` both attach to that release.

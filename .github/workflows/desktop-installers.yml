@@ -25,11 +25,13 @@ on:
     inputs:
       tag:
         description: >-
-          Existing release tag to attach the installers to (e.g. 1.0.0).
-          Required when dispatching by hand, because a manual run has no tag
-          in github.ref_name - it has the branch name instead, and publishing
-          installers under a branch name would create a release nobody's
-          download button points at.
+          Release tag to publish under: an existing one to update (v1.0.1),
+          or a new version string to release (1.0.6). Required when dispatching
+          by hand, because a manual run has no tag in github.ref_name - it has
+          the branch name instead, and publishing installers under a branch
+          name would create a release nobody's download button points at. The
+          preflight job validates the name and creates the git tag when it
+          does not exist, before any build starts.
         required: true
 
 permissions:
@@ -42,8 +44,66 @@ env:
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
+  # The dispatch form takes a tag as free text, and until this job existed the
+  # only thing that looked at it was `gh release create --verify-tag` in the
+  # publish job - after every installer had already been built. Run #15
+  # dispatched `1.0.6`, spent fifteen minutes building all three platforms,
+  # and then died with "tag 1.0.6 doesn't exist in the repo". Validating the
+  # name here makes a typo fail in seconds, and creating a missing tag here
+  # makes a new version string publish end to end instead of dying at the last
+  # step of a successful build.
+  preflight:
+    name: Validate the release tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate the tag and create it when it is missing
+        shell: bash
+        run: |
+          TAG="$RELEASE_TAG"
+          # git's own ref-name validator: rejects empty names, whitespace,
+          # '..', '^', ':', '?', '*', '[', control characters and the rest of
+          # what a push would be confused by. The leading '-' case is separate
+          # because refs/tags/-x parses as valid but every git command that
+          # takes it as an argument reads it as an option instead.
+          case "$TAG" in
+            ''|-*)
+              echo "FAIL: tag '$TAG' is empty or starts with '-'"
+              exit 1
+              ;;
+          esac
+          if ! git check-ref-format "refs/tags/$TAG"; then
+            echo "FAIL: '$TAG' is not usable as a git tag name"
+            exit 1
+          fi
+          # A branch of the same name makes the tag ambiguous to every command
+          # taking a short ref (`git checkout 1.0.6`), and a tag named after a
+          # branch is the exact accident the input description warns about.
+          if git ls-remote --exit-code --heads origin "refs/heads/$TAG" >/dev/null 2>&1; then
+            echo "FAIL: a branch named '$TAG' already exists; refusing to create"
+            echo "      a tag with the same name. Use a version tag, e.g. v1.0.7."
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "tag $TAG already exists - publishing to what it points at"
+            exit 0
+          fi
+          # Lightweight tag on the commit this run checked out: `--verify-tag`
+          # in the publish job only needs the ref to exist, and pointing it at
+          # the SHA being built is what the operator meant by typing a version.
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$TAG"
+          echo "created tag $TAG at $GITHUB_SHA"
+          # A tag pushed with the workflow's own token does not trigger other
+          # workflows, so release.yml never builds portable archives for it -
+          # only a tag a human pushes does. Said here rather than discovered
+          # later as an archive that does not exist.
+          echo "note: push the tag by hand too if you want release.yml's portable archives"
+
   build:
     name: Installer (${{ matrix.name }})
+    needs: preflight
     strategy:
       fail-fast: false
       matrix:
@@ -256,7 +316,7 @@ jobs:
 
   release:
     name: Publish installers to the release
-    needs: build
+    needs: [preflight, build]
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ github.token }}
@@ -335,7 +395,13 @@ jobs:
           fi
           echo "all three assets are real installers"
 
+      # release.yml only triggers on `v*` tag pushes, so the only run with a
+      # sibling release.yml worth waiting for is a tag push. A manual dispatch
+      # never has one: run #15 waited the full 20 x 15s for a release nothing
+      # was going to create - five of its five and a half minutes - and only
+      # then failed on the tag itself.
       - name: Wait for the release from release.yml
+        if: github.event_name == 'push'
         run: |
           TAG="$RELEASE_TAG"
           # release.yml creates the release; this workflow runs beside it and may

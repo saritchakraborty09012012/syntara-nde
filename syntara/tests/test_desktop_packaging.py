@@ -790,6 +790,38 @@ class WorkflowGuardTest(unittest.TestCase):
             with self.subTest(builtin=builtin):
                 self.assertNotIn(builtin, joined)
 
+    def test_the_dispatch_tag_is_validated_before_anything_builds(self):
+        """Run #15 built three installers, then died on a missing git tag.
+
+        `gh release create --verify-tag` was the first thing to look at the
+        dispatched `1.0.6` - after fifteen minutes of building. The preflight
+        job validates the name and creates the tag first, and both the build
+        and the publish job wait for it, so a bad name fails in seconds.
+        """
+        joined = "\n".join(self.script)
+        self.assertIn("git check-ref-format", joined)
+        self.assertIn("needs: preflight", joined)
+        self.assertIn("needs: [preflight, build]", joined)
+
+    def test_the_release_wait_never_runs_for_a_manual_dispatch(self):
+        """A dispatch has no sibling release.yml run to wait for.
+
+        release.yml only triggers on `v*` tag pushes. Run #15 spent 5m08s of
+        its 5m27s polling 20 times for a release nothing was going to create.
+        """
+        lines = self.script
+        step = next(
+            (i for i, line in enumerate(lines)
+             if line.strip() == "- name: Wait for the release from release.yml"),
+            None,
+        )
+        self.assertIsNotNone(step, "the release wait step was renamed or removed")
+        following = lines[step + 1:step + 4]
+        self.assertTrue(
+            any("github.event_name == 'push'" in line for line in following),
+            f"the release wait runs on a dispatch too: {following}",
+        )
+
 
 class ReleaseArchiveGuardTest(unittest.TestCase):
     """The launcher-member guards in release.yml must be able to fail correctly.
