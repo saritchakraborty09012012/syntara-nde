@@ -27,8 +27,10 @@ Run: python -m unittest -v syntara.tests.test_desktop_packaging
 from __future__ import annotations
 
 import io
+import json
 import os
 import pathlib
+import struct
 import subprocess
 import sys
 import tarfile
@@ -821,6 +823,62 @@ class WorkflowGuardTest(unittest.TestCase):
             any("github.event_name == 'push'" in line for line in following),
             f"the release wait runs on a dispatch too: {following}",
         )
+
+
+class InstallerIconGuardTest(unittest.TestCase):
+    """The installer's icon comes from config, not from bundle.icon.
+
+    Tauri's NSIS bundler fills the template's `{{installer_icon}}` only from
+    `bundle.windows.nsis.installerIcon` - there is no fallback to the
+    `bundle.icon` list. With the key absent, MUI_ICON is never defined and the
+    published .exe ships with NSIS's default globe, which is what the first
+    v1.0.6 Windows asset looked like in Explorer.
+
+    The ico itself is checked too: the original icon.ico was a single 16x16
+    entry (872 bytes), which Windows scales up into a smudge rather than the
+    logo.
+    """
+
+    CONF = REPO / "desktop" / "src-tauri" / "tauri.conf.json"
+
+    def _conf(self) -> dict:
+        return json.loads(self.CONF.read_text(encoding="utf-8-sig"))
+
+    def _icon_path(self) -> pathlib.Path:
+        rel = self._conf()["bundle"]["windows"]["nsis"]["installerIcon"]
+        return self.CONF.parent / rel
+
+    def test_nsis_declares_installer_and_uninstaller_icons(self):
+        nsis = self._conf()["bundle"]["windows"]["nsis"]
+        for key in ("installerIcon", "uninstallerIcon"):
+            with self.subTest(key=key):
+                rel = nsis.get(key)
+                self.assertTrue(
+                    rel,
+                    f"bundle.windows.nsis.{key} is not set; without it the "
+                    "installer falls back to the NSIS globe icon",
+                )
+                self.assertTrue(
+                    (self.CONF.parent / rel).is_file(),
+                    f"{key} points at {rel}, which does not exist",
+                )
+
+    def test_the_installer_icon_covers_the_sizes_explorer_renders(self):
+        data = self._icon_path().read_bytes()
+        reserved, typ, count = struct.unpack("<HHH", data[:6])
+        self.assertEqual((reserved, typ), (0, 1), "not an .ico container")
+        widths = []
+        offset = 6
+        for _ in range(count):
+            width = data[offset]
+            widths.append(width or 256)
+            offset += 16
+        self.assertGreaterEqual(
+            len(widths), 4,
+            f"icon.ico has {len(widths)} size(s) {widths}; a multi-size ico "
+            "is what makes Explorer show the logo instead of a smudge",
+        )
+        self.assertGreaterEqual(max(widths), 128)
 
 
 class ReleaseArchiveGuardTest(unittest.TestCase):
