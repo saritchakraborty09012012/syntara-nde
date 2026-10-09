@@ -37,6 +37,7 @@ import tarfile
 import tempfile
 import unittest
 import zipfile
+import zlib
 
 REPO = pathlib.Path(__file__).resolve().parent.parent.parent
 TOOLS = REPO / "tools"
@@ -879,6 +880,123 @@ class InstallerIconGuardTest(unittest.TestCase):
             "is what makes Explorer show the logo instead of a smudge",
         )
         self.assertGreaterEqual(max(widths), 128)
+
+
+class RoundedLogoGuardTest(unittest.TestCase):
+    """The logo canvas is a rounded rectangle, not an opaque black square.
+
+    The master artwork draws a rounded glass tile but used to ship on a
+    square black canvas: on a dark surface the square disappears, on a
+    light one (browser tab, Explorer, the GitHub README) the logo reads as
+    a sharp black box, and the web app doubled the effect by clipping the
+    artwork with `border-radius: 3px`.
+
+    tools/make_logo_assets.py rounds the master and derives every favicon,
+    PWA icon and Tauri icon from it. This guard fails if any of them goes
+    back to square corners. It decodes the PNG itself with stdlib only -
+    Pillow is a tooling dependency of the generator, not a test dependency
+    of the suite.
+    """
+
+    PNGS = (
+        "assets/syntara-logo.png",
+        "web/public/syntara-logo.png",
+        "web/public/favicon-32.png",
+        "web/public/favicon-128.png",
+        "web/public/apple-touch-icon.png",
+        "site/public/syntara-logo.png",
+        "desktop/src-tauri/icons/256x256.png",
+        "desktop/src-tauri/icons/512x512.png",
+    )
+
+    @staticmethod
+    def _first_row(path: pathlib.Path) -> tuple[int, bytes]:
+        """Return (width, RGBA bytes of the top scanline), unfiltered."""
+        data = path.read_bytes()
+        if data[:8] != b"\x89PNG\r\n\x1a\n":
+            raise AssertionError(f"{path} is not a PNG")
+
+        width = height = depth = colour = interlace = None
+        idat = []
+        pos = 8
+        while pos < len(data):
+            length, = struct.unpack(">I", data[pos:pos + 4])
+            kind = data[pos + 4:pos + 8]
+            payload = data[pos + 8:pos + 8 + length]
+            if kind == b"IHDR":
+                width, height, depth, colour, _, _, interlace = \
+                    struct.unpack(">IIBBBBB", payload)
+            elif kind == b"IDAT":
+                idat.append(payload)
+            elif kind == b"IEND":
+                break
+            pos += 12 + length
+
+        if (depth, colour, interlace) != (8, 6, 0):
+            raise AssertionError(
+                f"{path} is {depth}-bit type-{colour} interlace-{interlace}; "
+                "this decoder expects the 8-bit non-interlaced RGBA the "
+                "logo generator writes"
+            )
+
+        row_len = width * 4
+        raw = zlib.decompress(b"".join(idat))
+        if len(raw) != height * (row_len + 1):
+            raise AssertionError(f"{path}: unexpected scanline layout")
+
+        filter_byte = raw[0]
+        row = bytearray(raw[1:row_len + 1])
+        if filter_byte == 0:
+            pass
+        elif filter_byte == 1:  # Sub: left neighbour in the same row
+            for i in range(4, row_len):
+                row[i] = (row[i] + row[i - 4]) & 0xFF
+        elif filter_byte == 2:  # Up: previous row, which is all zeros here
+            pass
+        elif filter_byte == 3:  # Average: floor(left / 2) with up == 0
+            for i in range(row_len):
+                left = row[i - 4] if i >= 4 else 0
+                row[i] = (row[i] + left // 2) & 0xFF
+        elif filter_byte == 4:  # Paeth with up == up-left == 0 reduces to left
+            for i in range(row_len):
+                left = row[i - 4] if i >= 4 else 0
+                row[i] = (row[i] + left) & 0xFF
+        else:
+            raise AssertionError(f"{path}: unknown PNG filter {filter_byte}")
+
+        return width, bytes(row)
+
+    def test_logo_corners_are_transparent(self):
+        for rel in self.PNGS:
+            with self.subTest(asset=rel):
+                path = REPO / rel
+                self.assertTrue(path.is_file(), f"{rel} is missing")
+                width, first_row = self._first_row(path)
+                for offset, corner in ((0, "top-left"),
+                                       (width * 4 - 4, "top-right")):
+                    alpha = first_row[offset + 3]
+                    self.assertEqual(
+                        alpha, 0,
+                        f"{rel} has an opaque {corner} corner (alpha="
+                        f"{alpha}); the square logo canvas is back",
+                    )
+
+    def test_web_favicon_covers_the_sizes_browsers_ask_for(self):
+        path = REPO / "web" / "public" / "favicon.ico"
+        data = path.read_bytes()
+        reserved, typ, count = struct.unpack("<HHH", data[:6])
+        self.assertEqual((reserved, typ), (0, 1), "not an .ico container")
+        widths = []
+        offset = 6
+        for _ in range(count):
+            widths.append(data[offset] or 256)
+            offset += 16
+        # The original file was a single 16x16 entry, which browsers scale
+        # into a blur; the generator writes 16, 32 and 48.
+        self.assertGreaterEqual(
+            max(widths), 32,
+            f"favicon.ico only offers {widths}; a single 16px entry is back",
+        )
 
 
 class ReleaseArchiveGuardTest(unittest.TestCase):

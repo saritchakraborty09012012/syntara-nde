@@ -40,7 +40,7 @@ export function Nav({ home = "" }: { home?: string }) {
           <img
             src="syntara-logo.png"
             alt="Syntara"
-            className="h-9 w-9 cut-sm border border-line object-cover shadow-[0_0_22px_rgb(69_224_255/0.35)]"
+            className="h-9 w-9 rounded-[18%] border border-line object-cover shadow-[0_0_22px_rgb(69_224_255/0.35)]"
           />
           <span className="leading-none">
             <span className="block font-display text-[15px] font-bold tracking-[0.28em] text-ink uppercase">
