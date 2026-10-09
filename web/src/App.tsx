@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import type { LucideIcon } from "lucide-react"
 import {
   Activity,
+  ArrowDown,
   ArrowUp,
   Bot,
   BrainCircuit,
@@ -69,6 +70,7 @@ import { installedEntries, installingGroups, type InstalledEntry, type Installin
 import { bestStarterModel, detectHardware, recommendationLabel, scoreModel } from "@/lib/model-hub"
 import { formatBytes, formatEta } from "@/lib/format"
 import { activeRequests, supportsCacheSlots } from "@/lib/runtime"
+import { checkForUpdate } from "@/lib/update-check"
 import { Markdown } from "@/components/Markdown"
 import { ModelFamilyPage } from "@/components/ModelFamilyPage"
 import { DownloadProgress, activeTasksFor } from "@/components/DownloadProgress"
@@ -364,6 +366,34 @@ export default function App() {
   const redownloadApproved = useRef(new Set<string>())
   const [dragging, setDragging] = useState(false)
   const [metrics, setMetrics] = useState<RunMetrics | null>(null)
+  /* Update offer (desktop only, see lib/update-check.ts): checked once a few
+     seconds after start so startup work settles first. A newer release opens
+     the dialog; Later (or closing it) keeps the down-arrow badge in the
+     sidebar so the offer stays reachable without nagging. */
+  const [updateRelease, setUpdateRelease] = useState<{ current: string; latest: string; url: string } | null>(null)
+  const [updatePopupOpen, setUpdatePopupOpen] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    const timer = window.setTimeout(() => {
+      void checkForUpdate().then((result) => {
+        if (cancelled || result.status !== "update-available") return
+        setUpdateRelease({ current: result.current, latest: result.latest, url: result.url })
+        setUpdatePopupOpen(true)
+      })
+    }, 2500)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [])
+  /* Rendered twice: beside the settings gear while the rail is expanded, and
+     above the runtime status dot while it is collapsed (the mini-actions row
+     is hidden on the rail). Hidden while the dialog itself is open. */
+  const updateBadge = updateRelease && !updatePopupOpen ? (
+    <button className="update-badge" onClick={() => setUpdatePopupOpen(true)} title={`Syntara ${updateRelease.latest} is available — open update details`} aria-label={`Syntara ${updateRelease.latest} is available. Open update details.`}>
+      <ArrowDown size={15} />
+    </button>
+  ) : null
 
   const conversation = state.conversations.find((item) => item.id === selectedConversationId) || state.conversations[0]
   const activeConversation = conversation || null
@@ -1853,6 +1883,7 @@ export default function App() {
         </div>
 
         <div className="sidebar-bottom">
+          {updateBadge ? <div className="update-badge-collapsed">{updateBadge}</div> : null}
           <button className="runtime-chip" onClick={() => setView("developer")} title="Open runtime controls" aria-label="Open runtime controls">
             <span className={cn("status-light", connected && "on")} />
             <div><strong>{runtimeStatus}</strong><small>localhost only by default</small></div>
@@ -1861,6 +1892,7 @@ export default function App() {
             <button onClick={() => updateSettings({ theme: state.settings.theme === "dark" ? "light" : "dark" })} title={state.settings.theme === "dark" ? "Switch to light theme" : "Switch to dark theme"} aria-label={state.settings.theme === "dark" ? "Switch to light theme" : "Switch to dark theme"}>
               {state.settings.theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
             </button>
+            {updateBadge}
             <button onClick={() => setView("settings")} title="Settings" aria-label="Settings"><Settings2 size={15} /></button>
           </div>
         </div>
@@ -2039,6 +2071,24 @@ export default function App() {
         {view === "developer" && <section className="view scroll-view"><div className="section-head"><div><span className="section-kicker">DEVELOPER PLATFORM</span><h2>One local API for everything.</h2><p>Desktop, CLI, Python, n8n and IDE integrations all use the same Syntara local control surface.</p></div></div><div className="dev-grid"><DevCard icon={Server} title="Local API" body="OpenAI-compatible HTTP endpoints on localhost by default." code={`${state.settings.baseUrl}`} onCopy={copy} copied={copied === "api"} copyKey="api" /><DevCard icon={Code2} title="Python SDK" body="Use locally installed models from Python without hosting weights anywhere." code={`from syntara import Syntara\nclient = Syntara()\nprint(client.chat(model="qwen", message="Hello"))`} onCopy={copy} copied={copied === "python"} copyKey="python" /><DevCard icon={Terminal} title="Developer CLI" body="Manage models, serve the runtime, create backups and run local agents." code={`syntara models list\nsyntara chat\nsyntara serve`} onCopy={copy} copied={copied === "cli"} copyKey="cli" /><DevCard icon={Zap} title="n8n" body="Point an HTTP Request/OpenAI node at localhost and keep inference on-device." code={`POST ${state.settings.baseUrl}/chat/completions`} onCopy={copy} copied={copied === "n8n"} copyKey="n8n" /></div><div className="integration-strip"><div><Code2 size={17} /><strong>VS Code</strong><span>Local chat + coding workflows through Syntara API.</span></div><div><Sparkles size={17} /><strong>Cursor-type IDEs</strong><span>Use OpenAI-compatible local endpoints.</span></div><div><Boxes size={17} /><strong>MCP / Plugins</strong><span>Permissioned tools and extensible integrations.</span></div></div></section>}
 
         {view === "settings" && <section className="view scroll-view"><div className="section-head"><div><span className="section-kicker">SETTINGS</span><h2>Your machine, your data, your controls.</h2><p>No account is required; settings and persistent state live locally.</p></div></div><div className="settings-grid"><div className="card-panel"><div className="panel-title"><span>About</span><Sparkles size={15} /></div><p className="panel-note">Syntara: The Universal Local AI Runtime by NDe: NoirDemons.</p><p className="panel-note">Local-first, privacy-first, open source. Your models run on your device.</p></div><div className="card-panel"><div className="panel-title"><span>Advanced</span><Terminal size={15} /></div><p className="panel-note">Reset removes chats, memories, agent configs and imported-model metadata from this browser. Files you already saved to disk are untouched.</p><button className="ghost-btn danger-text" onClick={() => setConfirmReset(true)}><Trash2 size={15} /> Reset app data</button></div><div className="card-panel"><div className="panel-title"><span>Help</span><CircleHelp size={15} /></div><div className="help-list">{helpItems.map((item) => <details key={item.q} className="help-item"><summary>{item.q}</summary><p>{item.a}</p></details>)}</div></div><div className="card-panel"><div className="panel-title"><span>Appearance</span><Settings2 size={15} /></div><label className="setting-row"><span>Theme</span><select value={state.settings.theme} onChange={(e) => updateSettings({ theme: e.target.value as ThemeMode })}><option value="dark">Dark</option><option value="light">Light</option><option value="system">System</option></select></label><label className="setting-row"><span>Reduced motion</span><input type="checkbox" checked={state.settings.reducedMotion} onChange={(e) => updateSettings({ reducedMotion: e.target.checked })} /></label></div><div className="card-panel"><div className="panel-title"><span>Runtime</span><Server size={15} /></div><label className="field-label">Local API base URL<input value={state.settings.baseUrl} onChange={(e) => updateSettings({ baseUrl: e.target.value })} /></label><label className="field-label">Default model<input value={state.settings.model} onChange={(e) => updateSettings({ model: e.target.value })} placeholder="Selected at runtime" /></label><label className="field-label">Performance mode<select value={state.settings.performanceMode} onChange={(e) => updateSettings({ performanceMode: e.target.value as AppSettings["performanceMode"] })}><option value="maximum">Maximum Performance</option><option value="balanced">Balanced</option><option value="efficiency">Efficiency</option><option value="battery">Battery Saving</option></select></label></div><div className="card-panel"><div className="panel-title"><span>Desktop behavior</span><SlidersHorizontal size={15} /></div><label className="setting-row"><span>Start with OS</span><input type="checkbox" checked={state.settings.autoStart} onChange={(e) => updateSettings({ autoStart: e.target.checked })} /></label><label className="setting-row"><span>Keep runtime in tray</span><input type="checkbox" checked={state.settings.tray} onChange={(e) => updateSettings({ tray: e.target.checked })} /></label></div><div className="card-panel"><div className="panel-title"><span>Backup & migration</span><FileDown size={15} /></div><p className="panel-note">Backups include chats, memories, projects, settings, agent configurations and model metadata — never model weights.</p><div className="backup-actions"><button className="primary-btn" onClick={exportBackup}><FileDown size={15} /> Create backup</button><button className="ghost-btn" onClick={() => backupRef.current?.click()}><FileUp size={15} /> Restore</button></div><input ref={backupRef} hidden type="file" accept=".syntara-backup,.json" onChange={(e) => void importBackup(e.target.files)} /></div>{qdmAvailable() ? <div className="card-panel"><div className="panel-title"><span>Host log</span><Terminal size={15} /></div><p className="panel-note">Tail of the local host log on this device — nothing leaves your machine.</p><div className="task-actions"><button className="ghost-btn" onClick={() => void loadHostLog()} disabled={hostLogBusy}>{hostLogBusy ? <LoaderCircle className="spin" size={15} /> : <Terminal size={15} />} {hostLogBusy ? "Reading…" : "Show last 200 lines"}</button>{hostLog && hostLog.exists ? <span className="panel-note">{hostLog.path}</span> : null}</div>{hostLog ? <pre className="health-json">{hostLog.exists ? (hostLog.lines.join("\n") || "(log exists but is empty)") : "No host log yet — it appears once the host starts."}</pre> : null}</div> : null}</div></section>}
+      {/* Update available: dismissible; "Later" leaves the badge in the
+          sidebar. Update opens the release page in the system browser, the
+          same external-link pattern the rest of the app uses. */}
+      {updateRelease && updatePopupOpen ? (
+        <div className="modal-backdrop" onMouseDown={() => setUpdatePopupOpen(false)}>
+          <div className="modal-card" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Update available">
+            <div className="panel-title">
+              <strong>Update available</strong>
+              <button className="icon-btn" onClick={() => setUpdatePopupOpen(false)} aria-label="Close"><X size={15} /></button>
+            </div>
+            <p className="panel-note">Syntara {updateRelease.latest} is out (you have {updateRelease.current}). It ships as the usual installer — your models, chats and settings stay where they are.</p>
+            <div className="modal-actions">
+              <button className="ghost-btn" onClick={() => setUpdatePopupOpen(false)}>Later</button>
+              <a className="primary-btn" href={updateRelease.url} target="_blank" rel="noreferrer" onClick={() => setUpdatePopupOpen(false)}><ArrowDown size={15} /> Update</a>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {confirmReset ? (
           <div className="modal-backdrop" onMouseDown={() => setConfirmReset(false)}>
             <div className="modal-card" onMouseDown={(e) => e.stopPropagation()}>

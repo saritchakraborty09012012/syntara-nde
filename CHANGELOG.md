@@ -5,6 +5,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- **The desktop app now tells you when an update exists.** A few seconds after
+  start it compares its own version against the latest GitHub release — one
+  unauthenticated GET to the public releases API, no local data in the request,
+  10 seconds timeout, and every failure (offline, rate limit, malformed payload)
+  collapses to silence rather than an error. A newer release opens an
+  "Update available" dialog with **Update** (the release page in the system
+  browser) and **Later**; dismissing it leaves a down-arrow badge in the
+  sidebar — beside the settings gear while the rail is expanded, above the
+  runtime status dot while it is collapsed — and clicking the badge reopens the
+  same dialog. The check runs only in the Tauri build: a browser deployment has
+  nothing to update itself with, so it never makes the request. The installed
+  version comes from `tauri.conf.json`, which this release syncs to `1.0.7`
+  together with `Cargo.toml`/`Cargo.lock`; versions that disagree (the old
+  `0.1.0`) would have made every build look permanently out of date.
+
+### Changed
+
+- **Every Syntara logo is a rounded rectangle now.** The artwork always drew a
+  rounded glass tile but shipped on an opaque black square, and the web app
+  clipped it with a 3px radius while the site nav used a diagonal `cut-sm`
+  clip-path — three different shapes for one mark. `tools/make_logo_assets.py`
+  fits each tile onto a transparent canvas, applies a supersampled rounded mask
+  with a soft outer bloom, and regenerates every consumer idempotently
+  (`--check` proves it in CI): the web app and site logos, the favicon set
+  (which also replaces a stray pixel-art placeholder and grows the `.ico` to
+  16/32/48px), and all Tauri app icons plus the NSIS installer icon, whose
+  embedded corners are now transparent instead of black. A packaging test
+  asserts the transparent corners so the old shape cannot come back.
+
 ### Fixed
 
 - **The macOS and Linux installers could not be built at all.** The installer

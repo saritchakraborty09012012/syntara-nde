@@ -82,6 +82,13 @@ a { color: inherit; text-decoration: none; }
 .sidebar-mini-actions button, .icon-btn { border: 1px solid var(--line); background: transparent; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 10px; cursor: pointer; color: var(--muted); transition: .18s; }
 .sidebar-mini-actions button:hover, .icon-btn:hover { color: var(--text); border-color: var(--line-strong); background: rgba(255,255,255,.04); }
 .icon-btn.danger:hover { color: var(--danger); }
+/* Update offer badge: beside the settings gear (expanded rail) or above the
+   runtime dot (collapsed rail, wrapped in .update-badge-collapsed). The
+   doubled selector out-specifies .sidebar-mini-actions button so the accent
+   wins over the neutral icon-button colors. */
+.update-badge, .sidebar-mini-actions .update-badge { width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid rgba(99,215,255,.55); border-radius: 10px; background: rgba(99,215,255,.10); color: var(--accent); box-shadow: 0 0 16px rgba(99,215,255,.30); cursor: pointer; transition: background .18s, border-color .18s, box-shadow .18s; }
+.update-badge:hover, .sidebar-mini-actions .update-badge:hover { color: var(--accent); border-color: var(--accent); background: rgba(99,215,255,.20); box-shadow: 0 0 24px rgba(99,215,255,.50); }
+.update-badge-collapsed { display: none; justify-self: center; }
 
 .syntara-main { min-width: 0; min-height: 0; height: 100%; overflow: hidden; display: flex; flex-direction: column; }
 .topbar { min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 24px; border-bottom: 1px solid var(--line); backdrop-filter: blur(20px); background: rgba(7,8,11,.52); position: sticky; top: 0; z-index: 10; }
@@ -478,12 +485,17 @@ button, input, textarea, select { font-family: inherit; }
 .modal-card { border-radius: 3px; background: var(--panel); border-color: var(--line-strong); box-shadow: 0 0 60px rgba(69,224,255,.08), var(--shadow); }
 .metric-card strong { font-family: 'Orbitron', sans-serif; letter-spacing: .02em; }
 .health-json, .dev-card pre, .agent-log > div > span { font-family: 'Share Tech Mono', monospace; }
-@media (max-width: 1000px) { .syntara-shell { grid-template-columns: 92px minmax(0,1fr); } }
+/* Narrow window: the rail shrinks to 92px, so the mini-actions row keeps its
+   two buttons and the update badge moves to the slot above the runtime dot
+   (same placement the collapsed rail uses) instead of clipping the gear. */
+@media (max-width: 1000px) { .syntara-shell { grid-template-columns: 92px minmax(0,1fr); } .sidebar-mini-actions .update-badge { display: none; } .update-badge-collapsed { display: grid; } }
 @media (max-width: 760px) { .view.scroll-view { padding: 22px 14px; } .topbar { padding: 12px 14px; } }
 
 /* Light theme: override suit-skin hardcoded dark surfaces. Vars live in :root[data-theme="light"]. */
 :root[data-theme="light"] .syntara-sidebar:after { color: rgba(0,110,150,.35); }
 :root[data-theme="light"] .brand-mark { border-color: rgba(0,120,160,.55); box-shadow: 0 0 22px rgba(0,120,160,.18); }
+:root[data-theme="light"] .update-badge,
+:root[data-theme="light"] .sidebar-mini-actions .update-badge { border-color: rgba(0,120,160,.55); background: rgba(0,140,190,.10); box-shadow: 0 0 14px rgba(0,120,160,.18); }
 :root[data-theme="light"] .new-chat { background: linear-gradient(90deg, rgba(0,140,190,.14), rgba(0,150,110,.06)); border-color: rgba(0,120,160,.4); color: var(--text); }
 :root[data-theme="light"] .nav-item:hover { background: rgba(0,140,190,.08); }
 :root[data-theme="light"] .nav-item.active { background: linear-gradient(90deg, rgba(0,140,190,.14), rgba(28,95,214,.06)); box-shadow: inset 0 0 24px rgba(0,140,190,.06); }
@@ -541,6 +553,7 @@ select option { background-color: var(--bg-soft); color: var(--text); }
   .nav-collapsed .nav-item span,
   .nav-collapsed .runtime-chip div,
   .nav-collapsed .sidebar-mini-actions { display: none; }
+  .nav-collapsed .update-badge-collapsed { display: grid; }
   .nav-collapsed .new-chat { padding: 10px; justify-content: center; }
   .nav-collapsed .nav-item { justify-content: center; }
   .nav-collapsed .nav-label { display: none; }
