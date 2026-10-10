@@ -30,6 +30,25 @@ export function summarizeArgs(name: string, args: Record<string, unknown>): stri
       const task = typeof args.task === "string" && args.task.trim() ? args.task.trim() : "(missing task)"
       return task.length > 96 ? `${task.slice(0, 96)}…` : task
     }
+    case "git": {
+      const gitArgs = Array.isArray(args.args) ? args.args.filter((part): part is string => typeof part === "string") : []
+      if (!gitArgs.length) return "(missing args)"
+      const joined = gitArgs.join(" ")
+      return joined.length > 96 ? `${joined.slice(0, 96)}…` : joined
+    }
+    case "submit_plan":
+      return `${Array.isArray(args.steps) ? args.steps.length : 0} step(s)`
+    case "ask_user": {
+      const question = typeof args.question === "string" && args.question.trim() ? args.question.trim() : "(missing question)"
+      return question.length > 96 ? `${question.slice(0, 96)}…` : question
+    }
+    case "preview_open": {
+      const url = typeof args.url === "string" && args.url.trim() ? args.url.trim() : "last discovered server"
+      return url.length > 96 ? `${url.slice(0, 96)}…` : url
+    }
+    case "preview_reload":
+    case "console_read":
+      return "—"
     default: {
       const keys = Object.keys(args)
       return keys.length ? keys.join(", ") : "—"

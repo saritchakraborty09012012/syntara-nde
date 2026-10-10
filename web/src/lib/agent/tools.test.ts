@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { agentToolsForMode, AGENT_TOOL_NAMES, READ_ONLY_TOOL_NAMES, SUBAGENT_TOOL_NAMES } from "./tools"
+import { agentToolsForMode, AGENT_TOOL_NAMES, FRONTEND_TOOL_NAMES, READ_ONLY_TOOL_NAMES, SUBAGENT_TOOL_NAMES } from "./tools"
 import { modePolicy } from "./sessions"
 
 const names = (result: ReturnType<typeof agentToolsForMode>) =>
@@ -28,9 +28,15 @@ describe("agentToolsForMode", () => {
     expect(names(agentToolsForMode(modePolicy("debug"), available))).toEqual(AGENT_TOOL_NAMES)
   })
 
-  it("binds nothing without the desktop shell or a project folder", () => {
-    expect(names(agentToolsForMode(modePolicy("build"), { available: false, hasProject: true }))).toEqual([])
-    expect(names(agentToolsForMode(modePolicy("build"), { available: true, hasProject: false }))).toEqual([])
+  it("binds only the frontend tools without the desktop shell or a project folder", () => {
+    const frontend = [...FRONTEND_TOOL_NAMES].sort()
+    const noShell = names(agentToolsForMode(modePolicy("build"), { available: false, hasProject: true })).sort()
+    const noProject = names(agentToolsForMode(modePolicy("build"), { available: true, hasProject: false })).sort()
+    expect(noShell).toEqual(frontend)
+    expect(noProject).toEqual(frontend)
+    for (const desktopOnly of ["fs_read", "fs_write", "fs_list", "proc_run", "git", "subagent", "todo"]) {
+      expect(noShell).not.toContain(desktopOnly)
+    }
   })
 
   it("the sub-agent surface is read-only without todo or nested sub-agents", () => {

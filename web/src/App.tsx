@@ -115,7 +115,6 @@ import { dictationLanguage, speechRecognitionSupported, startDictation, type Dic
 import { runAgentLoop, type AgentEvent } from "@/lib/agent/loop"
 import { agentToolsForMode, AGENT_TOOL_SPECS, SUBAGENT_TOOL_NAMES } from "@/lib/agent/tools"
 import { createAgentExecutor } from "@/lib/agent/execute"
-import { summarizeArgs } from "@/lib/agent/ui"
 import { agentToolsAvailable } from "@/lib/agent-tools"
 import type { GrantStore, PermissionDecision } from "@/lib/agent/permissions"
 import {
@@ -126,17 +125,23 @@ import {
   loadManifest,
   loadSession,
   modePolicy,
+  parsePlanItems,
   saveSession,
   setActiveSession as setActiveStoredSession,
+  suggestSessionTitle,
   titleFromTask,
   type AgentMode,
   type AgentSession,
   type AgentTurn,
 } from "@/lib/agent/sessions"
+import { validateLocalPreviewUrl } from "@/lib/agent/webfetch"
+import { searchProjectFiles } from "@/lib/agent/file-search"
+import { getConsoleLines, installConsoleRing } from "@/lib/console-ring"
 import { AgentSessions } from "@/components/agent/AgentSessions"
 import { AgentStage } from "@/components/agent/AgentStage"
 import { AgentComposer } from "@/components/agent/AgentComposer"
 import { AgentDocks, type LastRunSummary } from "@/components/agent/AgentDocks"
+import { AgentFolderBar } from "@/components/agent/AgentFolderBar"
 import { cn } from "@/lib/utils"
 
 const message = (role: ChatMessage["role"], content: string, images?: string[]): ChatMessage => {
@@ -348,6 +353,24 @@ export default function App() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [permissionAsk, setPermissionAsk] = useState<{ tool: string; args: Record<string, unknown> } | null>(null)
   const permissionResolver = useRef<((decision: PermissionDecision) => void) | null>(null)
+  /* Phase 3 docks: plan review, pending question, preview reload nonce and
+     the approval nudge popup. The question answer resolver mirrors the
+     permission resolver (one pending prompt per run). */
+  const [agentPlan, setAgentPlan] = useState<{ text: string } | null>(null)
+  const [agentQuestion, setAgentQuestion] = useState<{ text: string; options: string[] } | null>(null)
+  const questionResolver = useRef<((answer: string) => void) | null>(null)
+  const [previewNonce, setPreviewNonce] = useState(0)
+  const [approvalNudgeOpen, setApprovalNudgeOpen] = useState(false)
+  const permissionAskCount = useRef(0)
+  const previewUrlRef = useRef<string | null>(null)
+  useEffect(() => {
+    previewUrlRef.current = previewUrl
+  }, [previewUrl])
+  /* Capture this window's console for the console_read tool — installed
+     once, wraps rather than replaces the original console methods. */
+  useEffect(() => {
+    installConsoleRing()
+  }, [])
   /* Topbar chips: branch of the active project's git repo (desktop only,
      null elsewhere) and when chat auto-summary last folded the transcript. */
   const [gitBranch, setGitBranch] = useState<string | null>(null)
@@ -1603,6 +1626,8 @@ export default function App() {
     setAgentPrompt("")
     setPreviewUrl(null)
     setAgentTodo([])
+    setAgentPlan(null)
+    setAgentQuestion(null)
     try { saveSession(session) } catch { /* quota — sidebar still shows it for this session */ }
   }
 
@@ -1615,6 +1640,8 @@ export default function App() {
     setActiveSessionId(id)
     setPreviewUrl(null)
     setAgentTodo([])
+    setAgentPlan(null)
+    setAgentQuestion(null)
     try { setActiveStoredSession(id) } catch { /* pointer is cosmetic on quota */ }
   }
 
@@ -1734,8 +1761,9 @@ export default function App() {
 
   const dismissStarter = () => updateSettings({ starterSuggestionSeen: true })
 
-  const runAgent = async () => {
-    const text = agentPrompt.trim()
+  const runAgent = async (override?: { text?: string; mode?: AgentMode }) => {
+    const text = (override?.text ?? agentPrompt).trim()
+    const mode = override?.mode ?? agentMode
     const model = effectiveModel
     if (!text || agentBusy) return
     if (!model) {
@@ -1743,7 +1771,7 @@ export default function App() {
       return
     }
     const root = activeProject?.rootPath ?? null
-    const policy = modePolicy(agentMode)
+    const policy = modePolicy(mode)
     if (policy.tools !== "none" && agentToolsAvailable() && !root) {
       setRuntimeError("Choose a project folder for the agent before running it.")
       return
@@ -1753,11 +1781,12 @@ export default function App() {
     const docBlock = pendingDocs.map((doc) => `\n\n--- attachment: ${doc.name} ---\n${doc.content}`).join("")
     const task = text + docBlock
     const now = Date.now()
-    const turn = createTurn(task, agentMode, now)
+    const turn = createTurn(task, mode, now)
 
     /* A turn belongs to a session: reuse the active one, or start the
        first session lazily so an empty sidebar is never a dead end. */
     const existing = activeSessionId ? agentSessions.find((session) => session.id === activeSessionId) : undefined
+    const firstTurn = !existing || existing.turns.length === 0
     const session = existing ?? createSession(model, now)
     const patched: AgentSession = {
       ...session,
@@ -1770,6 +1799,7 @@ export default function App() {
     setActiveSessionId(patched.id)
     setAgentPrompt("")
     setPendingDocs([])
+    setAgentPlan(null)
     setAgentBusy(true)
 
     /* Mode decides the tool surface before the permission gate: chat and
@@ -1787,6 +1817,9 @@ export default function App() {
     const sessionGrants = new Set<string>()
     const agent = state.agents[0]
     const basePrompt = agent?.systemPrompt || defaultAgent.systemPrompt
+    /* Tracks whether submit_plan already produced the plan dock content,
+       so the plan-mode text fallback only runs when it did not. */
+    let planSubmitted = false
     try {
       const result = await runAgentLoop({
         baseUrl: state.settings.baseUrl,
@@ -1799,6 +1832,7 @@ export default function App() {
           onTodo: setAgentTodo,
           onServerUrl: setPreviewUrl,
           runSubagent: async (subTask, signal) => {
+            pushTurnEvent(patched.id, turn.id, { type: "subagent_start", task: subTask })
             const sub = await runAgentLoop({
               baseUrl: state.settings.baseUrl,
               model,
@@ -1825,20 +1859,65 @@ export default function App() {
               maxSteps: 6,
               maxTokens,
             })
-            if (sub.status === "done") {
+            const ok = sub.status === "done"
+            const summary = ok
+              ? (sub.text ?? "(the sub-agent returned no report)").slice(0, 200)
+              : sub.reason || sub.status
+            pushTurnEvent(patched.id, turn.id, { type: "subagent_end", ok, summary })
+            if (ok) {
               return { ok: true, output: sub.text ?? "(the sub-agent returned no report)" }
             }
-            return {
-              ok: false,
-              output: sub.reason ? `sub-agent stopped (${sub.reason})` : `sub-agent stopped (${sub.status})`,
+            return { ok: false, output: `sub-agent stopped (${summary})` }
+          },
+          onPlan: (items) => {
+            planSubmitted = true
+            setAgentPlan({ text: items.map((item, index) => `${index + 1}. ${item}`).join("\n") })
+          },
+          askUser: (question, options) =>
+            new Promise<string>((resolve) => {
+              questionResolver.current = resolve
+              setAgentQuestion({ text: question, options: options ?? [] })
+            }),
+          onEvent: (event) => pushTurnEvent(patched.id, turn.id, event),
+          previewOpen: async (url) => {
+            const target = url || previewUrlRef.current
+            if (!target) {
+              return { ok: false, output: "no local dev-server URL is known yet — start one with proc_run first" }
             }
+            const check = validateLocalPreviewUrl(target)
+            if (!check.ok) return { ok: false, output: check.reason }
+            setPreviewUrl(check.url)
+            return { ok: true, output: `preview opened at ${check.url}` }
+          },
+          previewReload: async () => {
+            if (!previewUrlRef.current) return { ok: false, output: "no preview is open" }
+            setPreviewNonce((value) => value + 1)
+            return { ok: true, output: `preview reloaded (${previewUrlRef.current})` }
+          },
+          readConsole: async () => {
+            const lines = getConsoleLines()
+            if (!lines.length) {
+              return {
+                ok: true,
+                output:
+                  "(the Syntara window console is empty)\n[scope: this window only — preview page console lines are not captured in this build]",
+              }
+            }
+            return { ok: true, output: lines.slice(-60).join("\n") }
           },
         }),
-        askPermission: (tool, args) =>
-          new Promise<PermissionDecision>((resolve) => {
+        askPermission: (tool, args) => {
+          /* Approval mode: "auto" answers every gated call without a dialog
+             so an engaged run never stalls; repeated asks in "ask" mode
+             surface the one-time nudge that offers it. */
+          if (state.settings.agentApprovalMode === "auto") return Promise.resolve<PermissionDecision>("once")
+          permissionAskCount.current += 1
+          if (permissionAskCount.current >= 3 && !state.settings.approvalNudgeSeen) setApprovalNudgeOpen(true)
+          return new Promise<PermissionDecision>((resolve) => {
             permissionResolver.current = resolve
             setPermissionAsk({ tool, args })
-          }),
+          })
+        },
         projectId: activeProject?.id ?? null,
         sessionGrants,
         grantStore,
@@ -1852,6 +1931,18 @@ export default function App() {
       const tokensPerSec = totalMs > 100 && tokens > 0 ? Math.round((tokens / (totalMs / 1000)) * 10) / 10 : 0
       setMetrics({ kind: "agent", tokensPerSec, firstTokenMs: 0, totalMs, tokens })
       finishTurn(patched.id, turn.id, result.status === "done" ? "done" : result.status === "interrupted" ? "stopped" : "error")
+      /* Plan-mode fallback: a numbered answer becomes a reviewable plan
+         when the model never called submit_plan. */
+      if (mode === "plan" && result.status === "done" && result.text && !planSubmitted) {
+        const items = parsePlanItems(result.text)
+        if (items.length) setAgentPlan({ text: items.join("\n") })
+      }
+      if (result.status === "done") {
+        /* First-run naming is best-effort; every finished run may leave one
+           short project memory when memory is enabled. */
+        if (firstTurn) void nameSessionLater(patched.id, task, model)
+        rememberAgentRun(root, task, result.text)
+      }
     } catch (error) {
       /* The loop feeds expected failures back as events; reaching this
          branch means something unexpected broke in the wiring itself. */
@@ -1859,12 +1950,68 @@ export default function App() {
       finishTurn(patched.id, turn.id, "error")
     } finally {
       if (permissionResolver.current) settlePermission("deny")
+      if (questionResolver.current) {
+        questionResolver.current("(the run stopped before the question was answered)")
+        questionResolver.current = null
+        setAgentQuestion(null)
+      }
       abortRef.current = null
       setAgentBusy(false)
       /* Runs can commit (proc_run git …) — re-read the branch so the chip
          reflects what the agent actually did. */
       if (root) void readGitBranch(root).then(setGitBranch)
     }
+  }
+
+  /* Question dock: resolves the parked ask_user tool call. */
+  const answerQuestion = (answer: string) => {
+    questionResolver.current?.(answer)
+    questionResolver.current = null
+    setAgentQuestion(null)
+  }
+
+  /* Plan dock: approving clears the review, switches the default mode to
+     Build and runs the edited plan as a fresh task. */
+  const approvePlan = () => {
+    const planText = agentPlan?.text.trim()
+    if (!planText || agentBusy) return
+    setAgentPlan(null)
+    updateSettings({ agentDefaultMode: "build" })
+    void runAgent({ text: `Execute this approved plan:\n\n${planText}`, mode: "build" })
+  }
+  const dismissPlan = () => setAgentPlan(null)
+  const editPlanText = (text: string) => setAgentPlan({ text })
+
+  /* Model-assisted session naming (phase 4): one cheap call after the
+     first finished run; failures keep the deterministic task-line title. */
+  const nameSessionLater = async (sessionId: string, task: string, model: string) => {
+    const title = await suggestSessionTitle({ baseUrl: state.settings.baseUrl, model, task })
+    if (!title) return
+    setAgentSessions((list) =>
+      list.map((session) => (session.id === sessionId ? { ...session, title, updatedAt: Date.now() } : session)),
+    )
+  }
+
+  /* Per-project memory wiring (phase 3): one short summary memory per
+     finished run, linked from ProjectItem.memoryIds; duplicates collapse. */
+  const rememberAgentRun = (root: string | null, task: string, summary: string | null) => {
+    if (!root || !state.settings.memoryEnabled || !summary?.trim()) return
+    const project = activeProject
+    if (!project) return
+    const short = summary.trim().replace(/\s+/g, " ").slice(0, 240)
+    const content = `${project.name}: ${titleFromTask(task)} → ${short}`
+    setState((current) => {
+      if (current.memories.some((memory) => memory.content === content)) return current
+      const now = Date.now()
+      const id = createId("memory")
+      return {
+        ...current,
+        memories: [{ id, content, category: "project", createdAt: now, updatedAt: now }, ...current.memories],
+        projects: current.projects.map((item) =>
+          item.id === project.id ? { ...item, memoryIds: [id, ...(item.memoryIds ?? [])], updatedAt: now } : item,
+        ),
+      }
+    })
   }
 
   const patchDownload = (id: string, partial: Partial<DownloadTask>) => {
@@ -2463,6 +2610,7 @@ export default function App() {
               onPickFolder={() => void pickAgentFolder()}
               onRevoke={revokeGrant}
               onCollapse={() => updateSettings({ agentRailCollapsed: true })}
+              smart={!!selectedModel}
             />
             )}
             <div className="ag-center">
@@ -2497,17 +2645,81 @@ export default function App() {
                 onRemoveAttachment={(name) => setPendingDocs((items) => items.filter((item) => item.name !== name))}
                 onAttachFiles={(files) => attachDocuments(Array.from(files || []).filter((file) => !file.type.startsWith("image/")))}
                 hint={composerHint}
+                suggestions={AGENT_SUGGESTIONS}
+              />
+              <AgentFolderBar
+                projects={state.projects.map((project) => ({ id: project.id, name: project.name }))}
+                activeId={activeProject?.id ?? null}
+                onSelect={(id) => updateSettings({ selectedProjectId: id })}
+                onNewProject={() => void pickAgentFolder()}
+                canPickFolder={qdmAvailable()}
+                onSearch={
+                  agentToolsAvailable() && activeProject?.rootPath
+                    ? (query) => searchProjectFiles(activeProject.rootPath as string, query)
+                    : undefined
+                }
+                onPickResult={(path) =>
+                  setAgentPrompt((current) => (current.trim() ? `${current.trim()} \`${path}\`` : `\`${path}\``))
+                }
               />
             </div>
             <AgentDocks
               todo={agentTodo}
               running={agentBusy}
+              startedAt={agentBusy && activeAgentSession?.turns.length
+                ? activeAgentSession.turns[activeAgentSession.turns.length - 1].at
+                : null}
+              events={activeAgentSession?.turns.length
+                ? activeAgentSession.turns[activeAgentSession.turns.length - 1].events
+                : []}
               lastRun={lastAgentRun}
+              permission={permissionAsk}
+              permissionNote={
+                activeProject
+                  ? `Project: ${activeProject.name} — "Always allow" is stored on this project.`
+                  : `No project folder — "Always allow" applies to this session only.`
+              }
+              onSettlePermission={settlePermission}
+              question={agentQuestion}
+              onAnswerQuestion={answerQuestion}
+              plan={agentPlan}
+              onPlanText={editPlanText}
+              onApprovePlan={approvePlan}
+              onDismissPlan={dismissPlan}
               previewUrl={previewUrl}
+              previewNonce={previewNonce}
               onClosePreview={() => setPreviewUrl(null)}
+              onReloadPreview={() => setPreviewNonce((value) => value + 1)}
               copiedKey={copied}
               onCopy={copy}
             />
+            {approvalNudgeOpen ? (
+              <div className="approval-nudge" role="status">
+                <p>Feeling stuck? Approve for me for faster performance. We respect your privacy.</p>
+                <div className="ag-dock-actions">
+                  <button
+                    type="button"
+                    className="primary-btn"
+                    onClick={() => {
+                      updateSettings({ agentApprovalMode: "auto", approvalNudgeSeen: true })
+                      setApprovalNudgeOpen(false)
+                    }}
+                  >
+                    Approve for me
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost-btn"
+                    onClick={() => {
+                      updateSettings({ approvalNudgeSeen: true })
+                      setApprovalNudgeOpen(false)
+                    }}
+                  >
+                    Keep asking
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </section>
         )}
 
@@ -2523,7 +2735,7 @@ export default function App() {
 
         {view === "developer" && <section className="view scroll-view"><div className="section-head"><div><span className="section-kicker">DEVELOPER PLATFORM</span><h2>One local API for everything.</h2><p>Desktop, CLI, Python, n8n and IDE integrations all use the same Syntara local control surface.</p></div></div><div className="dev-grid"><DevCard icon={Server} title="Local API" body="OpenAI-compatible HTTP endpoints on localhost by default." code={`${state.settings.baseUrl}`} onCopy={copy} copied={copied === "api"} copyKey="api" /><DevCard icon={Code2} title="Python SDK" body="Use locally installed models from Python without hosting weights anywhere." code={`from syntara import Syntara\nclient = Syntara()\nprint(client.chat(model="qwen", message="Hello"))`} onCopy={copy} copied={copied === "python"} copyKey="python" /><DevCard icon={Terminal} title="Developer CLI" body="Manage models, serve the runtime, create backups and run local agents." code={`syntara models list\nsyntara chat\nsyntara serve`} onCopy={copy} copied={copied === "cli"} copyKey="cli" /><DevCard icon={Zap} title="n8n" body="Point an HTTP Request/OpenAI node at localhost and keep inference on-device." code={`POST ${state.settings.baseUrl}/chat/completions`} onCopy={copy} copied={copied === "n8n"} copyKey="n8n" /></div><div className="integration-strip"><div><Code2 size={17} /><strong>VS Code</strong><span>Local chat + coding workflows through Syntara API.</span></div><div><Sparkles size={17} /><strong>Cursor-type IDEs</strong><span>Use OpenAI-compatible local endpoints.</span></div><div><Boxes size={17} /><strong>MCP / Plugins</strong><span>Permissioned tools and extensible integrations.</span></div></div></section>}
 
-        {view === "settings" && <section className="view scroll-view"><div className="section-head"><div><span className="section-kicker">SETTINGS</span><h2>Your machine, your data, your controls.</h2><p>No account is required; settings and persistent state live locally.</p></div></div><div className="settings-grid"><div className="card-panel"><div className="panel-title"><span>About</span><Sparkles size={15} /></div><p className="panel-note">Syntara: The Universal Local AI Runtime by NDe: NoirDemons.</p><p className="panel-note">Local-first, privacy-first, open source. Your models run on your device.</p></div><div className="card-panel"><div className="panel-title"><span>Advanced</span><Terminal size={15} /></div><p className="panel-note">Reset removes chats, memories, agent configs and imported-model metadata from this browser. Files you already saved to disk are untouched.</p><button className="ghost-btn danger-text" onClick={() => setConfirmReset(true)}><Trash2 size={15} /> Reset app data</button></div><div className="card-panel"><div className="panel-title"><span>Help</span><CircleHelp size={15} /></div><div className="help-list">{helpItems.map((item) => <details key={item.q} className="help-item"><summary>{item.q}</summary><p>{item.a}</p></details>)}</div></div><div className="card-panel"><div className="panel-title"><span>Appearance</span><Settings2 size={15} /></div><label className="setting-row"><span>Theme</span><select value={state.settings.theme} onChange={(e) => updateSettings({ theme: e.target.value as ThemeMode })}><option value="dark">Dark</option><option value="light">Light</option><option value="system">System</option></select></label><label className="setting-row"><span>Reduced motion</span><input type="checkbox" checked={state.settings.reducedMotion} onChange={(e) => updateSettings({ reducedMotion: e.target.checked })} /></label><label className="setting-row"><span>Chat voice language</span><select value={state.settings.chatVoiceLanguage ?? state.settings.voiceLanguage ?? ""} onChange={(e) => updateSettings({ chatVoiceLanguage: e.target.value })} title="Language used by the chat composer microphone"><option value="">Browser default</option><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="hi-IN">हिन्दी (Hindi)</option><option value="bn-IN">বাংলা (Bengali)</option><option value="es-ES">Español</option><option value="fr-FR">Français</option><option value="de-DE">Deutsch</option><option value="ja-JP">日本語</option><option value="zh-CN">中文 (简体)</option></select></label><label className="setting-row"><span>Agent voice language</span><select value={state.settings.agentVoiceLanguage ?? state.settings.voiceLanguage ?? ""} onChange={(e) => updateSettings({ agentVoiceLanguage: e.target.value })} title="Language used by the agent composer microphone"><option value="">Browser default</option><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="hi-IN">हिन्दी (Hindi)</option><option value="bn-IN">বাংলা (Bengali)</option><option value="es-ES">Español</option><option value="fr-FR">Français</option><option value="de-DE">Deutsch</option><option value="ja-JP">日本語</option><option value="zh-CN">中文 (简体)</option></select></label></div><div className="card-panel"><div className="panel-title"><span>Agent</span><Settings2 size={15} /></div><label className="field-label">System prompt<textarea rows={3} value={state.agents[0]?.systemPrompt ?? defaultAgent.systemPrompt} onChange={(e) => updateAgentSystemPrompt(e.target.value)} placeholder="How the agent should behave across runs" /></label><label className="setting-row"><span>Mode for new runs</span><select value={agentMode} onChange={(e) => updateSettings({ agentDefaultMode: e.target.value as AgentMode })} title="Preselected mode in the agent composer; applies to chat and agent runs alike">{AGENT_MODES.map((mode) => <option key={mode.id} value={mode.id}>{mode.label}</option>)}</select></label><label className="setting-row"><span>Max steps per run</span><select value={agentMaxSteps} onChange={(e) => updateSettings({ agentMaxSteps: Number(e.target.value) })} title="Step budget: each tool call or answer round counts as one step">{[4, 8, 12, 16, 24].map((n) => <option key={n} value={n}>{n} steps</option>)}</select></label></div><div className="card-panel"><div className="panel-title"><span>Runtime</span><Server size={15} /></div><label className="field-label">Local API base URL<input value={state.settings.baseUrl} onChange={(e) => updateSettings({ baseUrl: e.target.value })} /></label><label className="field-label">Default model<input value={state.settings.model} onChange={(e) => updateSettings({ model: e.target.value })} placeholder="Selected at runtime" /></label><label className="field-label">Performance mode<select value={state.settings.performanceMode} onChange={(e) => updateSettings({ performanceMode: e.target.value as AppSettings["performanceMode"] })}><option value="maximum">Maximum Performance</option><option value="balanced">Balanced</option><option value="efficiency">Efficiency</option><option value="battery">Battery Saving</option></select></label></div><div className="card-panel"><div className="panel-title"><span>Desktop behavior</span><SlidersHorizontal size={15} /></div><label className="setting-row"><span>Start with OS</span><input type="checkbox" checked={state.settings.autoStart} onChange={(e) => updateSettings({ autoStart: e.target.checked })} /></label><label className="setting-row"><span>Keep runtime in tray</span><input type="checkbox" checked={state.settings.tray} onChange={(e) => updateSettings({ tray: e.target.checked })} /></label></div><div className="card-panel"><div className="panel-title"><span>Backup & migration</span><FileDown size={15} /></div><p className="panel-note">Backups include chats, memories, projects, settings, agent configurations and model metadata — never model weights.</p><div className="backup-actions"><button className="primary-btn" onClick={exportBackup}><FileDown size={15} /> Create backup</button><button className="ghost-btn" onClick={() => backupRef.current?.click()}><FileUp size={15} /> Restore</button></div><input ref={backupRef} hidden type="file" accept=".syntara-backup,.json" onChange={(e) => void importBackup(e.target.files)} /></div>{qdmAvailable() ? <div className="card-panel"><div className="panel-title"><span>Host log</span><Terminal size={15} /></div><p className="panel-note">Tail of the local host log on this device — nothing leaves your machine.</p><div className="task-actions"><button className="ghost-btn" onClick={() => void loadHostLog()} disabled={hostLogBusy}>{hostLogBusy ? <LoaderCircle className="spin" size={15} /> : <Terminal size={15} />} {hostLogBusy ? "Reading…" : "Show last 200 lines"}</button>{hostLog && hostLog.exists ? <span className="panel-note">{hostLog.path}</span> : null}</div>{hostLog ? <pre className="health-json">{hostLog.exists ? (hostLog.lines.join("\n") || "(log exists but is empty)") : "No host log yet — it appears once the host starts."}</pre> : null}</div> : null}</div></section>}
+        {view === "settings" && <section className="view scroll-view"><div className="section-head"><div><span className="section-kicker">SETTINGS</span><h2>Your machine, your data, your controls.</h2><p>No account is required; settings and persistent state live locally.</p></div></div><div className="settings-grid"><div className="card-panel"><div className="panel-title"><span>About</span><Sparkles size={15} /></div><p className="panel-note">Syntara: The Universal Local AI Runtime by NDe: NoirDemons.</p><p className="panel-note">Local-first, privacy-first, open source. Your models run on your device.</p></div><div className="card-panel"><div className="panel-title"><span>Advanced</span><Terminal size={15} /></div><p className="panel-note">Reset removes chats, memories, agent configs and imported-model metadata from this browser. Files you already saved to disk are untouched.</p><button className="ghost-btn danger-text" onClick={() => setConfirmReset(true)}><Trash2 size={15} /> Reset app data</button></div><div className="card-panel"><div className="panel-title"><span>Help</span><CircleHelp size={15} /></div><div className="help-list">{helpItems.map((item) => <details key={item.q} className="help-item"><summary>{item.q}</summary><p>{item.a}</p></details>)}</div></div><div className="card-panel"><div className="panel-title"><span>Chat</span><MessageSquare size={15} /></div><label className="setting-row"><span>Voice language</span><select value={state.settings.chatVoiceLanguage ?? state.settings.voiceLanguage ?? ""} onChange={(e) => updateSettings({ chatVoiceLanguage: e.target.value })} title="Language used by the chat composer microphone"><option value="">Browser default</option><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="hi-IN">हिन्दी (Hindi)</option><option value="bn-IN">বাংলা (Bengali)</option><option value="es-ES">Español</option><option value="fr-FR">Français</option><option value="de-DE">Deutsch</option><option value="ja-JP">日本語</option><option value="zh-CN">中文 (简体)</option></select></label></div><div className="card-panel"><div className="panel-title"><span>Agent</span><Zap size={15} /></div><p className="panel-note">Defaults for new agent runs; per-run mode and model stay in the composer.</p><label className="setting-row"><span>Voice language</span><select value={state.settings.agentVoiceLanguage ?? state.settings.voiceLanguage ?? ""} onChange={(e) => updateSettings({ agentVoiceLanguage: e.target.value })} title="Language used by the agent composer microphone"><option value="">Browser default</option><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="hi-IN">हिन्दी (Hindi)</option><option value="bn-IN">বাংলা (Bengali)</option><option value="es-ES">Español</option><option value="fr-FR">Français</option><option value="de-DE">Deutsch</option><option value="ja-JP">日本語</option><option value="zh-CN">中文 (简体)</option></select></label><label className="setting-row"><span>Default mode</span><select value={state.settings.agentDefaultMode ?? "build"} onChange={(e) => updateSettings({ agentDefaultMode: e.target.value as AgentMode })}><option value="plan">Plan (review before acting)</option><option value="build">Build (act with approvals)</option></select></label><label className="setting-row"><span>Max steps</span><select value={String(state.settings.agentMaxSteps ?? 8)} onChange={(e) => updateSettings({ agentMaxSteps: Number(e.target.value) })}><option value="8">8</option><option value="20">20</option><option value="40">40</option><option value="80">80</option></select></label><label className="setting-row"><span>Tool approvals</span><select value={state.settings.agentApprovalMode ?? "ask"} onChange={(e) => updateSettings({ agentApprovalMode: e.target.value === "auto" ? "auto" : "ask" })} title="Ask shows a dock prompt before gated tools; Approve for me answers without prompting"><option value="ask">Ask each time</option><option value="auto">Approve for me</option></select></label><p className="panel-note">"Approve for me" answers tool prompts without a dialog; the agent still asks real questions. In Ask-each-time a one-time reminder appears after several prompts.</p></div><div className="card-panel"><div className="panel-title"><span>Appearance</span><Settings2 size={15} /></div><label className="setting-row"><span>Theme</span><select value={state.settings.theme} onChange={(e) => updateSettings({ theme: e.target.value as ThemeMode })}><option value="dark">Dark</option><option value="light">Light</option><option value="system">System</option></select></label><label className="setting-row"><span>Reduced motion</span><input type="checkbox" checked={state.settings.reducedMotion} onChange={(e) => updateSettings({ reducedMotion: e.target.checked })} /></label></div><div className="card-panel"><div className="panel-title"><span>Agent</span><Settings2 size={15} /></div><label className="field-label">System prompt<textarea rows={3} value={state.agents[0]?.systemPrompt ?? defaultAgent.systemPrompt} onChange={(e) => updateAgentSystemPrompt(e.target.value)} placeholder="How the agent should behave across runs" /></label><label className="setting-row"><span>Mode for new runs</span><select value={agentMode} onChange={(e) => updateSettings({ agentDefaultMode: e.target.value as AgentMode })} title="Preselected mode in the agent composer; applies to chat and agent runs alike">{AGENT_MODES.map((mode) => <option key={mode.id} value={mode.id}>{mode.label}</option>)}</select></label><label className="setting-row"><span>Max steps per run</span><select value={agentMaxSteps} onChange={(e) => updateSettings({ agentMaxSteps: Number(e.target.value) })} title="Step budget: each tool call or answer round counts as one step">{[4, 8, 12, 16, 24].map((n) => <option key={n} value={n}>{n} steps</option>)}</select></label></div><div className="card-panel"><div className="panel-title"><span>Runtime</span><Server size={15} /></div><label className="field-label">Local API base URL<input value={state.settings.baseUrl} onChange={(e) => updateSettings({ baseUrl: e.target.value })} /></label><label className="field-label">Default model<input value={state.settings.model} onChange={(e) => updateSettings({ model: e.target.value })} placeholder="Selected at runtime" /></label><label className="field-label">Performance mode<select value={state.settings.performanceMode} onChange={(e) => updateSettings({ performanceMode: e.target.value as AppSettings["performanceMode"] })}><option value="maximum">Maximum Performance</option><option value="balanced">Balanced</option><option value="efficiency">Efficiency</option><option value="battery">Battery Saving</option></select></label></div><div className="card-panel"><div className="panel-title"><span>Desktop behavior</span><SlidersHorizontal size={15} /></div><label className="setting-row"><span>Start with OS</span><input type="checkbox" checked={state.settings.autoStart} onChange={(e) => updateSettings({ autoStart: e.target.checked })} /></label><label className="setting-row"><span>Keep runtime in tray</span><input type="checkbox" checked={state.settings.tray} onChange={(e) => updateSettings({ tray: e.target.checked })} /></label></div><div className="card-panel"><div className="panel-title"><span>Backup & migration</span><FileDown size={15} /></div><p className="panel-note">Backups include chats, memories, projects, settings, agent configurations and model metadata — never model weights.</p><div className="backup-actions"><button className="primary-btn" onClick={exportBackup}><FileDown size={15} /> Create backup</button><button className="ghost-btn" onClick={() => backupRef.current?.click()}><FileUp size={15} /> Restore</button></div><input ref={backupRef} hidden type="file" accept=".syntara-backup,.json" onChange={(e) => void importBackup(e.target.files)} /></div>{qdmAvailable() ? <div className="card-panel"><div className="panel-title"><span>Host log</span><Terminal size={15} /></div><p className="panel-note">Tail of the local host log on this device — nothing leaves your machine.</p><div className="task-actions"><button className="ghost-btn" onClick={() => void loadHostLog()} disabled={hostLogBusy}>{hostLogBusy ? <LoaderCircle className="spin" size={15} /> : <Terminal size={15} />} {hostLogBusy ? "Reading…" : "Show last 200 lines"}</button>{hostLog && hostLog.exists ? <span className="panel-note">{hostLog.path}</span> : null}</div>{hostLog ? <pre className="health-json">{hostLog.exists ? (hostLog.lines.join("\n") || "(log exists but is empty)") : "No host log yet — it appears once the host starts."}</pre> : null}</div> : null}</div></section>}
       {/* Update available: dismissible; "Later" leaves the badge in the
           sidebar. Update opens the release page in the system browser, the
           same external-link pattern the rest of the app uses. */}
@@ -2557,23 +2769,6 @@ export default function App() {
             <div className="panel-title"><strong>Download again?</strong><button className="icon-btn" onClick={() => settleRedownload(false)}><X size={15} /></button></div>
             <p className="panel-note">You already downloaded <strong>{redownload.name}</strong> before{state.downloadedModels[redownload.modelId]?.bytes ? ` (${formatBytes(state.downloadedModels[redownload.modelId]?.bytes)})` : ""} on {new Date(state.downloadedModels[redownload.modelId]?.at ?? Date.now()).toLocaleDateString()}. Downloading again will pull the full file a second time. Continue?</p>
             <div className="modal-actions"><button className="ghost-btn" onClick={() => settleRedownload(false)}>Cancel</button><button className="primary-btn" onClick={() => settleRedownload(true)}><Download size={15} /> Download again</button></div>
-          </div>
-        </div>
-      ) : null}
-      {/* Phase 4c: gated tool calls block here until answered — there is no
-          backdrop dismissal, because a stray click must not decide whether
-          the agent may write a file or run a process. */}
-      {permissionAsk ? (
-        <div className="modal-backdrop">
-          <div className="modal-card permission-modal" role="alertdialog" aria-modal="true" aria-label="Tool permission request">
-            <div className="panel-title"><strong>Allow <code>{permissionAsk.tool}</code>?</strong></div>
-            <p className="panel-note permission-args">{summarizeArgs(permissionAsk.tool, permissionAsk.args)}</p>
-            <p className="panel-note">{activeProject ? `Project: ${activeProject.name} — "Always allow" is stored on this project.` : `No project folder — "Always allow" applies to this session only.`}</p>
-            <div className="modal-actions">
-              <button className="ghost-btn" onClick={() => settlePermission("deny")}>Deny</button>
-              <button className="ghost-btn" onClick={() => settlePermission("once")}>Allow once</button>
-              <button className="primary-btn" onClick={() => settlePermission("always")}>Always allow</button>
-            </div>
           </div>
         </div>
       ) : null}

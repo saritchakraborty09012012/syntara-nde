@@ -7,6 +7,7 @@
    localStorage is a shared ~5 MB budget and old runs carry large tool
    outputs. */
 
+import { chatOnce } from "../api"
 import { createId } from "../syntara-state"
 import type { AgentEvent } from "./loop"
 
@@ -102,6 +103,37 @@ export function titleFromTask(task: string): string {
   const line = task.split("\n").map((part) => part.trim()).find((part) => part.length > 0)
   if (!line) return "New session"
   return line.length > 48 ? `${line.slice(0, 48)}…` : line
+}
+
+/* Model-assisted session naming (phase 4): one cheap, bounded request that
+   asks for a short title. Best-effort by design — any failure keeps the
+   deterministic titleFromTask fallback. */
+export async function suggestSessionTitle(options: {
+  baseUrl: string
+  model: string
+  task: string
+  signal?: AbortSignal
+}): Promise<string | null> {
+  try {
+    const result = await chatOnce({
+      baseUrl: options.baseUrl,
+      model: options.model,
+      messages: [
+        {
+          role: "user",
+          content: `Title this coding-agent session in at most six words. Reply with the title only, no quotes, no trailing punctuation.\n\nTask: ${options.task.slice(0, 600)}`,
+        },
+      ],
+      maxTokens: 20,
+      temperature: 0,
+      signal: options.signal,
+    })
+    const title = result.content?.trim().split("\n")[0]?.replace(/^["'“”']+|["'“”'.…]+$/g, "").trim()
+    if (!title || title.length > 60) return null
+    return title
+  } catch {
+    return null
+  }
 }
 
 export function createSession(model: string | null, now = Date.now()): AgentSession {
@@ -310,6 +342,94 @@ export function filterSessions(entries: SessionManifestEntry[], query: string): 
     const haystack = `${entry.title}\n${entry.text ?? ""}`.toLowerCase()
     return terms.every((term) => haystack.includes(term))
   })
+}
+
+/* Capped Levenshtein distance: returns `max + 1` as soon as the distance
+   cannot be within `max` — search stays fast on long manifests. */
+function boundedEditDistance(a: string, b: string, max: number): number {
+  if (Math.abs(a.length - b.length) > max) return max + 1
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index)
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i]
+    let rowMin = i
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1
+      current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + cost)
+      rowMin = Math.min(rowMin, current[j])
+    }
+    if (rowMin > max) return max + 1
+    previous = current
+  }
+  return previous[b.length]
+}
+
+function tokenize(value: string): string[] {
+  return value.toLowerCase().split(/[^a-z0-9_]+/).filter(Boolean)
+}
+
+/* Score one term against one word: exact > prefix > substring > typo.
+   Returns 0 when nothing matches at all. */
+function termScore(word: string, term: string): number {
+  if (word === term) return 1
+  if (term.length >= 3 && word.startsWith(term)) return 0.7
+  if (term.length >= 3 && word.includes(term)) return 0.55
+  if (term.length >= 4) {
+    const allowed = term.length >= 7 ? 2 : 1
+    if (boundedEditDistance(word, term, allowed) <= allowed) return 0.45
+  }
+  return 0
+}
+
+/* Smart session search (phase 4): typo/guess-tolerant re-ranking used when
+   a model is attached. Every term must match something (AND semantics like
+   filterSessions, but fuzzy), title hits weigh double, and results come
+   back ordered by score instead of storage order. An empty query returns
+   the entries unchanged. */
+export function rankSessions(entries: SessionManifestEntry[], query: string): SessionManifestEntry[] {
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  if (!terms.length) return entries
+  const scored = entries.map((entry) => {
+    const titleWords = tokenize(entry.title)
+    const textWords = tokenize(entry.text ?? "")
+    let score = 0
+    for (const term of terms) {
+      let best = 0
+      for (const word of titleWords) best = Math.max(best, termScore(word, term) * 2)
+      if (best < 2) {
+        for (const word of textWords) {
+          best = Math.max(best, termScore(word, term))
+          if (best >= 1) break
+        }
+      }
+      if (best === 0) return { entry, score: 0 }
+      score += best
+    }
+    return { entry, score }
+  })
+  return scored
+    .filter((row) => row.score > 0)
+    .sort((a, b) => b.score - a.score || b.entry.updatedAt - a.entry.updatedAt)
+    .map((row) => row.entry)
+}
+
+/* Plan extraction fallback: numbered/bulleted lines from a plan-mode
+   answer when the model never called submit_plan. Requires at least two
+   list lines so a single bullet-pointed sentence is not mistaken for a
+   plan. */
+export function parsePlanItems(text: string): string[] {
+  const items = text
+    .split("\n")
+    .map((line) => line.trim())
+    .map((line) => {
+      const numbered = /^\d+[.)]\s+(.*)$/.exec(line)
+      if (numbered) return numbered[1].trim()
+      const bulleted = /^[-*•]\s+(.*)$/.exec(line)
+      if (bulleted) return bulleted[1].trim()
+      return null
+    })
+    .filter((item): item is string => !!item)
+  if (items.length < 2) return []
+  return items.slice(0, 40)
 }
 
 /* Compact relative timestamp for session rows: "just now", "12m ago",

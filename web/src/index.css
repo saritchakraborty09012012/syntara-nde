@@ -911,3 +911,123 @@ select option { background-color: var(--bg-soft); color: var(--text); }
 /* Cap dock height only in the wide (side-by-side) layout — the stacked
    layout at ≤899px must keep scrolling instead of clipping. */
 @media (max-height: 620px) and (min-width: 900px) { .ag-docks { max-height: 170px; } }
+
+/* ==================================================== phase 3 + 4 additions
+   Pinned dock panels (permission / question / plan), run progress details,
+   the folder bar, composer suggestion chips, stage ornament (orb, rotator,
+   illustration) and the approval nudge toast. */
+.ag-panel-pinned { flex: 0 0 auto; border-left-width: 3px; }
+.permission-dock { border-left-color: rgba(255, 200, 87, .55); }
+.permission-dock .ag-panel-head { color: var(--warn); }
+.question-dock { border-left-color: rgba(69, 224, 255, .55); }
+.plan-dock { border-left-color: rgba(95, 241, 174, .5); }
+.plan-dock .ag-panel-head { color: var(--success); }
+.ag-permission { display: grid; gap: 7px; }
+.ag-permission strong { font-size: 12.5px; }
+.ag-permission code { color: var(--accent); font-family: 'Share Tech Mono', ui-monospace, monospace; font-size: 11.5px; }
+.ag-dock-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.ag-question-text { margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--text); overflow-wrap: anywhere; }
+.ag-question-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.ag-question-answer { display: grid; gap: 6px; }
+.ag-question-answer textarea { width: 100%; min-height: 52px; resize: vertical; background: rgba(0, 0, 0, .25); border: 1px solid var(--line); border-radius: 9px; color: var(--text); font: inherit; font-size: 12px; line-height: 1.55; padding: 7px 9px; outline: none; }
+.ag-question-answer textarea:focus { border-color: var(--accent); }
+.ag-question-answer .primary-btn { justify-self: end; }
+.ag-plan-list { margin: 0; padding-left: 20px; display: grid; gap: 5px; font-size: 12px; line-height: 1.6; color: var(--muted); }
+.ag-plan-list li::marker { color: var(--accent); }
+.ag-plan-edit { width: 100%; min-height: 110px; resize: vertical; background: rgba(0, 0, 0, .25); border: 1px solid var(--line); border-radius: 9px; color: var(--text); font: inherit; font-size: 12px; line-height: 1.6; padding: 8px 10px; outline: none; }
+.ag-plan-edit:focus { border-color: var(--accent); }
+
+/* Progress panel: live status, elapsed counter, command and sub-agent rows. */
+.ag-elapsed { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-family: 'Share Tech Mono', ui-monospace, monospace; font-size: 10.5px; letter-spacing: .05em; text-transform: none; color: var(--muted-2); }
+.ag-status-line { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--accent); }
+.ag-commands, .ag-subagents { display: grid; gap: 5px; }
+.ag-subhead { display: flex; align-items: center; gap: 6px; font-family: 'Orbitron', sans-serif; font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted-2); padding-bottom: 2px; }
+.ag-command { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 5px 8px; border-radius: 7px; background: rgba(255, 255, 255, .03); border: 1px solid transparent; font-family: 'Share Tech Mono', ui-monospace, monospace; font-size: 11px; color: var(--muted); }
+.ag-command-prompt { flex: none; color: var(--accent); }
+.ag-command code { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ag-command-state { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 5px; font-size: 10px; color: var(--muted-2); }
+.ag-command.ok .ag-command-state { color: var(--success); }
+.ag-command.fail .ag-command-state { color: var(--danger); }
+.ag-command.fail code { color: rgba(255, 117, 143, .85); }
+.ag-subagent { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 5px 8px; border-radius: 7px; background: rgba(255, 255, 255, .03); font-size: 11.5px; color: var(--muted-2); }
+.ag-subagent span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+.ag-subagent > svg { flex: none; }
+.ag-subagent.ok > svg { color: var(--success); }
+.ag-subagent.fail > svg { color: var(--danger); }
+.ag-preview-empty code { color: var(--accent); font-size: 10.5px; }
+
+/* Approval nudge: a one-time fixed toast offering "Approve for me". */
+.approval-nudge { position: fixed; right: 18px; bottom: 18px; z-index: 60; display: grid; gap: 10px; max-width: 330px; padding: 14px 15px; border: 1px solid rgba(69, 224, 255, .4); border-radius: 13px; background: var(--panel); box-shadow: 0 16px 46px rgba(0, 0, 0, .5); }
+.approval-nudge p { margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--text); }
+.approval-nudge .ag-dock-actions { justify-content: flex-start; }
+
+/* Stage ornament: running orb, rotating first-run line, robot illustration. */
+.ag-orb { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px rgba(69, 224, 255, .8); animation: ag-orb-pulse 1.4s ease-in-out infinite; }
+@keyframes ag-orb-pulse { 0%, 100% { opacity: .55; transform: scale(.85); } 50% { opacity: 1; transform: scale(1.12); } }
+.ag-rotator { animation: ag-fade-in .5s ease; }
+@keyframes ag-fade-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+.ag-illustration { display: block; width: min(240px, 72%); margin: 4px auto 0; }
+.ag-illustration .ag-machine rect { fill: rgba(69, 224, 255, .07); stroke: var(--accent); stroke-width: 2; }
+.ag-illustration .ag-machine > path { fill: rgba(69, 224, 255, .12); stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
+.ag-illustration .ag-screen { fill: rgba(0, 0, 0, .35); stroke: rgba(69, 224, 255, .5); stroke-width: 1; }
+.ag-illustration .ag-bot rect { fill: rgba(255, 255, 255, .05); stroke: var(--muted); stroke-width: 2; }
+.ag-illustration .ag-bot circle { fill: var(--accent); }
+.ag-illustration .ag-bot path { fill: none; stroke: var(--muted); stroke-width: 2; }
+.ag-illustration .ag-artifacts { opacity: .4; }
+.ag-illustration .ag-artifacts text { font-family: 'Share Tech Mono', ui-monospace, monospace; font-size: 15px; fill: var(--muted); }
+.ag-illustration .ag-artifacts rect, .ag-illustration .ag-artifacts path { fill: none; stroke: var(--muted); stroke-width: 2; }
+
+/* Composer suggestion chips (shown while the draft is empty). */
+.ag-chips-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.ag-suggest-chip { border: 1px dashed var(--line-strong); background: transparent; color: var(--muted); font-size: 11px; line-height: 1.4; border-radius: 999px; padding: 5px 11px; cursor: pointer; text-align: left; transition: color .16s, border-color .16s, background .16s; }
+.ag-suggest-chip:hover { color: var(--text); border-color: var(--accent); background: rgba(69, 224, 255, .07); }
+
+/* Folder bar: project chips, new-project picker, file search + results. */
+.ag-folderbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 8px 14px; border-top: 1px solid var(--line); background: rgba(255, 255, 255, .015); }
+.ag-folder-projects { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; flex: 1; }
+.ag-folder-label { font-family: 'Orbitron', sans-serif; font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted-2); margin-right: 2px; }
+.ag-folder-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 170px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); font-size: 11px; padding: 4px 10px; cursor: pointer; transition: color .16s, border-color .16s, background .16s; }
+.ag-folder-chip span { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ag-folder-chip:hover:not(:disabled) { color: var(--text); border-color: var(--line-strong); }
+.ag-folder-chip.active { color: var(--accent); border-color: rgba(69, 224, 255, .5); background: rgba(69, 224, 255, .08); }
+.ag-folder-chip.new { border-style: dashed; }
+.ag-folder-chip:disabled { opacity: .5; cursor: not-allowed; }
+.ag-folder-empty { font-size: 11px; color: var(--muted-2); }
+.ag-folder-search { position: relative; width: min(320px, 100%); margin-left: auto; }
+.ag-folderbar .ag-search { border: 1px solid var(--line); border-radius: 9px; padding: 6px 10px; }
+.ag-folder-results { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 30; display: grid; gap: 2px; max-height: 260px; overflow: auto; padding: 6px; border: 1px solid var(--line-strong); border-radius: 11px; background: var(--panel); box-shadow: 0 14px 38px rgba(0, 0, 0, .45); }
+.ag-folder-results button { display: block; width: 100%; text-align: left; font-size: 11.5px; color: var(--muted); background: transparent; border: 0; border-radius: 7px; padding: 7px 9px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ag-folder-results button:hover { color: var(--text); background: rgba(69, 224, 255, .07); }
+.ag-folder-results .empty-mini { padding: 8px 9px; }
+
+/* New transcript event cards: plan, question, sub-agent, step timing. */
+.ev-plan, .ev-question { display: grid; gap: 6px; padding: 7px 9px; border-radius: 8px; border: 1px solid rgba(69, 224, 255, .2); background: rgba(69, 224, 255, .06); }
+.ev-plan-head, .ev-question-head { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--accent); }
+.ev-plan ol { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 11.5px; line-height: 1.55; color: var(--muted); }
+.ev-plan ol li::marker { color: var(--accent); }
+.ev-question { border-color: rgba(255, 200, 87, .25); background: rgba(255, 200, 87, .06); }
+.ev-question-head { color: var(--warn); }
+.ev-question p { margin: 0; font-size: 12px; line-height: 1.6; color: var(--text); overflow-wrap: anywhere; }
+.ev-question-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.ev-question-options span { border: 1px solid rgba(255, 200, 87, .4); border-radius: 999px; color: var(--warn); font-size: 11px; padding: 3px 9px; }
+.ev-question-answer { font-size: 11.5px; color: var(--accent); overflow-wrap: anywhere; }
+.ev-subagent { display: flex; align-items: flex-start; gap: 7px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: rgba(255, 255, 255, .03); font-size: 11.5px; line-height: 1.5; color: var(--muted-2); overflow-wrap: anywhere; }
+.ev-subagent span { min-width: 0; }
+.ev-subagent.running > svg { color: var(--accent); }
+.ev-subagent.ok { border-color: rgba(95, 241, 174, .3); background: rgba(95, 241, 174, .06); color: var(--success); }
+.ev-subagent.fail { border-color: rgba(255, 117, 143, .35); background: rgba(255, 117, 143, .09); color: var(--danger); }
+.ev-step-time { text-transform: none; letter-spacing: .04em; color: var(--muted-2); }
+
+/* Pinned panels inside the horizontal (≤1319px) dock row: bounded width,
+   scroll instead of growing past the row. */
+@media (max-width: 1319px) { .ag-panel-pinned { flex: 0 1 270px; min-width: 220px; overflow: auto; } }
+@media (max-width: 899px) {
+  .ag-folder-search { width: 100%; margin-left: 0; }
+  .ag-folderbar { padding: 8px 10px; }
+  .approval-nudge { left: 12px; right: 12px; max-width: none; }
+}
+
+/* Motion preferences: ornament must not animate. */
+@media (prefers-reduced-motion: reduce) {
+  .ag-orb, .ag-rotator { animation: none; }
+}

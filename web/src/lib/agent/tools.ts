@@ -134,25 +134,137 @@ export const AGENT_TOOL_SPECS: ToolDefinition[] = [
       },
     },
   },
+  {
+    spec: {
+      type: "function",
+      function: {
+        name: "git",
+        description:
+          "Run a read-only git command (status, diff, log, show, blame, ls-files, rev-parse, branch, remote, shortlog) in the project folder. Mutating subcommands are refused.",
+        parameters: {
+          type: "object",
+          properties: {
+            args: {
+              type: "array",
+              items: { type: "string" },
+              description: 'Arguments after git, e.g. ["status", "--short"] or ["log", "-5"]',
+            },
+          },
+          required: ["args"],
+        },
+      },
+    },
+  },
+  {
+    spec: {
+      type: "function",
+      function: {
+        name: "submit_plan",
+        description:
+          "Submit a numbered plan for the user to review and approve. Call this as your final action in plan mode; the user can edit the plan before approving.",
+        parameters: {
+          type: "object",
+          properties: {
+            steps: {
+              type: "array",
+              items: { type: "string" },
+              description: "Ordered plan steps, each one concrete and actionable",
+            },
+          },
+          required: ["steps"],
+        },
+      },
+    },
+  },
+  {
+    spec: {
+      type: "function",
+      function: {
+        name: "ask_user",
+        description:
+          "Ask the user a clarifying question and wait for their answer. Use when the task is ambiguous; offer concrete options when you can.",
+        parameters: {
+          type: "object",
+          properties: {
+            question: { type: "string", description: "The question to show the user" },
+            options: {
+              type: "array",
+              items: { type: "string" },
+              description: "Optional suggested answers the user can click",
+            },
+          },
+          required: ["question"],
+        },
+      },
+    },
+  },
+  {
+    spec: {
+      type: "function",
+      function: {
+        name: "preview_open",
+        description:
+          "Open the local preview for a dev-server URL (loopback addresses only). If the URL is omitted, opens the server URL discovered earlier in this run.",
+        parameters: {
+          type: "object",
+          properties: {
+            url: { type: "string", description: "http://127.0.0.1:5173 style URL; omit to reuse the last one" },
+          },
+        },
+      },
+    },
+  },
+  {
+    spec: {
+      type: "function",
+      function: {
+        name: "preview_reload",
+        description: "Reload the page currently shown in the preview dock.",
+        parameters: { type: "object", properties: {} },
+      },
+    },
+  },
+  {
+    spec: {
+      type: "function",
+      function: {
+        name: "console_read",
+        description:
+          "Read the most recent console lines captured from the Syntara window. Use after an error to inspect what was logged.",
+        parameters: { type: "object", properties: {} },
+      },
+    },
+  },
 ]
 
 export const AGENT_TOOL_NAMES: string[] = AGENT_TOOL_SPECS.map((tool) => tool.spec.function.name)
 
-/* Plan/read-only surface: local reads plus web_fetch. Writes, processes and
-   sub-agents stay in the full set only. */
-export const READ_ONLY_TOOL_NAMES = ["fs_read", "fs_list", "todo", "web_fetch"]
+/* Tools the frontend can execute on its own (gateway fetches, UI docks).
+    Everything else needs the desktop shell AND a project folder. */
+export const FRONTEND_TOOL_NAMES = ["web_fetch", "ask_user", "submit_plan", "preview_open", "preview_reload", "console_read"]
+
+/* Plan/read-only surface: local reads plus web_fetch and the interaction
+    tools. Writes, processes, git and sub-agents stay in the full set. */
+export const READ_ONLY_TOOL_NAMES = ["fs_read", "fs_list", "todo", "web_fetch", "submit_plan", "ask_user"]
 
 /* The sub-agent gets a tighter read-only set of its own: no todo (the
    parent owns the list) and no nested sub-agents. */
 export const SUBAGENT_TOOL_NAMES = ["fs_read", "fs_list", "web_fetch"]
 
-/* Mode decides which specs bind before the permission gate runs. */
+/* Mode decides which specs bind before the permission gate runs. Desktop
+    tools are dropped honestly when the shell (or the project folder) is
+    absent, while frontend-only tools still bind — planning, questions,
+    web fetches and previews all work in a plain browser session. */
 export function agentToolsForMode(
   policy: ModePolicy,
   opts: { available: boolean; hasProject: boolean },
 ): ToolDefinition[] {
   if (policy.tools === "none") return []
-  if (!opts.available || !opts.hasProject) return []
   const allowed = policy.tools === "read-only" ? READ_ONLY_TOOL_NAMES : AGENT_TOOL_NAMES
-  return AGENT_TOOL_SPECS.filter((tool) => allowed.includes(tool.spec.function.name))
+  return AGENT_TOOL_SPECS.filter((tool) => {
+    const name = tool.spec.function.name
+    if (!allowed.includes(name)) return false
+    if (FRONTEND_TOOL_NAMES.includes(name)) return true
+    return opts.available && opts.hasProject
+  })
 }

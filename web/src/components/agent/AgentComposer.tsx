@@ -36,6 +36,8 @@ interface AgentComposerProps {
   onRemoveAttachment: (name: string) => void
   onAttachFiles: (files: FileList | null) => void
   hint: string
+  /* Ready-made prompts shown above the textarea while it is empty. */
+  suggestions?: string[]
 }
 
 export function AgentComposer(props: AgentComposerProps) {
@@ -65,6 +67,16 @@ export function AgentComposer(props: AgentComposerProps) {
                 <X size={12} />
               </button>
             </div>
+          ))}
+        </div>
+      ) : null}
+
+      {!props.value.trim() && !props.busy && props.suggestions?.length ? (
+        <div className="ag-chips-row" aria-label="Suggested prompts">
+          {props.suggestions.slice(0, 4).map((text) => (
+            <button key={text} type="button" className="ag-suggest-chip" onClick={() => props.onChange(text)}>
+              {text}
+            </button>
           ))}
         </div>
       ) : null}

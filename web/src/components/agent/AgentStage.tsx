@@ -1,13 +1,22 @@
 /* Agent stage (phase 3): the session card — sticky header
-   with the project/session breadcrumb and run status, a transcript of
-   user tasks and streamed run events, and an empty state that suggests
-   first tasks. Tool cards come from the shared AgentEvents renderer. */
+   with the project/session breadcrumb, run status and the running orb,
+   a transcript of user tasks and streamed run events, and an empty state
+   with the wordmark, a small robot-on-laptop illustration and rotating
+   first-run lines. Tool cards come from the shared AgentEvents renderer. */
 
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Check, Copy, LoaderCircle } from "lucide-react"
 
 import { AgentEvents } from "@/components/AgentEvents"
 import { AGENT_MODES, type AgentSession, type AgentTurn } from "@/lib/agent/sessions"
+
+/* Rotating one-liners under the wordmark; the first entry also serves as
+   the reduced-motion static line. */
+const ROTATING_LINES = [
+  "Local agents that can actually work.",
+  "Build Codex- or Claude-Code-style workflows on your own machine.",
+  "Plan, edit and run — with approval before every write.",
+]
 
 interface AgentStageProps {
   session: AgentSession | null
@@ -32,6 +41,17 @@ export function AgentStage(props: AgentStageProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const lastTurn = props.session?.turns[props.session.turns.length - 1]
   const status = statusOf(lastTurn)
+  const [lineIndex, setLineIndex] = useState(0)
+
+  /* Rotate the empty-state line; pauses naturally when the session has
+     content because the effect then clears the interval. */
+  useEffect(() => {
+    if (props.session?.turns.length) return
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches
+    if (reduced) return
+    const id = window.setInterval(() => setLineIndex((index) => (index + 1) % ROTATING_LINES.length), 3600)
+    return () => window.clearInterval(id)
+  }, [props.session?.turns.length])
 
   /* Follow the stream: a run appends events continuously, so keep the
      newest content in view while the user has not scrolled away. */
@@ -53,7 +73,10 @@ export function AgentStage(props: AgentStageProps) {
         </div>
         <div className="ag-stage-status">
           {status === "running" ? (
-            <span className="ag-status-pill running"><LoaderCircle size={12} className="spin" /> Running</span>
+            <>
+              <span className="ag-orb" aria-hidden="true" />
+              <span className="ag-status-pill running"><LoaderCircle size={12} className="spin" /> Running</span>
+            </>
           ) : status === "done" ? (
             <span className="ag-status-pill done">
               <Check size={12} />
@@ -74,8 +97,35 @@ export function AgentStage(props: AgentStageProps) {
         {!props.session || !props.session.turns.length ? (
           <div className="ag-empty">
             <img src="/syntara-logo.png" alt="" className="ag-empty-logo" />
-            <span className="section-kicker">AGENT SESSION</span>
+            <span className="section-kicker">SYNTARA AGENT</span>
             <h2>Give the agent a task.</h2>
+            <p className="ag-rotator" key={lineIndex} aria-live="polite">
+              {ROTATING_LINES[lineIndex]}
+            </p>
+            <svg className="ag-illustration" viewBox="0 0 220 120" role="img" aria-label="A robot working on a laptop">
+              {/* faded artifacts around the workstation */}
+              <g className="ag-artifacts" aria-hidden="true">
+                <text x="18" y="30">{"</>"}</text>
+                <rect x="150" y="16" width="26" height="18" rx="3" />
+                <path d="M166 60 l12 7 -12 7 z" />
+                <path d="M30 74 h14 v16 h-14 z M33 74 v-5 a4 4 0 0 1 8 0 v5" fill="none" />
+                <text x="186" y="94">{"{ }"}</text>
+              </g>
+              {/* laptop */}
+              <g className="ag-machine">
+                <rect x="64" y="40" width="92" height="54" rx="6" />
+                <rect x="72" y="48" width="76" height="38" rx="3" className="ag-screen" />
+                <path d="M56 96 h108 l8 12 h-124 z" />
+                {/* robot head peeking from behind the screen */}
+                <g className="ag-bot">
+                  <rect x="88" y="14" width="34" height="26" rx="8" />
+                  <circle cx="98" cy="27" r="3.4" />
+                  <circle cx="112" cy="27" r="3.4" />
+                  <path d="M105 14 v-8" />
+                  <circle cx="105" cy="4" r="2.4" />
+                </g>
+              </g>
+            </svg>
             <p>
               It plans, reads, edits and runs tools inside your project folder — every write and every
               process asks for permission first.

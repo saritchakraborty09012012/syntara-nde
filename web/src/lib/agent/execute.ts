@@ -8,10 +8,10 @@
    the model instead of crashing the run. */
 
 import { agentFsList, agentFsRead, agentFsWrite, agentProcRun, agentTodoSet } from "../agent-tools"
-import type { ToolExecutor, ToolResult } from "./loop"
+import type { AgentEvent, ToolExecutor, ToolResult } from "./loop"
 import { AGENT_TOOL_NAMES } from "./tools"
 import { detectLocalServerUrl, formatListOutput, formatProcOutput, summarizeWrite } from "./ui"
-import { gatewayWebFetch, validateFetchUrl } from "./webfetch"
+import { gatewayWebFetch, validateFetchUrl, validateLocalPreviewUrl } from "./webfetch"
 
 /* Cap the text handed back to the model so one huge page cannot blow the
    context window; the gateway's own 512 KB cap is the hard ceiling. */
@@ -29,6 +29,17 @@ export interface ExecutorOptions {
   /* Runs a read-only sub-agent and returns its final report. Injected by
      App because it owns the model + transport wiring. */
   runSubagent?: (task: string, signal: AbortSignal) => Promise<ToolResult>
+  /* submit_plan: hands the plan to the dock (App owns the state). */
+  onPlan?: (items: string[]) => void
+  /* ask_user: resolves with the user's answer from the question dock. */
+  askUser?: (question: string, options?: string[]) => Promise<string>
+  /* Preview dock controls (frontend-owned; loopback URLs only). */
+  previewOpen?: (url: string) => Promise<ToolResult>
+  previewReload?: () => Promise<ToolResult>
+  /* Recent console lines captured from the Syntara window. */
+  readConsole?: () => Promise<ToolResult>
+  /* Extra timeline events the loop itself cannot see (plan/question). */
+  onEvent?: (event: AgentEvent) => void
 }
 
 function needString(args: Record<string, unknown>, key: string): string {
@@ -37,6 +48,32 @@ function needString(args: Record<string, unknown>, key: string): string {
     throw new Error(`missing '${key}' argument`)
   }
   return value
+}
+
+/* Read-only git allowlist: the first element must be a safe subcommand and
+   the flags must not enable external side effects (diff drivers, branch
+   deletion). Everything else is refused with an explanation the model can
+   act on, instead of running an arbitrary git invocation. */
+function refuseUnsafeGit(argv: string[]): string | null {
+  const sub = argv[1]
+  const rest = argv.slice(2)
+  const alwaysSafe = ["status", "diff", "log", "show", "blame", "ls-files", "rev-parse", "shortlog", "describe"]
+  if (alwaysSafe.includes(sub)) {
+    if (rest.some((flag) => flag === "--ext-diff" || flag === "--textconv")) {
+      return "refused: --ext-diff/--textconv can execute external helpers; plain output only"
+    }
+    return null
+  }
+  if (sub === "branch") {
+    /* Both spellings of the delete flag: -d/-D and --delete. The old
+       check missed "-D" because it looked at the first character. */
+    if (rest.some((flag) => /^-[dD]$/.test(flag) || flag === "--delete")) {
+      return "refused: deleting branches is not allowed; read-only git only"
+    }
+    return null
+  }
+  if (sub === "remote" && (rest.length === 0 || rest.every((flag) => flag === "-v" || flag === "--verbose"))) return null
+  return `refused: only read-only git subcommands are allowed (status, diff, log, show, blame, ls-files, rev-parse, branch, remote -v, shortlog) — got '${sub}'`
 }
 
 export function createAgentExecutor(root: string | null, options: ExecutorOptions): ToolExecutor {
@@ -153,6 +190,67 @@ export function createAgentExecutor(root: string | null, options: ExecutorOption
             ...report,
             output: report.ok ? `sub-agent report:\n${report.output}` : report.output,
           }
+        }
+        case "git": {
+          const rawArgs = args.args
+          if (!Array.isArray(rawArgs) || !rawArgs.length || !rawArgs.every((part) => typeof part === "string")) {
+            throw new Error("args must be a non-empty array of strings")
+          }
+          const argv = ["git", ...(rawArgs as string[])]
+          const refusal = refuseUnsafeGit(argv)
+          if (refusal) return { ok: false, output: refusal }
+          const result = await agentProcRun(requireRoot(), argv)
+          return {
+            ok: result.exitCode === 0 && !result.timedOut,
+            output: formatProcOutput(result),
+            data: { exitCode: result.exitCode, timedOut: result.timedOut, durationMs: result.durationMs },
+          }
+        }
+        case "submit_plan": {
+          const rawSteps = args.steps
+          if (!Array.isArray(rawSteps) || !rawSteps.every((step) => typeof step === "string")) {
+            throw new Error("steps must be an array of strings")
+          }
+          const steps = (rawSteps as string[]).map((step) => step.trim()).filter(Boolean)
+          if (!steps.length) throw new Error("steps must contain at least one non-empty plan step")
+          options.onPlan?.(steps)
+          options.onEvent?.({ type: "plan", items: steps })
+          return {
+            ok: true,
+            output: "Plan submitted. The user will review, edit and approve it before execution.",
+            data: { steps },
+          }
+        }
+        case "ask_user": {
+          const question = needString(args, "question")
+          const suggested = Array.isArray(args.options)
+            ? (args.options as unknown[]).filter((item): item is string => typeof item === "string" && !!item.trim())
+            : []
+          if (!options.askUser) {
+            return { ok: false, output: "no interactive question dock is available; make a reasonable assumption and continue" }
+          }
+          options.onEvent?.({ type: "question", text: question, options: suggested })
+          const answer = (await options.askUser(question, suggested)).trim()
+          return {
+            ok: true,
+            output: answer || "(the user skipped the question — choose the most reasonable default and continue)",
+            data: { question, answer },
+          }
+        }
+        case "preview_open": {
+          if (!options.previewOpen) return { ok: false, output: "the preview dock is not available" }
+          const raw = typeof args.url === "string" && args.url.trim() ? args.url : null
+          const check = raw ? validateLocalPreviewUrl(raw) : null
+          if (check && !check.ok) throw new Error(check.reason)
+          return options.previewOpen(check ? check.url : "")
+        }
+        case "preview_reload": {
+          if (!options.previewReload) return { ok: false, output: "the preview dock is not available" }
+          return options.previewReload()
+        }
+        case "console_read": {
+          if (!options.readConsole) return { ok: false, output: "console capture is not available in this session" }
+          return options.readConsole()
         }
         default:
           throw new Error(`no local handler registered for tool '${name}'`)

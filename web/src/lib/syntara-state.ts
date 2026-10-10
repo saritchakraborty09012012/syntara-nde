@@ -167,6 +167,12 @@ export interface AppSettings {
      composer and the per-run step budget. Optional so legacy states load. */
   agentDefaultMode?: AgentMode
   agentMaxSteps?: number
+  /* Approval mode for gated agent tools (phase 3 settings): "ask" (default)
+     prompts per gated call; "auto" answers "once" for every prompt without
+     a dialog. The nudge popup appears after repeated asks and its choice
+     is remembered here. */
+  agentApprovalMode?: "ask" | "auto"
+  approvalNudgeSeen?: boolean
 }
 
 export interface SyntaraState {

@@ -38,6 +38,22 @@ export function validateFetchUrl(raw: unknown): { ok: true; url: string } | { ok
   return { ok: true, url: parsed.toString() }
 }
 
+/* Preview URLs are loopback-only: the preview dock (and any Tauri preview
+   window) may only ever point at a dev server on this machine. `0.0.0.0`
+   and `[::1]` are normalised to what the iframe can actually load. */
+export function validateLocalPreviewUrl(raw: unknown): { ok: true; url: string } | { ok: false; reason: string } {
+  const base = validateFetchUrl(raw)
+  if (!base.ok) return base
+  const parsed = new URL(base.url)
+  const host = parsed.hostname.replace(/^\[|\]$/g, "")
+  const loopback = host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "0.0.0.0"
+  if (!loopback) {
+    return { ok: false, reason: `preview only opens local servers — '${parsed.hostname}' is not a loopback address` }
+  }
+  if (host === "0.0.0.0") parsed.hostname = "127.0.0.1"
+  return { ok: true, url: parsed.toString() }
+}
+
 interface FetchWireBody {
   ok?: unknown
   status?: unknown

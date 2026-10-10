@@ -89,8 +89,11 @@ describe("phase 3 shell (server-rendered App)", () => {
       expect(html).toContain('aria-label="Agent task"')
       expect(html).toContain('aria-label="Progress"')
       expect(html).toContain('aria-label="Preview"')
-      // The marketing hero and dashboard cards of the old layout are gone.
-      expect(html).not.toContain("Local agents that can actually work.")
+      // The marketing hero and dashboard cards of the old layout are gone;
+      // first-run copy now lives inside the agent empty state.
+      expect(html).not.toContain('class="hero-panel"')
+      expect(html).toContain('class="ag-empty"')
+      expect(html).toContain("Local agents that can actually work.")
       expect(html).not.toContain("Run agent</button>")
     } finally {
       location.hash = ""

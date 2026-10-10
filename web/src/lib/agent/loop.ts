@@ -57,13 +57,17 @@ export type PermissionAsk = (
 ) => Promise<PermissionDecision>
 
 export type AgentEvent =
-  | { type: "step"; step: number }
+  | { type: "step"; step: number; /* ms since the loop started (progress panel) */ elapsedMs?: number }
   | { type: "assistant_text"; text: string }
   | { type: "tool_start"; callId: string; name: string; args: Record<string, unknown> }
   | { type: "permission"; callId: string; name: string; decision: PermissionDecision }
   | { type: "tool_end"; callId: string; name: string; ok: boolean; output: string; durationMs: number; data?: Record<string, unknown> }
   | { type: "repair"; attempt: number; reason: string }
   | { type: "compacted"; dropped: number }
+  | { type: "plan"; items: string[] }
+  | { type: "question"; text: string; options?: string[] }
+  | { type: "subagent_start"; task: string }
+  | { type: "subagent_end"; ok: boolean; summary: string }
   | { type: "done"; text: string; steps: number }
   | { type: "interrupted"; reason: string }
   | { type: "error"; message: string }
@@ -170,6 +174,7 @@ export async function runAgentLoop(options: LoopOptions): Promise<LoopResult> {
   let steps = 0
   let repairs = 0
   let usage = emptyUsage()
+  const loopStarted = performance.now()
 
   const result = (
     status: LoopResult["status"],
@@ -253,7 +258,7 @@ export async function runAgentLoop(options: LoopOptions): Promise<LoopResult> {
       return result("error", null, errorText(error))
     }
     usage = addUsage(usage, response.usage)
-    options.onEvent({ type: "step", step: steps + 1 })
+    options.onEvent({ type: "step", step: steps + 1, elapsedMs: Math.round(performance.now() - loopStarted) })
 
     /* --- native path: the runtime emitted OpenAI tool_calls ------------ */
     if (response.toolCalls.length > 0) {

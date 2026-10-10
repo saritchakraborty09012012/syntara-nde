@@ -12,6 +12,8 @@ import {
   MAX_EVENTS_PER_TURN,
   MAX_SESSIONS,
   modePolicy,
+  parsePlanItems,
+  rankSessions,
   saveSession,
   sessionKey,
   setActiveSession,
@@ -211,5 +213,59 @@ describe("filterSessions", () => {
   it("tolerates entries without stored text (older manifests)", () => {
     expect(filterSessions(entries, "new session").map((entry) => entry.id)).toEqual(["c"])
     expect(filterSessions(entries, "ghost")).toEqual([])
+  })
+})
+
+describe("rankSessions", () => {
+  const entries = [
+    { id: "parser", title: "Fix parser bug", createdAt: 1, updatedAt: 3, text: "investigate the json tool-call parser" },
+    { id: "site", title: "Update site", createdAt: 2, updatedAt: 2, text: "rewrite the download section" },
+    { id: "empty", title: "New session", createdAt: 3, updatedAt: 1 },
+  ]
+
+  it("returns entries unchanged for an empty query", () => {
+    expect(rankSessions(entries, "")).toEqual(entries)
+    expect(rankSessions(entries, "   ")).toEqual(entries)
+  })
+
+  it("ranks a typo'd title above weaker matches", () => {
+    const ranked = rankSessions(entries, "parsr")
+    expect(ranked[0]?.id).toBe("parser")
+    expect(ranked.map((entry) => entry.id)).not.toContain("site")
+  })
+
+  it("weights title hits above body-only hits", () => {
+    const ranked = rankSessions(entries, "site")
+    expect(ranked[0]?.id).toBe("site")
+  })
+
+  it("keeps AND semantics: a term with no match anywhere drops the row", () => {
+    expect(rankSessions(entries, "parser ghost")).toEqual([])
+  })
+
+  it("prefix-matches partial words", () => {
+    const ranked = rankSessions(entries, "downl")
+    expect(ranked.map((entry) => entry.id)).toEqual(["site"])
+  })
+})
+
+describe("parsePlanItems", () => {
+  it("extracts numbered and bulleted lines from a plan answer", () => {
+    const items = parsePlanItems("Here is the plan:\n1. Reproduce the failure\n2) Fix the guard\n- Add a regression test")
+    expect(items).toEqual(["Reproduce the failure", "Fix the guard", "Add a regression test"])
+  })
+
+  it("needs at least two list lines so prose is not mistaken for a plan", () => {
+    expect(parsePlanItems("Just one bullet:\n- do the thing")).toEqual([])
+    expect(parsePlanItems("No list at all.\nOnly prose.")).toEqual([])
+  })
+
+  it("caps runaway plans at forty items", () => {
+    const text = Array.from({ length: 60 }, (_, index) => `${index + 1}. step`).join("\n")
+    expect(parsePlanItems(text)).toHaveLength(40)
+  })
+
+  it("tolerates empty input", () => {
+    expect(parsePlanItems("")).toEqual([])
   })
 })

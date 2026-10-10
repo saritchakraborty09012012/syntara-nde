@@ -5,7 +5,7 @@
 import { useState } from "react"
 import { FolderOpen, PanelLeft, Plus, Search, ShieldCheck, Trash2 } from "lucide-react"
 
-import { filterSessions, groupSessions, relativeLabel, type SessionManifestEntry } from "@/lib/agent/sessions"
+import { filterSessions, groupSessions, rankSessions, relativeLabel, type SessionManifestEntry } from "@/lib/agent/sessions"
 import { cn } from "@/lib/utils"
 
 export interface SessionGrant {
@@ -29,11 +29,14 @@ interface AgentSessionsProps {
   onPickFolder: () => void
   onRevoke: (tool: string) => void
   onCollapse?: () => void
+  /* Model attached → typo/guess-tolerant ranking instead of strict AND. */
+  smart?: boolean
 }
 
 export function AgentSessions(props: AgentSessionsProps) {
   const [query, setQuery] = useState("")
-  const groups = groupSessions(filterSessions(props.entries, query))
+  const matched = props.smart ? rankSessions(props.entries, query) : filterSessions(props.entries, query)
+  const groups = groupSessions(matched)
   return (
     <aside className="ag-sessions" aria-label="Agent sessions">
       <div className="ag-sessions-head">
