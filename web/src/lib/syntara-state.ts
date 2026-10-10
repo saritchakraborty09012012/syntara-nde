@@ -151,11 +151,18 @@ export interface AppSettings {
      conversation-history panel collapsed. Persisted like other settings. */
   navCollapsed: boolean
   historyCollapsed: boolean
+  /* Agent-mode sessions rail collapse (phase 1 chrome), persisted like the
+     other rails; absent = expanded. */
+  agentRailCollapsed?: boolean
   /* Phase 5: the first-run hardware-based model suggestion shows until the
      user acts on or dismisses it. */
   starterSuggestionSeen: boolean
-  /* BCP-47 tag for composer voice typing; empty/absent = browser locale. */
+  /* BCP-47 tag for composer voice typing; empty/absent = browser locale.
+     Phase 2 split the single voiceLanguage tag into per-mode overrides —
+     the legacy field stays as the shared fallback for both. */
   voiceLanguage?: string
+  chatVoiceLanguage?: string
+  agentVoiceLanguage?: string
   /* Agent mode defaults (phase 3): the mode preselected in the agent
      composer and the per-run step budget. Optional so legacy states load. */
   agentDefaultMode?: AgentMode

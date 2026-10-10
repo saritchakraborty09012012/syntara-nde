@@ -3,7 +3,7 @@
    presentation — App owns session state, persistence and deletion. */
 
 import { useState } from "react"
-import { FolderOpen, Plus, Search, ShieldCheck, Trash2 } from "lucide-react"
+import { FolderOpen, PanelLeft, Plus, Search, ShieldCheck, Trash2 } from "lucide-react"
 
 import { filterSessions, groupSessions, relativeLabel, type SessionManifestEntry } from "@/lib/agent/sessions"
 import { cn } from "@/lib/utils"
@@ -28,6 +28,7 @@ interface AgentSessionsProps {
   onDelete: (id: string) => void
   onPickFolder: () => void
   onRevoke: (tool: string) => void
+  onCollapse?: () => void
 }
 
 export function AgentSessions(props: AgentSessionsProps) {
@@ -37,9 +38,16 @@ export function AgentSessions(props: AgentSessionsProps) {
     <aside className="ag-sessions" aria-label="Agent sessions">
       <div className="ag-sessions-head">
         <span className="ag-sessions-title">Sessions</span>
-        <button type="button" className="ag-icon-btn" onClick={props.onNew} title="New session" aria-label="New session">
-          <Plus size={14} />
-        </button>
+        <div className="ag-sessions-actions">
+          {props.onCollapse ? (
+            <button type="button" className="ag-icon-btn" onClick={props.onCollapse} title="Hide sessions" aria-label="Hide sessions" aria-expanded={true}>
+              <PanelLeft size={14} />
+            </button>
+          ) : null}
+          <button type="button" className="ag-icon-btn" onClick={props.onNew} title="New session" aria-label="New session">
+            <Plus size={14} />
+          </button>
+        </div>
       </div>
 
       <div className="ag-search">

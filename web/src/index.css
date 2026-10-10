@@ -321,6 +321,9 @@ a { color: inherit; text-decoration: none; }
 .conversation-list-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 2px 10px; }
 .conversation-list-head span { font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted-2); }
 .conversation-list-head .icon-btn { width: 26px; height: 26px; border-radius: 8px; }
+.conversation-search-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+.conversation-search-row .conversation-search { flex: 1; min-width: 0; margin-bottom: 0; }
+.conversation-search-row .icon-btn { flex: none; width: 30px; height: 30px; }
 .history-rail { border-right: 1px solid var(--line); padding: 14px 7px; display: flex; justify-content: center; }
 .history-rail .icon-btn { width: 30px; height: 30px; }
 .conversation-search { display: flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 9px; padding: 7px 9px; margin-bottom: 8px; color: var(--muted-2); }
@@ -716,10 +719,15 @@ select option { background-color: var(--bg-soft); color: var(--text); }
    three-column workspace (phase 3): sessions rail | transcript card with
    a docked composer | progress + preview docks. Syntara theme tokens only. */
 .view.agent-shell { display: grid; grid-template-columns: 264px minmax(0, 1fr) 302px; gap: 14px; padding: 16px; overflow: hidden; align-items: stretch; }
+.view.agent-shell.rail-collapsed { grid-template-columns: 46px minmax(0, 1fr) 302px; }
 
 /* --- sessions rail --- */
 .ag-sessions { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); overflow: hidden; }
 .ag-sessions-head { display: flex; align-items: center; justify-content: space-between; padding: 11px 10px 9px 14px; border-bottom: 1px solid var(--line); }
+.ag-sessions-actions { display: flex; align-items: center; gap: 6px; }
+/* collapsed sessions rail: a slim expand strip mirroring chat's history rail */
+.ag-rail { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 12px 6px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.ag-rail .icon-btn { width: 30px; height: 30px; }
 .ag-sessions-title { font-family: 'Orbitron', sans-serif; font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
 .ag-icon-btn { width: 27px; height: 27px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; transition: color .16s, border-color .16s; }
 .ag-icon-btn:hover { color: var(--accent); border-color: var(--line-strong); }
@@ -831,9 +839,10 @@ select option { background-color: var(--bg-soft); color: var(--text); }
    content area is ≥1042px, so the shrunken 3-col keeps the center card at
    ≥490px (composer min ≈438px). ≤1319px folds the docks under the workspace
    row; ≤899px stacks everything. */
-@media (max-width: 1559px) { .view.agent-shell { grid-template-columns: 240px minmax(0, 1fr) 268px; gap: 10px; padding: 12px; } .ag-hint { max-width: 170px; } }
+@media (max-width: 1559px) { .view.agent-shell { grid-template-columns: 240px minmax(0, 1fr) 268px; gap: 10px; padding: 12px; } .view.agent-shell.rail-collapsed { grid-template-columns: 46px minmax(0, 1fr) 268px; } .ag-hint { max-width: 170px; } }
 @media (max-width: 1319px) {
   .view.agent-shell { grid-template-columns: 232px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+  .view.agent-shell.rail-collapsed { grid-template-columns: 46px minmax(0, 1fr); }
   .ag-docks { grid-column: 1 / -1; flex-direction: row; max-height: 240px; }
 }
 @media (max-width: 899px) {

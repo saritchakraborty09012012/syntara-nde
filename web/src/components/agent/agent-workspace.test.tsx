@@ -59,6 +59,14 @@ describe("AgentSessions", () => {
     expect(html).toContain("tools active")
     expect(html).toContain('aria-label="Delete session: Fix parser"')
   })
+
+  it("only offers the collapse control when App wires onCollapse", () => {
+    const plain = renderToStaticMarkup(<AgentSessions {...sessionProps()} />)
+    expect(plain).not.toContain('aria-label="Hide sessions"')
+    const collapsible = renderToStaticMarkup(<AgentSessions {...sessionProps({ onCollapse: noop })} />)
+    expect(collapsible).toContain('aria-label="Hide sessions"')
+    expect(collapsible).toContain('aria-label="New session"')
+  })
 })
 
 function composerProps(overrides: Partial<ComponentProps<typeof AgentComposer>> = {}) {
