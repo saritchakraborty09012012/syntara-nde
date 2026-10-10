@@ -15,13 +15,17 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import secrets
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
+from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
-from urllib.parse import unquote
+from urllib.parse import unquote, urlparse
 
 from .library import ModelLibrary
 from .runtime.base import GenerationCancelled
@@ -53,6 +57,12 @@ DEFAULT_CORS_ORIGINS = (
 )
 
 _PROFILE_WINDOW = 120
+
+# POST /fetch (the agent's web_fetch tool): one bounded page fetch performed
+# by the gateway so the browser never talks to arbitrary hosts directly.
+_FETCH_TIMEOUT_S = 12.0
+_FETCH_MAX_BYTES = 512 * 1024
+_FETCH_USER_AGENT = "Syntara/1.0 (local agent web_fetch)"
 _IMPLEMENTED_LATER = {
     "/v1/completions": "raw text completion",
     "/v1/brio": "option scoring (brio)",
@@ -61,6 +71,52 @@ _IMPLEMENTED_LATER = {
 }
 
 RuntimeFactory = Callable[..., Any]
+
+
+class _HtmlTextExtractor(HTMLParser):
+    """Dependency-free HTML → readable text for POST /fetch.
+
+    Skips script/style-ish subtrees, turns block boundaries into newlines,
+    and lets html.parser decode entities (convert_charrefs=True)."""
+
+    _SKIP = {"script", "style", "noscript", "template", "svg"}
+    _BLOCK = {"p", "div", "li", "tr", "br", "section", "article", "h1", "h2",
+              "h3", "h4", "h5", "h6", "pre", "blockquote"}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: Any) -> None:
+        if tag in self._SKIP:
+            self._skip_depth += 1
+        elif tag in self._BLOCK and self._skip_depth == 0:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in self._SKIP:
+            if self._skip_depth > 0:
+                self._skip_depth -= 1
+        elif tag in self._BLOCK and self._skip_depth == 0:
+            self.parts.append("\n")
+
+    def handle_data(self, data: str) -> None:
+        if self._skip_depth == 0:
+            self.parts.append(data)
+
+
+def _html_to_text(html: str) -> str:
+    extractor = _HtmlTextExtractor()
+    try:
+        extractor.feed(html)
+        extractor.close()
+    except Exception:  # noqa: BLE001 - malformed page: keep what we got
+        pass
+    text = "".join(extractor.parts)
+    text = re.sub(r"[ \t\r\f\v]+", " ", text)
+    text = re.sub(r" ?\n ?", "\n", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def reload_predicate(current: dict[str, Any],
@@ -605,6 +661,116 @@ class HostGateway:
         return {"cancelled": active > 0, "active": active,
                 "queued": int(snap.get("queued", 0) or 0)}
 
+    # ---------------------------------------------------------------- fetch
+
+    def handle_fetch(self, body: dict[str, Any], respond: "_Responder",
+                     origin: str | None) -> None:
+        """POST /fetch — the agent web_fetch tool's server side.
+
+        The browser never fetches remote pages itself; the gateway does,
+        with a hard timeout, a size cap, http(s)-only schemes, a cloud-
+        metadata host block, and HTML→text conversion. The Origin header
+        (when present) must be one of the configured local UI origins so a
+        random web page cannot drive this endpoint through the user's
+        browser (CSRF → SSRF)."""
+        if origin and origin not in self.cors_origins:
+            respond.error(403, "this origin may not use /fetch",
+                          "permission_error", "origin_not_allowed")
+            return
+
+        raw_url = body.get("url") if isinstance(body, dict) else None
+        if not isinstance(raw_url, str) or not raw_url.strip():
+            respond.error(400, "body must include a non-empty 'url' string",
+                          "invalid_request_error", "invalid_url")
+            return
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(raw_url.strip())
+        except ValueError:
+            parsed = None
+        if parsed is None or parsed.scheme not in ("http", "https") or not parsed.hostname:
+            respond.error(400,
+                          "only absolute http(s) URLs can be fetched",
+                          "invalid_request_error", "invalid_url")
+            return
+        if parsed.username or parsed.password:
+            respond.error(400, "URLs with embedded credentials are not allowed",
+                          "invalid_request_error", "invalid_url")
+            return
+        # Cloud-instance metadata endpoints are the classic SSRF pivot; a
+        # local agent has no legitimate reason to touch them.
+        host = parsed.hostname.lower()
+        if host == "169.254.169.254" or host.startswith("169.254."):
+            respond.error(400, "cloud metadata addresses are not fetchable",
+                          "invalid_request_error", "blocked_url")
+            return
+
+        request = urllib.request.Request(
+            raw_url.strip(),
+            headers={"User-Agent": _FETCH_USER_AGENT,
+                     "Accept": "text/html, text/plain, application/json, */*"})
+        try:
+            with urllib.request.urlopen(request, timeout=_FETCH_TIMEOUT_S) as resp:
+                status = int(getattr(resp, "status", 200) or 200)
+                final_url = resp.geturl() or raw_url.strip()
+                content_type = resp.headers.get("Content-Type", "") or ""
+                raw = resp.read(_FETCH_MAX_BYTES + 1)
+        except urllib.error.HTTPError as exc:
+            respond.error(502,
+                          f"the page answered with HTTP {exc.code}",
+                          "upstream_error", f"http_{exc.code}")
+            return
+        except TimeoutError:
+            respond.error(504, f"the page did not answer within {_FETCH_TIMEOUT_S:.0f}s",
+                          "upstream_error", "fetch_timeout")
+            return
+        except urllib.error.URLError as exc:
+            reason = getattr(exc, "reason", exc)
+            if isinstance(reason, TimeoutError) or "timed out" in str(reason).lower():
+                respond.error(504, f"the page did not answer within {_FETCH_TIMEOUT_S:.0f}s",
+                              "upstream_error", "fetch_timeout")
+            else:
+                respond.error(502, f"the page could not be fetched: {reason}",
+                              "upstream_error", "fetch_failed")
+            return
+        except (ConnectionError, OSError) as exc:
+            respond.error(502, f"the page could not be fetched: {exc}",
+                          "upstream_error", "fetch_failed")
+            return
+
+        truncated = len(raw) > _FETCH_MAX_BYTES
+        raw = raw[:_FETCH_MAX_BYTES]
+        mime = content_type.split(";", 1)[0].strip().lower()
+
+        text: str
+        if mime in ("text/html", "application/xhtml+xml") or (not mime and raw.lstrip()[:1] == b"<"):
+            charset = "utf-8"
+            match = re.search(r"charset=([\w-]+)", content_type, re.IGNORECASE)
+            if match:
+                charset = match.group(1)
+            try:
+                text = _html_to_text(raw.decode(charset, errors="replace"))
+            except LookupError:
+                text = _html_to_text(raw.decode("utf-8", errors="replace"))
+        elif mime.startswith("text/") or mime in ("application/json", "application/xml", "application/xhtml+xml"):
+            charset = "utf-8"
+            match = re.search(r"charset=([\w-]+)", content_type, re.IGNORECASE)
+            if match:
+                charset = match.group(1)
+            try:
+                text = raw.decode(charset, errors="replace").strip()
+            except LookupError:
+                text = raw.decode("utf-8", errors="replace").strip()
+        else:
+            respond.error(415,
+                          f"refusing to return non-text content-type '{mime or 'unknown'}'",
+                          "invalid_request_error", "unsupported_content_type")
+            return
+
+        respond.json(200, {"ok": True, "status": status, "final_url": final_url,
+                           "content_type": content_type, "text": text,
+                           "truncated": truncated, "error": None})
+
     # ------------------------------------------------------------ request path
 
     def handle_chat(self, body: dict[str, Any], respond: "_Responder") -> None:
@@ -919,6 +1085,14 @@ def _make_handler(gateway: HostGateway):
             elif path == "/stop":
                 self._read_json()  # drain any body; /stop takes no arguments yet
                 responder.json(200, gateway.stop_generation())
+            elif path == "/fetch":
+                body = self._read_json()
+                if body is None:
+                    responder.error(400, "request body must be a JSON object",
+                                    "invalid_request_error", "invalid_body")
+                    return
+                gateway.handle_fetch(body, responder,
+                                     self.headers.get("Origin"))
             elif path in _IMPLEMENTED_LATER:
                 responder.error(
                     501,

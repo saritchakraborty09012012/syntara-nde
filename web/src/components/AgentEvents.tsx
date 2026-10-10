@@ -10,11 +10,13 @@ import {
   CircleX,
   FileText,
   FolderOpen,
+  Globe,
   Info,
   ListChecks,
   LoaderCircle,
   ShieldCheck,
   Terminal,
+  Users,
 } from "lucide-react"
 
 import type { AgentEvent } from "@/lib/agent/loop"
@@ -29,6 +31,8 @@ function toolIcon(name: string) {
   if (name === "proc_run") return Terminal
   if (name === "todo") return ListChecks
   if (name === "fs_list") return FolderOpen
+  if (name === "web_fetch") return Globe
+  if (name === "subagent") return Users
   return FileText
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  detectLocalServerUrl,
   diffLines,
   formatListOutput,
   formatProcOutput,
@@ -15,6 +16,16 @@ describe("summarizeArgs", () => {
     expect(summarizeArgs("fs_read", { path: "src/app.ts" })).toBe("src/app.ts")
     expect(summarizeArgs("fs_list", {})).toBe("(project root)")
     expect(summarizeArgs("fs_read", { path: "  " })).toBe("(project root)")
+  })
+
+  it("shows the URL for web_fetch and the task for subagent", () => {
+    expect(summarizeArgs("web_fetch", { url: "https://example.com/docs" })).toBe("https://example.com/docs")
+    expect(summarizeArgs("web_fetch", {})).toBe("(missing url)")
+    expect(summarizeArgs("subagent", { task: "Summarise the README" })).toBe("Summarise the README")
+    expect(summarizeArgs("subagent", { task: "  " })).toBe("(missing task)")
+    const long = summarizeArgs("web_fetch", { url: `https://example.com/${"x".repeat(200)}` })
+    expect(long.length).toBeLessThanOrEqual(97)
+    expect(long.endsWith("…")).toBe(true)
   })
 
   it("flags a missing write path", () => {
@@ -125,5 +136,27 @@ describe("previewOutput", () => {
     const shown = previewOutput(long, 100)
     expect(shown.length).toBeLessThan(5000)
     expect(shown).toContain("… (4900 more characters)")
+  })
+})
+
+describe("detectLocalServerUrl", () => {
+  it("finds the first local server URL in proc output", () => {
+    const output = "listening on http://127.0.0.1:5173/\nnone of the other lines matter"
+    expect(detectLocalServerUrl(output)).toBe("http://127.0.0.1:5173/")
+    expect(detectLocalServerUrl("vite ready on http://localhost:3000")).toBe("http://localhost:3000")
+  })
+
+  it("rewrites 0.0.0.0 binds to a browser-reachable host", () => {
+    expect(detectLocalServerUrl("Serving on http://0.0.0.0:8080")).toBe("http://127.0.0.1:8080")
+  })
+
+  it("keeps the path when the server prints a full URL", () => {
+    expect(detectLocalServerUrl("open http://127.0.0.1:4173/app/index.html now"))
+      .toBe("http://127.0.0.1:4173/app/index.html")
+  })
+
+  it("ignores non-local hosts and text without a URL", () => {
+    expect(detectLocalServerUrl("https://example.com/docs")).toBeNull()
+    expect(detectLocalServerUrl("server started successfully")).toBeNull()
   })
 })

@@ -22,6 +22,14 @@ export function summarizeArgs(name: string, args: Record<string, unknown>): stri
     }
     case "todo":
       return `${Array.isArray(args.items) ? args.items.length : 0} item(s)`
+    case "web_fetch": {
+      const url = typeof args.url === "string" && args.url.trim() ? args.url.trim() : "(missing url)"
+      return url.length > 96 ? `${url.slice(0, 96)}…` : url
+    }
+    case "subagent": {
+      const task = typeof args.task === "string" && args.task.trim() ? args.task.trim() : "(missing task)"
+      return task.length > 96 ? `${task.slice(0, 96)}…` : task
+    }
     default: {
       const keys = Object.keys(args)
       return keys.length ? keys.join(", ") : "—"
@@ -114,4 +122,16 @@ export function interruptedMessage(reason: string): string {
 export function previewOutput(output: string, maxChars = 2000): string {
   if (output.length <= maxChars) return output
   return `${output.slice(0, maxChars)}… (${output.length - maxChars} more characters)`
+}
+
+/* First local dev-server URL mentioned in proc_run output, ready to load in
+   the preview iframe. Servers frequently bind 0.0.0.0, which the browser
+   cannot always reach from an app origin — rewrite it to 127.0.0.1. */
+export function detectLocalServerUrl(output: string): string | null {
+  const match = /\bhttps?:\/\/(127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])(:\d{2,5})?(\/[^\s"'<>)]*)?/.exec(output)
+  if (!match) return null
+  const host = match[1] === "0.0.0.0" ? "127.0.0.1" : match[1]
+  const port = match[2] ?? ""
+  const path = match[3] ?? ""
+  return `${match[0].startsWith("https") ? "https" : "http"}://${host}${port}${path}`
 }

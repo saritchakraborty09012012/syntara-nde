@@ -5,6 +5,7 @@ import {
   createSession,
   createTurn,
   deleteSession,
+  filterSessions,
   groupSessions,
   loadManifest,
   loadSession,
@@ -72,6 +73,8 @@ describe("session persistence", () => {
     const manifest = saveSession(session, storage)
     expect(manifest.activeId).toBe(session.id)
     expect(manifest.entries[0]).toMatchObject({ id: session.id, title: "Fix parser" })
+    /* The manifest carries a search blob of the session's task texts. */
+    expect(manifest.entries[0]?.text).toContain("Fix parser")
     expect(storage.getItem(sessionKey(session.id))).toBeTruthy()
 
     const loaded = loadSession(session.id, storage)
@@ -179,5 +182,34 @@ describe("groupSessions", () => {
 
   it("returns no groups when there is nothing to show", () => {
     expect(groupSessions([], Date.now())).toEqual([])
+  })
+})
+
+describe("filterSessions", () => {
+  const entries = [
+    { id: "a", title: "Fix parser bug", createdAt: 1, updatedAt: 1, text: "investigate the json tool-call parser" },
+    { id: "b", title: "Update site", createdAt: 2, updatedAt: 2, text: "rewrite the download section" },
+    { id: "c", title: "New session", createdAt: 3, updatedAt: 3 },
+  ]
+
+  it("returns everything for an empty or whitespace query", () => {
+    expect(filterSessions(entries, "")).toEqual(entries)
+    expect(filterSessions(entries, "   ")).toEqual(entries)
+  })
+
+  it("matches title and stored text, case-insensitively", () => {
+    expect(filterSessions(entries, "parser").map((entry) => entry.id)).toEqual(["a"])
+    expect(filterSessions(entries, "DOWNLOAD").map((entry) => entry.id)).toEqual(["b"])
+    expect(filterSessions(entries, "json").map((entry) => entry.id)).toEqual(["a"])
+  })
+
+  it("ANDs multiple terms across title and text", () => {
+    expect(filterSessions(entries, "fix parser").map((entry) => entry.id)).toEqual(["a"])
+    expect(filterSessions(entries, "fix site").map((entry) => entry.id)).toEqual([])
+  })
+
+  it("tolerates entries without stored text (older manifests)", () => {
+    expect(filterSessions(entries, "new session").map((entry) => entry.id)).toEqual(["c"])
+    expect(filterSessions(entries, "ghost")).toEqual([])
   })
 })

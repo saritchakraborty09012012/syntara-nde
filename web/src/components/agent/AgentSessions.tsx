@@ -3,9 +3,10 @@
    sessions grouped by day with a status dot on the active one. Pure
    presentation — App owns session state, persistence and deletion. */
 
-import { FolderOpen, Plus, ShieldCheck, Trash2 } from "lucide-react"
+import { useState } from "react"
+import { FolderOpen, Plus, Search, ShieldCheck, Trash2 } from "lucide-react"
 
-import { groupSessions, relativeLabel, type SessionManifestEntry } from "@/lib/agent/sessions"
+import { filterSessions, groupSessions, relativeLabel, type SessionManifestEntry } from "@/lib/agent/sessions"
 import { cn } from "@/lib/utils"
 
 export interface SessionGrant {
@@ -31,7 +32,8 @@ interface AgentSessionsProps {
 }
 
 export function AgentSessions(props: AgentSessionsProps) {
-  const groups = groupSessions(props.entries)
+  const [query, setQuery] = useState("")
+  const groups = groupSessions(filterSessions(props.entries, query))
   return (
     <aside className="ag-sessions" aria-label="Agent sessions">
       <div className="ag-sessions-head">
@@ -39,6 +41,16 @@ export function AgentSessions(props: AgentSessionsProps) {
         <button type="button" className="ag-icon-btn" onClick={props.onNew} title="New session" aria-label="New session">
           <Plus size={14} />
         </button>
+      </div>
+
+      <div className="ag-search">
+        <Search size={13} aria-hidden="true" />
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search sessions…"
+          aria-label="Search sessions"
+        />
       </div>
 
       <div className="ag-project">
@@ -102,7 +114,9 @@ export function AgentSessions(props: AgentSessionsProps) {
             </div>
           ))
         ) : (
-          <div className="empty-mini">No sessions yet — press + to start one.</div>
+          <div className="empty-mini">
+            {query.trim() ? "No sessions match your search." : "No sessions yet — press + to start one."}
+          </div>
         )}
       </div>
     </aside>

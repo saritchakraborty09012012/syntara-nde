@@ -91,7 +91,7 @@ export function serverEndpoint(baseUrl: string, path: string) {
   return endpoint(baseUrl.replace(/\/v1\/?$/, ""), path)
 }
 
-function headers(apiKey = "") {
+export function headers(apiKey = "") {
   return {
     "Content-Type": "application/json",
     ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),

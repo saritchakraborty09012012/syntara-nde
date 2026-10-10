@@ -13,7 +13,10 @@
 
 export type PermissionDecision = "once" | "always" | "deny"
 
-export const GATED_TOOLS = ["fs_write", "proc_run"] as const
+/* Writes and process execution always ask, and so does web_fetch: a URL is
+   an exfiltration channel (the model could append file contents read with
+   fs_read to the query string), so it never runs without consent. */
+export const GATED_TOOLS = ["fs_write", "proc_run", "web_fetch"] as const
 
 export function isGated(tool: string): boolean {
   return (GATED_TOOLS as readonly string[]).includes(tool)

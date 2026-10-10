@@ -12,12 +12,14 @@ const memoryStore = (): GrantStore & { data: Map<string, boolean> } => {
 }
 
 describe("permission policy", () => {
-  it("gates writes and process execution only", () => {
+  it("gates writes, process execution and web_fetch only", () => {
     expect(isGated("fs_write")).toBe(true)
     expect(isGated("proc_run")).toBe(true)
+    expect(isGated("web_fetch")).toBe(true)
     expect(isGated("fs_read")).toBe(false)
     expect(isGated("fs_list")).toBe(false)
     expect(isGated("todo")).toBe(false)
+    expect(isGated("subagent")).toBe(false)
   })
 
   it("grants nothing by default", () => {

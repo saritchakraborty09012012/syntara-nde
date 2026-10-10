@@ -113,7 +113,7 @@ import {
 import { readGitBranch } from "@/lib/git-branch"
 import { dictationLanguage, speechRecognitionSupported, startDictation, type DictationHandle } from "@/lib/voice"
 import { runAgentLoop, type AgentEvent } from "@/lib/agent/loop"
-import { AGENT_TOOL_SPECS } from "@/lib/agent/tools"
+import { agentToolsForMode, AGENT_TOOL_SPECS, SUBAGENT_TOOL_NAMES } from "@/lib/agent/tools"
 import { createAgentExecutor } from "@/lib/agent/execute"
 import { summarizeArgs } from "@/lib/agent/ui"
 import { agentToolsAvailable } from "@/lib/agent-tools"
@@ -175,10 +175,12 @@ const defaultAgent = {
   tools: ["filesystem", "terminal", "git", "tests"],
 }
 
-/* Phase 4c: the two gated tools and how the project bar words them. */
+/* Phase 4c: the gated tools and how the project bar words them. web_fetch
+   is gated because a URL can leak file contents (exfiltration channel). */
 const GRANT_LABELS = [
   { tool: "fs_write", label: "Write files" },
   { tool: "proc_run", label: "Run processes" },
+  { tool: "web_fetch", label: "Fetch web" },
 ] as const
 
 /* First-run task suggestions in the agent stage's empty state. */
@@ -340,6 +342,10 @@ export default function App() {
     return manifest.entries[0]?.id ?? null
   })
   const [agentTodo, setAgentTodo] = useState<string[]>([])
+  /* Local dev-server URL discovered in a proc_run result; the preview dock
+     loads it in a sandboxed iframe. Cleared when the user closes the dock
+     or switches sessions. */
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
   const [permissionAsk, setPermissionAsk] = useState<{ tool: string; args: Record<string, unknown> } | null>(null)
   const permissionResolver = useRef<((decision: PermissionDecision) => void) | null>(null)
   /* Topbar chips: branch of the active project's git repo (desktop only,
@@ -810,7 +816,14 @@ export default function App() {
      finished run. */
   const agentModelOptions = useMemo(() => pickerRows.map((row) => ({ value: row.id, label: row.label })), [pickerRows])
   const sessionEntries = useMemo(
-    () => agentSessions.map((item) => ({ id: item.id, title: item.title, createdAt: item.createdAt, updatedAt: item.updatedAt })),
+    () => agentSessions.map((item) => ({
+      id: item.id,
+      title: item.title,
+      createdAt: item.createdAt,
+      updatedAt: item.updatedAt,
+      /* Sidebar search blob: same 2 KB cap the persisted manifest uses. */
+      text: item.turns.map((turn) => turn.task).join("\n").slice(0, 2000),
+    })),
     [agentSessions],
   )
   const lastAgentRun = useMemo<LastRunSummary | null>(() => {
@@ -1584,6 +1597,8 @@ export default function App() {
     setAgentSessions((list) => [session, ...list])
     setActiveSessionId(session.id)
     setAgentPrompt("")
+    setPreviewUrl(null)
+    setAgentTodo([])
     try { saveSession(session) } catch { /* quota — sidebar still shows it for this session */ }
   }
 
@@ -1594,6 +1609,8 @@ export default function App() {
       try { saveSession(current) } catch { /* trimmed retry inside the lib */ }
     }
     setActiveSessionId(id)
+    setPreviewUrl(null)
+    setAgentTodo([])
     try { setActiveStoredSession(id) } catch { /* pointer is cosmetic on quota */ }
   }
 
@@ -1752,14 +1769,13 @@ export default function App() {
     setAgentBusy(true)
 
     /* Mode decides the tool surface before the permission gate: chat and
-       explain bind nothing, plan binds reads only, build/debug get the
-       full gated set. Browser sessions stay planning-only. */
-    const READ_ONLY_TOOLS = new Set(["fs_read", "fs_list", "todo"])
-    const tools = agentToolsAvailable() && root && policy.tools !== "none"
-      ? policy.tools === "read-only"
-        ? AGENT_TOOL_SPECS.filter((tool) => READ_ONLY_TOOLS.has(tool.spec.function.name))
-        : AGENT_TOOL_SPECS
-      : []
+       explain bind nothing, plan binds reads (incl. gated web_fetch),
+       build/debug get the full gated set. Browser sessions stay
+       planning-only. */
+    const tools = agentToolsForMode(policy, {
+      available: agentToolsAvailable() && !!root,
+      hasProject: !!root,
+    })
 
     const started = performance.now()
     const controller = new AbortController()
@@ -1774,7 +1790,46 @@ export default function App() {
         systemPrompt: `${basePrompt}\n\n${policy.prompt}`,
         task,
         tools,
-        executor: createAgentExecutor(root, { onTodo: setAgentTodo }),
+        executor: createAgentExecutor(root, {
+          baseUrl: state.settings.baseUrl,
+          onTodo: setAgentTodo,
+          onServerUrl: setPreviewUrl,
+          runSubagent: async (subTask, signal) => {
+            const sub = await runAgentLoop({
+              baseUrl: state.settings.baseUrl,
+              model,
+              systemPrompt: [
+                basePrompt,
+                "",
+                "You are a focused research sub-agent of a larger coding agent.",
+                "You have read-only tools (fs_read, fs_list, web_fetch).",
+                "Complete the assigned task and reply with a concise, factual report.",
+              ].join("\n"),
+              task: subTask,
+              tools: AGENT_TOOL_SPECS.filter((tool) => SUBAGENT_TOOL_NAMES.includes(tool.spec.function.name)),
+              executor: createAgentExecutor(root, { baseUrl: state.settings.baseUrl }),
+              /* The parent turn is already under user consent, and a nested
+                 permission modal would collide with the parent's resolver,
+                 so web_fetch auto-allows once inside the sub-agent while
+                 any unexpected gated call is denied. */
+              askPermission: async (tool) => (tool === "web_fetch" ? "once" : "deny"),
+              projectId: activeProject?.id ?? null,
+              sessionGrants: new Set<string>(),
+              grantStore,
+              signal,
+              onEvent: () => undefined,
+              maxSteps: 6,
+              maxTokens,
+            })
+            if (sub.status === "done") {
+              return { ok: true, output: sub.text ?? "(the sub-agent returned no report)" }
+            }
+            return {
+              ok: false,
+              output: sub.reason ? `sub-agent stopped (${sub.reason})` : `sub-agent stopped (${sub.status})`,
+            }
+          },
+        }),
         askPermission: (tool, args) =>
           new Promise<PermissionDecision>((resolve) => {
             permissionResolver.current = resolve
@@ -2427,8 +2482,8 @@ export default function App() {
               todo={agentTodo}
               running={agentBusy}
               lastRun={lastAgentRun}
-              previewUrl={null}
-              onClosePreview={() => undefined}
+              previewUrl={previewUrl}
+              onClosePreview={() => setPreviewUrl(null)}
               copiedKey={copied}
               onCopy={copy}
             />

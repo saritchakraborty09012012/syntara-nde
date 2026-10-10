@@ -51,6 +51,9 @@ export interface SessionManifestEntry {
   title: string
   createdAt: number
   updatedAt: number
+  /* Capped join of the session's task texts so the sidebar can search
+     without loading every transcript. Older entries simply lack it. */
+  text?: string
 }
 
 export interface SessionManifest {
@@ -225,7 +228,15 @@ export function saveSession(session: AgentSession, storage: Storage = localStora
     storage.setItem(sessionKey(minimal.id), JSON.stringify(minimal))
   }
 
-  const entry: SessionManifestEntry = { id: trimmed.id, title: trimmed.title, createdAt: trimmed.createdAt, updatedAt: trimmed.updatedAt }
+  const entry: SessionManifestEntry = {
+    id: trimmed.id,
+    title: trimmed.title,
+    createdAt: trimmed.createdAt,
+    updatedAt: trimmed.updatedAt,
+    /* Search blob: every task in the session, capped so the manifest
+       itself stays small (it is loaded on every sidebar render). */
+    text: trimmed.turns.map((turn) => turn.task).join("\n").slice(0, 2000),
+  }
   const others = manifest.entries.filter((item) => item.id !== trimmed.id)
   /* Manifest stays newest-first regardless of which session was saved, so
      the sidebar order survives a reload. */
@@ -287,6 +298,18 @@ export function groupSessions(entries: SessionManifestEntry[], now = Date.now())
     else groups[2].entries.push(entry)
   }
   return groups.filter((group) => group.entries.length > 0)
+}
+
+/* Sidebar search: every whitespace-separated term must appear in the
+   title or the stored task text (case-insensitive AND). An empty query
+   returns the entries unchanged. */
+export function filterSessions(entries: SessionManifestEntry[], query: string): SessionManifestEntry[] {
+  const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  if (!terms.length) return entries
+  return entries.filter((entry) => {
+    const haystack = `${entry.title}\n${entry.text ?? ""}`.toLowerCase()
+    return terms.every((term) => haystack.includes(term))
+  })
 }
 
 /* Compact relative timestamp for session rows: "just now", "12m ago",

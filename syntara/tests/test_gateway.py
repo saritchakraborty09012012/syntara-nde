@@ -11,6 +11,8 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from http.server import BaseHTTPRequestHandler
+from typing import Any
 
 from syntara.gateway import HostGateway
 
@@ -685,6 +687,148 @@ class HostLifecycleTest(unittest.TestCase):
         self.assertIsNone(gw.last_error)  # cancel != failure
         status, _, _ = self._get(gw, "/health")
         self.assertEqual(status, 200)  # still ready
+
+
+class _PageHandler(BaseHTTPRequestHandler):
+    """One fixed HTML page for the /fetch happy-path test."""
+
+    def log_message(self, *args):  # quiet
+        pass
+
+    def do_GET(self):  # noqa: N802
+        body = (b"<html><head><title>Fake Page</title><style>x{}</style></head>"
+                b"<body><h1>Hello</h1><script>alert(1)</script>"
+                b"<p>Fetch &amp; extract.</p></body></html>")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+class FetchEndpointTest(unittest.TestCase):
+    """POST /fetch: the agent web_fetch tool's server side."""
+
+    def start_gateway(self, **kw) -> HostGateway:
+        gw = HostGateway(_entry(), port=0, runtime_factory=FakeRuntime, **kw)
+        gw.start()
+        self.addCleanup(gw.stop)
+        return gw
+
+    def start_page_server(self) -> tuple[str, threading.Thread, Any]:
+        from http.server import ThreadingHTTPServer
+        server = ThreadingHTTPServer(("127.0.0.1", 0), _PageHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        def cleanup():
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5.0)
+
+        self.addCleanup(cleanup)
+        return f"http://127.0.0.1:{server.server_address[1]}/", thread, server
+
+    def post_fetch(self, gw: HostGateway, url: object,
+                   headers: dict | None = None):
+        data = json.dumps({"url": url}).encode()
+        req = urllib.request.Request(
+            gw.url + "/fetch", data=data, method="POST",
+            headers={"Content-Type": "application/json", **(headers or {})})
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                return resp.status, dict(resp.headers), resp.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, dict(exc.headers), exc.read()
+
+    # -- happy path ---------------------------------------------------------
+
+    def test_fetch_extracts_text_from_a_local_page(self):
+        gw = self.start_gateway()
+        page_url, _, _ = self.start_page_server()
+        status, _, raw = self.post_fetch(
+            gw, page_url, headers={"Origin": "http://127.0.0.1:5173"})
+        self.assertEqual(status, 200)
+        body = json.loads(raw)
+        self.assertTrue(body["ok"])
+        self.assertEqual(body["status"], 200)
+        self.assertIn("text/html", body["content_type"])
+        self.assertIn("Hello", body["text"])
+        self.assertIn("Fetch & extract.", body["text"])
+        self.assertNotIn("alert(1)", body["text"])  # script stripped
+        self.assertFalse(body["truncated"])
+
+    def test_fetch_without_origin_is_allowed_for_local_clients(self):
+        # curl / the Python SDK / the desktop shell send no Origin header.
+        gw = self.start_gateway()
+        page_url, _, _ = self.start_page_server()
+        status, _, raw = self.post_fetch(gw, page_url)
+        self.assertEqual(status, 200)
+        self.assertTrue(json.loads(raw)["ok"])
+
+    # -- input validation ---------------------------------------------------
+
+    def test_fetch_rejects_non_http_schemes(self):
+        gw = self.start_gateway()
+        for bad in ("file:///etc/passwd", "ftp://example.com/x",
+                    "data:text/plain,hi", "not a url", ""):
+            status, _, raw = self.post_fetch(gw, bad)
+            self.assertEqual(status, 400, bad)
+            self.assertEqual(json.loads(raw)["error"]["code"], "invalid_url")
+
+    def test_fetch_rejects_embedded_credentials(self):
+        gw = self.start_gateway()
+        status, _, raw = self.post_fetch(gw, "http://user:pass@example.com/")
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(raw)["error"]["code"], "invalid_url")
+
+    def test_fetch_blocks_cloud_metadata_hosts(self):
+        gw = self.start_gateway()
+        status, _, raw = self.post_fetch(gw, "http://169.254.169.254/latest/meta-data/")
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(raw)["error"]["code"], "blocked_url")
+
+    def test_fetch_rejects_a_body_that_is_not_json(self):
+        gw = self.start_gateway()
+        req = urllib.request.Request(
+            gw.url + "/fetch", data=b"not json", method="POST",
+            headers={"Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                status, raw = resp.status, resp.read()
+        except urllib.error.HTTPError as exc:
+            status, raw = exc.code, exc.read()
+        self.assertEqual(status, 400)
+        self.assertEqual(json.loads(raw)["error"]["code"], "invalid_body")
+
+    # -- CSRF / origin guard ------------------------------------------------
+
+    def test_fetch_rejects_browser_origins_not_on_the_allowlist(self):
+        gw = self.start_gateway()
+        page_url, _, _ = self.start_page_server()
+        status, _, raw = self.post_fetch(
+            gw, page_url, headers={"Origin": "https://evil.example"})
+        self.assertEqual(status, 403)
+        self.assertEqual(json.loads(raw)["error"]["code"], "origin_not_allowed")
+
+    def test_fetch_accepts_the_configured_dev_origin(self):
+        gw = self.start_gateway()
+        page_url, _, _ = self.start_page_server()
+        status, headers, _ = self.post_fetch(
+            gw, page_url, headers={"Origin": "http://127.0.0.1:5173"})
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("Access-Control-Allow-Origin"),
+                         "http://127.0.0.1:5173")
+
+    # -- upstream failures --------------------------------------------------
+
+    def test_fetch_reports_an_unreachable_page_honestly(self):
+        gw = self.start_gateway()
+        # Port 1 on loopback: nothing listens there.
+        status, _, raw = self.post_fetch(gw, "http://127.0.0.1:1/")
+        self.assertEqual(status, 502)
+        err = json.loads(raw)["error"]
+        self.assertEqual(err["code"], "fetch_failed")
 
 
 if __name__ == "__main__":
