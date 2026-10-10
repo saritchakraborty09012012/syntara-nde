@@ -1,3 +1,7 @@
+/* Type-only edge to the agent session model (AgentMode); erased at compile
+   time, so there is no runtime cycle with sessions.ts → createId. */
+import type { AgentMode } from "./agent/sessions"
+
 export type ThemeMode = "dark" | "light" | "system"
 
 export interface StoredMessage {
@@ -150,6 +154,12 @@ export interface AppSettings {
   /* Phase 5: the first-run hardware-based model suggestion shows until the
      user acts on or dismisses it. */
   starterSuggestionSeen: boolean
+  /* BCP-47 tag for composer voice typing; empty/absent = browser locale. */
+  voiceLanguage?: string
+  /* Agent mode defaults (phase 3): the mode preselected in the agent
+     composer and the per-run step budget. Optional so legacy states load. */
+  agentDefaultMode?: AgentMode
+  agentMaxSteps?: number
 }
 
 export interface SyntaraState {

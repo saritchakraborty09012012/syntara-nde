@@ -6,8 +6,8 @@
   --bg-soft: #0b0d12;
   --panel: rgba(15, 18, 25, .88);
   --panel-2: rgba(19, 23, 31, .78);
-  --line: rgba(255,255,255,.09);
-  --line-strong: rgba(255,255,255,.16);
+  --line: rgba(255,255,255,.14);
+  --line-strong: rgba(255,255,255,.24);
   --text: #f4f7fb;
   --muted: #9ba5b5;
   --muted-2: #687284;
@@ -187,7 +187,7 @@ a { color: inherit; text-decoration: none; }
 .pending-image { position: relative; width: 52px; height: 42px; }
 .pending-image img { width: 100%; height: 100%; object-fit: cover; border: 1px solid var(--line); border-radius: 8px; }
 .pending-image button { position: absolute; top: -6px; right: -6px; border: 1px solid var(--line); width: 18px; height: 18px; border-radius: 50%; background: var(--panel); display: grid; place-items: center; cursor: pointer; }
-.composer { max-width: 820px; margin: 0 auto; border: 1px solid var(--line-strong); border-radius: 17px; background: rgba(10,13,18,.84); box-shadow: var(--shadow); overflow: hidden; }
+.composer { max-width: 820px; margin: 0 auto; border: 1px solid var(--line-strong); border-radius: 17px; background: rgba(14,19,28,.86); box-shadow: var(--shadow); overflow: hidden; }
 :root[data-theme="light"] .composer { background: rgba(255,255,255,.84); }
 .composer textarea { display: block; width: 100%; min-height: 88px; resize: none; border: 0; outline: 0; background: transparent; color: var(--text); padding: 15px 17px; font-size: 15px; line-height: 1.55; }
 .composer textarea::placeholder { color: var(--muted-2); }
@@ -263,10 +263,37 @@ a { color: inherit; text-decoration: none; }
 
 .spin { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
 
-@media (max-width: 1000px) { .syntara-shell { grid-template-columns: 86px minmax(0,1fr); }.brand-lockup { justify-content: center; }.brand-lockup > div { display: none; }.new-chat span, .nav-item span, .runtime-chip div, .sidebar-mini-actions { display: none; }.new-chat { padding: 10px; }.nav-item { justify-content: center; }.nav-label { display: none; }.runtime-chip { justify-content: center; }.chat-view { grid-template-columns: 150px minmax(0,1fr); }.model-grid, .card-grid { grid-template-columns: 1fr 1fr; }.settings-grid, .two-col { grid-template-columns: 1fr; } }
+@media (max-width: 1100px) { .syntara-shell { grid-template-columns: 86px minmax(0,1fr); }.brand-lockup { justify-content: center; }.brand-lockup > div { display: none; }.nav-collapse-btn { margin-left: 8px; }.new-chat span, .nav-item span, .runtime-chip div, .sidebar-mini-actions { display: none; }.new-chat { padding: 10px; }.nav-item { justify-content: center; }.nav-label { display: none; }.runtime-chip { justify-content: center; }.chat-view { grid-template-columns: 150px minmax(0,1fr); }.model-grid, .card-grid { grid-template-columns: 1fr 1fr; }.settings-grid, .two-col { grid-template-columns: 1fr; } }
 @media (max-width: 760px) { body { overflow: auto; }.syntara-shell { display: block; height: auto; max-height: none; overflow: visible; }.syntara-sidebar { min-height: auto; height: auto; overflow: visible; border-right: 0; border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 30; padding: 8px; }.brand-lockup { display: none; }.new-chat { display: none; }.nav-section { margin: 0; display: flex; overflow-x: auto; gap: 4px; }.nav-item { flex: 0 0 auto; justify-content: center; width: 44px; }.sidebar-bottom { display: none; }.syntara-main { height: auto; overflow: visible; min-height: calc(100vh - 62px); }.topbar { padding: 12px; }.scroll-view { padding: 16px; }.chat-view { grid-template-columns: 1fr; grid-template-rows: auto auto auto auto; flex: none; height: auto; }.chat-toolbar { padding: 10px 12px; }.conversation-list { grid-row: 2; grid-column: 1; display: flex; border-right: 0; border-bottom: 1px solid var(--line); overflow-x: auto; max-height: 140px; }.conversation-card { min-width: 150px; }.chat-stage { grid-row: 3; padding: 22px 13px; overflow: visible; }.composer-area { grid-column: 1; grid-row: 4; padding: 8px 13px 15px; }.suggestion-grid, .model-grid, .card-grid, .dev-grid, .metric-grid, .integration-strip { grid-template-columns: 1fr; }.section-head { align-items: flex-start; flex-direction: column; }.search-row { align-items: stretch; flex-direction: column; }.hardware-pill { justify-content: center; }.download-row { grid-template-columns: 36px minmax(0,1fr) auto; }.download-status { display: none; }.memory-create { grid-template-columns: 1fr; }.welcome { margin-top: 4vh; }.welcome h1 { font-size: 38px; } }
 
 :root[data-reduced-motion="true"] * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+
+/* Mobile: collapsed-history rail becomes a horizontal strip. */
+@media (max-width: 760px) { .history-rail { border-right: 0; border-bottom: 1px solid var(--line); justify-content: flex-start; padding: 8px 12px; } }
+
+/* Topbar: context-window meter (gola) with its popover, and the git branch
+   chip beside it. Both are desktop-first; on mobile the meter still fits
+   because the popover is width-capped and right-aligned. */
+.context-meter { position: relative; }
+.context-meter-btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: transparent; height: 32px; padding: 0 9px; border-radius: 10px; cursor: pointer; color: var(--muted); transition: border-color .18s, background .18s; }
+.context-meter-btn:hover { border-color: var(--line-strong); background: rgba(255,255,255,.04); }
+.context-meter-pct { font-family: 'Share Tech Mono', monospace; font-size: 11px; letter-spacing: .04em; }
+.context-meter-pop { position: absolute; top: calc(100% + 8px); right: 0; z-index: 45; width: min(300px, 78vw); display: grid; gap: 8px; padding: 12px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel); box-shadow: var(--shadow); backdrop-filter: blur(18px); }
+.context-meter-pop-head { display: flex; align-items: center; gap: 6px; font-family: 'Orbitron', sans-serif; font-size: 11px; text-transform: uppercase; letter-spacing: .12em; color: var(--accent); }
+.context-meter-pop-row { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--muted); }
+.context-meter-pop-row strong { color: var(--text); font-weight: 600; font-family: 'Share Tech Mono', monospace; }
+.context-meter-pop p { margin: 0; font-size: 11.5px; line-height: 1.6; color: var(--muted); }
+.context-meter-pop .context-meter-pop-note { color: var(--accent); }
+.git-chip { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 1px solid var(--line); border-radius: 10px; background: rgba(61,255,168,.05); color: var(--success); font-family: 'Share Tech Mono', monospace; font-size: 12px; letter-spacing: .04em; max-width: 180px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+/* Composer: mic (voice typing) beside the send button. The listening state
+   pulses so it is obvious the microphone is live. */
+.composer-actions { display: flex; align-items: center; gap: 8px; }
+.mic-btn { width: 34px; height: 34px; border: 1px solid var(--line); border-radius: 11px; background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; transition: color .18s, border-color .18s, background .18s; }
+.mic-btn:hover:not(:disabled) { color: var(--text); border-color: var(--line-strong); }
+.mic-btn:disabled { opacity: .4; cursor: not-allowed; }
+.mic-btn.listening { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 55%, transparent); background: color-mix(in srgb, var(--danger) 10%, transparent); animation: mic-pulse 1.4s ease-in-out infinite; }
+@keyframes mic-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(255,59,78,.35); } 50% { box-shadow: 0 0 0 7px rgba(255,59,78,0); } }
 
 /* Markdown rendering: every node is a React text node, nothing reaches innerHTML. */
 .message-content.md-wrap { white-space: normal; }
@@ -291,6 +318,11 @@ a { color: inherit; text-decoration: none; }
 .md-code code { font-size: .9em; line-height: 1.55; white-space: pre }
 
 /* Chat: conversation search, message actions, per-conversation setup panel. */
+.conversation-list-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 2px 10px; }
+.conversation-list-head span { font-family: 'Share Tech Mono', monospace; font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted-2); }
+.conversation-list-head .icon-btn { width: 26px; height: 26px; border-radius: 8px; }
+.history-rail { border-right: 1px solid var(--line); padding: 14px 7px; display: flex; justify-content: center; }
+.history-rail .icon-btn { width: 30px; height: 30px; }
 .conversation-search { display: flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 9px; padding: 7px 9px; margin-bottom: 8px; color: var(--muted-2); }
 .conversation-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 12px; }
 .chat-toolbar { position: relative; }
@@ -386,15 +418,15 @@ button.runtime-chip { font: inherit; color: inherit; text-align: left; }
    glow, terminal green, armor red, gold. Orbitron = display, Chakra Petch = body,
    Share Tech Mono = mono (fonts imported at the top of this file). */
 :root {
-  --bg: #020409;
-  --bg-soft: #070c14;
-  --panel: rgba(7, 12, 20, .92);
-  --panel-2: rgba(11, 19, 34, .82);
-  --line: rgba(69, 224, 255, .16);
-  --line-strong: rgba(69, 224, 255, .4);
+  --bg: #05080f;
+  --bg-soft: #0a111c;
+  --panel: rgba(11, 18, 29, .92);
+  --panel-2: rgba(16, 26, 43, .84);
+  --line: rgba(69, 224, 255, .28);
+  --line-strong: rgba(69, 224, 255, .55);
   --text: #e9f4ff;
-  --muted: #8aa2bd;
-  --muted-2: #55708a;
+  --muted: #94abc4;
+  --muted-2: #617e9a;
   --accent: #45e0ff;
   --accent-2: #2f7bff;
   --success: #3dffa8;
@@ -408,10 +440,10 @@ button.runtime-chip { font: inherit; color: inherit; text-align: left; }
 html, body, #root { background: var(--bg); }
 html:not([data-theme="light"]) body {
   background-image:
-    linear-gradient(rgba(69,224,255,.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(69,224,255,.045) 1px, transparent 1px),
-    radial-gradient(900px 600px at 78% 0%, rgba(69,224,255,.11), transparent 64%),
-    radial-gradient(700px 500px at 10% 100%, rgb(255 59 78 / .05), transparent 62%);
+    linear-gradient(rgba(69,224,255,.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(69,224,255,.055) 1px, transparent 1px),
+    radial-gradient(900px 600px at 78% 0%, rgba(69,224,255,.13), transparent 64%),
+    radial-gradient(700px 500px at 10% 100%, rgb(255 59 78 / .06), transparent 62%);
   background-size: 48px 48px, 48px 48px, auto, auto;
 }
 html:not([data-theme="light"]) body::after {
@@ -426,9 +458,11 @@ html:not([data-theme="light"]) body::after {
 :root[data-reduced-motion="true"] body::after { display: none; }
 button, input, textarea, select { font-family: inherit; }
 .syntara-shell { grid-template-columns: 278px minmax(0, 1fr); background: transparent; }
-.syntara-sidebar { position: relative; border-right: 1px solid var(--line); background: linear-gradient(180deg, rgba(2,4,9,.96), rgba(3,7,11,.84)); box-shadow: 18px 0 60px rgba(0,0,0,.24); padding: 24px 16px; }
+.syntara-sidebar { position: relative; border-right: 1px solid var(--line); background: linear-gradient(180deg, rgba(5,8,15,.96), rgba(7,12,20,.86)); box-shadow: 18px 0 60px rgba(0,0,0,.24); padding: 24px 16px; }
 .syntara-sidebar:after { content: 'SYNTARA // LOCAL CONTROL PLANE'; color: rgba(69,224,255,.32); font: 10px/1 'Share Tech Mono', monospace; letter-spacing: .18em; writing-mode: vertical-rl; position: absolute; left: 5px; bottom: 28px; pointer-events: none; }
-.brand-lockup { padding: 2px 10px 28px; }
+.brand-lockup { padding: 2px 10px 28px; justify-content: flex-start; }
+.brand-lockup .brand-text { min-width: 0; }
+.nav-collapse-btn { margin-left: auto; flex: 0 0 auto; }
 .brand-mark { width: 42px; height: 42px; border-radius: 8px; border: 1px solid rgba(69,224,255,.5); box-shadow: 0 0 30px rgba(69,224,255,.26); }
 .brand-name, .section-head h2, .hero-panel h2, .welcome h1 { font-family: 'Orbitron', sans-serif; }
 .brand-name { letter-spacing: .08em; text-transform: uppercase; font-size: 15px; }
@@ -488,7 +522,7 @@ button, input, textarea, select { font-family: inherit; }
 /* Narrow window: the rail shrinks to 92px, so the mini-actions row keeps its
    two buttons and the update badge moves to the slot above the runtime dot
    (same placement the collapsed rail uses) instead of clipping the gear. */
-@media (max-width: 1000px) { .syntara-shell { grid-template-columns: 92px minmax(0,1fr); } .sidebar-mini-actions .update-badge { display: none; } .update-badge-collapsed { display: grid; } }
+@media (max-width: 1100px) { .syntara-shell { grid-template-columns: 92px minmax(0,1fr); } .sidebar-mini-actions .update-badge { display: none; } .update-badge-collapsed { display: grid; } }
 @media (max-width: 760px) { .view.scroll-view { padding: 22px 14px; } .topbar { padding: 12px 14px; } }
 
 /* Light theme: override suit-skin hardcoded dark surfaces. Vars live in :root[data-theme="light"]. */
@@ -561,10 +595,11 @@ select option { background-color: var(--bg-soft); color: var(--text); }
   .nav-collapsed .mode-toggle { flex-direction: column; padding: 3px; margin-bottom: 8px; }
   .nav-collapsed .mode-toggle .mode-btn { padding: 7px 2px; font-size: 10px; letter-spacing: .02em; }
 
-  /* Conversation history panel toggle. */
-  .chat-view.history-collapsed { grid-template-columns: minmax(0, 1fr); }
-  .history-collapsed .conversation-list { display: none; }
-  .history-collapsed .composer-area { grid-column: 1; }
+  /* Conversation history panel: collapsed shows a slim rail with the
+     expand toggle so the control never disappears. */
+  .chat-view.history-collapsed { grid-template-columns: 48px minmax(0, 1fr); }
+  .history-collapsed .composer-area { grid-column: 2; }
+  .nav-collapsed .nav-collapse-btn { margin-left: 8px; }
 }
 
 /* Models hub tabs (#models, #models/installing, #models/installed). Each tab
@@ -586,13 +621,11 @@ select option { background-color: var(--bg-soft); color: var(--text); }
 .mode-toggle .mode-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .mode-toggle .mode-btn.active { background: linear-gradient(105deg, var(--accent), var(--accent-2)); color: #03131f; font-family: 'Orbitron', sans-serif; font-weight: 800; }
 :root[data-theme="light"] .mode-toggle { background: rgba(0,140,190,.05); }
-/* Agent-mode toolbar row: shared model picker above the hero. */
-.agent-toolbar { display: flex; align-items: center; margin: 0 0 14px; }
 /* Narrow/collapsed rails (~92 px): stack the two labels vertically so the
    words stay readable instead of overflowing. These must live AFTER the
    base rules above — the generic breakpoint blocks earlier in the file
    lose the cascade to them. */
-@media (max-width: 1000px) { .mode-toggle { flex-direction: column; } .mode-toggle .mode-btn { padding: 7px 2px; font-size: 10px; letter-spacing: .02em; } }
+@media (max-width: 1100px) { .mode-toggle { flex-direction: column; } .mode-toggle .mode-btn { padding: 7px 2px; font-size: 10px; letter-spacing: .02em; } }
 @media (max-width: 760px) { .mode-toggle { flex: 0 0 auto; flex-direction: row; margin: 0; } .mode-toggle .mode-btn { padding: 8px 12px; font-size: 13px; letter-spacing: .08em; } }
 /* The heading's decorative blue line would sit between the title and its tab
    row, so the tabbed head opts out of it. */
@@ -601,20 +634,16 @@ select option { background-color: var(--bg-soft); color: var(--text); }
    action columns, so they only need the icon + content tracks. */
 .download-row.progress-row { grid-template-columns: 36px minmax(0, 1fr); }
 .empty-state-card .primary-btn { margin-top: 10px; }
-/* Phase 4c — project bar, permission prompt, run events, todo.
+/* Phase 4c — permission chips, run events, todo (the project bar itself
+   moved into the agent sessions rail in phase 3).
    Appended after every base and theme rule so the cascade always wins. */
-.agent-project { display: grid; gap: 11px; margin-bottom: 12px; }
-.agent-project-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.agent-project-row .panel-note { flex: 1 1 240px; min-width: 0; }
-.project-select { max-width: 240px; background: var(--panel-2); border: 1px solid var(--line); color: var(--text); border-radius: 9px; padding: 6px 9px; font-size: 13px; }
-.project-name { font-size: 13px; color: var(--text); }
 .grant-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .grant-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 4px 8px; }
 .grant-chip.granted { color: var(--success); border-color: rgba(95,241,174,.35); }
 .grant-chip .chip-x { display: inline-flex; border: 0; background: none; color: inherit; padding: 0; cursor: pointer; opacity: .75; }
 .grant-chip .chip-x:hover { opacity: 1; }
+/* Shared inline action row (e.g. the Settings host-log card). */
 .task-actions { display: flex; align-items: center; gap: 9px; margin-top: 2px; }
-.agent-todo { margin-top: 12px; }
 .todo-list { margin: 0; padding-left: 18px; display: grid; gap: 5px; font-size: 12px; color: var(--muted); line-height: 1.6; }
 .agent-events { min-height: 220px; display: grid; align-content: start; gap: 8px; font-size: 11px; }
 .ev-step { display: flex; align-items: center; gap: 7px; color: var(--muted-2); font-family: 'Share Tech Mono', ui-monospace, monospace; text-transform: uppercase; letter-spacing: .1em; padding-top: 3px; border-top: 1px dashed var(--line); }
@@ -682,3 +711,191 @@ select option { background-color: var(--bg-soft); color: var(--text); }
 .import-mode .check-row[data-picked="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
 .import-path { font-size: 11.5px; color: var(--muted-2); overflow-wrap: anywhere; font-family: 'Share Tech Mono', ui-monospace, monospace; }
 .modal-error { margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--danger); }
+
+/* ============================================================ agent mode
+   opencode-style workspace (phase 3): sessions rail | transcript card with
+   a docked composer | progress + preview docks. Syntara theme tokens only. */
+.view.agent-shell { display: grid; grid-template-columns: 264px minmax(0, 1fr) 302px; gap: 14px; padding: 16px; overflow: hidden; align-items: stretch; }
+
+/* --- sessions rail --- */
+.ag-sessions { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); overflow: hidden; }
+.ag-sessions-head { display: flex; align-items: center; justify-content: space-between; padding: 11px 10px 9px 14px; border-bottom: 1px solid var(--line); }
+.ag-sessions-title { font-family: 'Orbitron', sans-serif; font-size: 10.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+.ag-icon-btn { width: 27px; height: 27px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; transition: color .16s, border-color .16s; }
+.ag-icon-btn:hover { color: var(--accent); border-color: var(--line-strong); }
+.ag-project { display: grid; gap: 7px; padding: 11px 12px; border-bottom: 1px solid var(--line); background: rgba(69, 224, 255, .035); }
+.ag-project-row { display: flex; align-items: center; gap: 7px; min-width: 0; font-size: 12px; color: var(--muted); }
+.ag-project-name { flex: 1; min-width: 0; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ag-tools-pill { flex: none; font-family: 'Share Tech Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: .06em; color: var(--muted-2); border: 1px solid var(--line); border-radius: 999px; padding: 2px 7px; white-space: nowrap; }
+.ag-tools-pill.on { color: var(--success); border-color: rgba(95, 241, 174, .4); background: rgba(95, 241, 174, .07); }
+.ag-project-path { font-family: 'Share Tech Mono', ui-monospace, monospace; font-size: 10px; color: var(--muted-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ag-mini-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 8px; background: transparent; padding: 5px 9px; cursor: pointer; transition: color .16s, border-color .16s; }
+.ag-mini-btn:hover:not(:disabled) { color: var(--text); border-color: var(--line-strong); }
+.ag-mini-btn:disabled { opacity: .45; cursor: not-allowed; }
+.ag-mini-btn.wide { width: 100%; }
+.ag-session-list { flex: 1; min-height: 0; overflow: auto; padding: 8px; display: flex; flex-direction: column; gap: 10px; }
+.ag-session-list::-webkit-scrollbar, .ag-timeline::-webkit-scrollbar, .ag-panel-body::-webkit-scrollbar { width: 7px; }
+.ag-session-list::-webkit-scrollbar-thumb, .ag-timeline::-webkit-scrollbar-thumb, .ag-panel-body::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .09); border-radius: 8px; }
+.ag-session-group { display: grid; gap: 2px; }
+.ag-session-group-label { font-family: 'Share Tech Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted-2); padding: 6px 8px 3px; }
+.ag-session-row { position: relative; display: flex; align-items: center; border-radius: 9px; transition: background .15s; }
+.ag-session-row:hover { background: rgba(69, 224, 255, .06); }
+.ag-session-row.active { background: linear-gradient(90deg, rgba(69, 224, 255, .14), rgba(69, 224, 255, .04)); box-shadow: inset 2px 0 0 var(--accent); }
+.ag-session-main { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; border: 0; background: transparent; color: var(--text); text-align: left; padding: 8px 4px 8px 10px; cursor: pointer; font-size: 12px; border-radius: 9px; }
+.ag-session-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--muted-2); }
+.ag-session-row.active .ag-session-dot { background: var(--accent); }
+.ag-session-dot.busy { animation: ag-blink 1s ease-in-out infinite; }
+@keyframes ag-blink { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+.ag-session-name { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ag-session-time { flex: none; font-family: 'Share Tech Mono', ui-monospace, monospace; font-size: 10px; color: var(--muted-2); }
+.ag-session-del { opacity: 0; border: 0; background: transparent; color: var(--muted-2); padding: 6px; cursor: pointer; border-radius: 7px; transition: opacity .15s, color .15s; }
+.ag-session-row:hover .ag-session-del, .ag-session-del:focus-visible { opacity: 1; }
+.ag-session-del:hover { color: var(--danger); background: rgba(255, 117, 143, .12); }
+
+/* --- center card: stage + composer --- */
+.ag-center { display: flex; flex-direction: column; min-width: 0; min-height: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); overflow: hidden; }
+.ag-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ag-stage-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 16px; border-bottom: 1px solid var(--line); background: linear-gradient(180deg, rgba(69, 224, 255, .05), transparent); }
+.ag-crumb { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+.ag-crumb-project { flex: none; font-size: 11px; color: var(--muted-2); white-space: nowrap; }
+.ag-crumb-sep { color: var(--muted-2); }
+.ag-crumb-title { font-size: 13.5px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ag-stage-status { display: flex; align-items: center; gap: 9px; flex: none; }
+.ag-status-pill { display: inline-flex; align-items: center; gap: 6px; font-family: 'Share Tech Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; color: var(--muted); }
+.ag-status-pill.running { color: var(--accent); border-color: rgba(69, 224, 255, .45); background: rgba(69, 224, 255, .08); }
+.ag-status-pill.done { color: var(--success); border-color: rgba(95, 241, 174, .4); background: rgba(95, 241, 174, .07); }
+.ag-status-pill.stopped { color: var(--warn); border-color: rgba(255, 196, 107, .4); background: rgba(255, 196, 107, .07); }
+.ag-status-pill.error { color: var(--danger); border-color: rgba(255, 117, 143, .4); background: rgba(255, 117, 143, .07); }
+.ag-turn-count { font-family: 'Share Tech Mono', ui-monospace, monospace; font-size: 10px; color: var(--muted-2); }
+.ag-timeline { flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 24px clamp(16px, 4%, 48px); display: flex; flex-direction: column; gap: 28px; }
+.ag-timeline .agent-events { min-height: 0; }
+.ag-turn { display: flex; flex-direction: column; gap: 13px; }
+.ag-user { align-self: flex-end; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; max-width: min(82%, 64ch); }
+.ag-user-bubble { background: rgba(69, 224, 255, .08); border: 1px solid var(--line); border-radius: 12px 12px 3px 12px; padding: 9px 13px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+.ag-user-meta { display: flex; align-items: center; gap: 6px; font-size: 10px; color: var(--muted-2); opacity: .7; transition: opacity .15s; }
+.ag-user:hover .ag-user-meta, .ag-user:focus-within .ag-user-meta { opacity: 1; }
+.ag-user-meta .icon-btn { width: 22px; height: 22px; border-radius: 6px; }
+.ag-run { display: flex; flex-direction: column; gap: 9px; }
+
+/* empty state */
+.ag-empty { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 10px; max-width: 580px; text-align: center; padding: 40px 8px; }
+.ag-empty-logo { width: 56px; filter: drop-shadow(0 0 16px rgba(69, 224, 255, .4)); }
+.ag-empty h2 { margin: 0; font-size: 24px; letter-spacing: .01em; }
+.ag-empty h2 span, .ag-empty .section-kicker + h2 { color: inherit; }
+.ag-empty p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.ag-suggests { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; margin-top: 10px; }
+.ag-suggests button { border: 1px solid var(--line); background: rgba(255, 255, 255, .03); color: var(--muted); border-radius: 10px; padding: 11px 13px; font-size: 12px; line-height: 1.5; text-align: left; cursor: pointer; transition: color .16s, border-color .16s, background .16s; }
+.ag-suggests button:hover { color: var(--text); border-color: var(--accent); background: rgba(69, 224, 255, .07); }
+
+/* composer */
+.ag-composer { border-top: 1px solid var(--line); background: linear-gradient(180deg, rgba(9, 14, 23, .7), rgba(9, 14, 23, .96)); padding: 10px 14px 12px; display: grid; gap: 8px; }
+.ag-composer textarea { display: block; width: 100%; resize: none; min-height: 54px; max-height: 190px; background: transparent; border: 0; color: var(--text); font: inherit; font-size: 13px; line-height: 1.6; padding: 4px 2px; outline: none; }
+.ag-composer textarea::placeholder { color: var(--muted-2); }
+.ag-control-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ag-controls-left, .ag-controls-right { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.ag-hint { font-family: 'Share Tech Mono', ui-monospace, monospace; font-size: 10px; color: var(--muted-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+.ag-chip-btn { flex: none; width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 9px; background: transparent; color: var(--muted); cursor: pointer; transition: color .16s, border-color .16s; }
+.ag-chip-btn:hover { color: var(--text); border-color: var(--line-strong); }
+.ag-chip { position: relative; display: inline-flex; align-items: center; gap: 6px; flex: none; height: 30px; padding: 0 9px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255, 255, 255, .03); color: var(--muted); font-size: 11px; cursor: pointer; transition: color .16s, border-color .16s; max-width: 190px; }
+.ag-chip:hover { border-color: var(--line-strong); color: var(--text); }
+.ag-chip:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ag-chip-label { max-width: 130px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ag-chip.model-chip .ag-chip-label { max-width: 150px; }
+.ag-chip-caret { flex: none; opacity: .7; }
+.ag-chip select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: 0; background: transparent; font: inherit; color: inherit; }
+.ag-composer .pending-strip { margin: 0; }
+
+/* --- right docks --- */
+.ag-docks { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+.ag-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); overflow: hidden; }
+.ag-panel.ag-preview { flex: 1.15; }
+.ag-panel-head { display: flex; align-items: center; gap: 8px; padding: 10px 13px; border-bottom: 1px solid var(--line); font-family: 'Orbitron', sans-serif; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.ag-panel-count { margin-left: auto; font-family: 'Share Tech Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: .06em; text-transform: none; color: var(--muted-2); }
+.ag-panel-head .icon-btn { margin-left: auto; width: 22px; height: 22px; }
+.ag-panel-body { flex: 1; min-height: 0; overflow: auto; padding: 12px 13px; display: grid; gap: 10px; align-content: start; }
+.ag-last-run { border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; background: rgba(255, 255, 255, .03); display: grid; gap: 7px; }
+.ag-last-run.done { border-color: rgba(95, 241, 174, .35); background: rgba(95, 241, 174, .06); }
+.ag-last-run.error { border-color: rgba(255, 117, 143, .4); background: rgba(255, 117, 143, .06); }
+.ag-last-run-head { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--text); }
+.ag-last-run-head .icon-btn { margin-left: auto; }
+.ag-last-run-text { margin: 0; font-size: 11px; line-height: 1.6; color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 170px; overflow: auto; }
+.ag-preview-frame { width: 100%; height: 100%; min-height: 230px; border: 0; border-radius: 9px; background: #fff; }
+.ag-preview-empty { padding: 6px 0; line-height: 1.7; }
+.ag-preview-empty code { font-family: 'Share Tech Mono', ui-monospace, monospace; color: var(--accent); font-size: 11px; }
+
+/* responsive — agent workspace tiers. Thresholds account for the expanded
+   278px suit rail (the sidebar only auto-collapses ≤1100px): at ≥1320px the
+   content area is ≥1042px, so the shrunken 3-col keeps the center card at
+   ≥490px (composer min ≈438px). ≤1319px folds the docks under the workspace
+   row; ≤899px stacks everything. */
+@media (max-width: 1559px) { .view.agent-shell { grid-template-columns: 240px minmax(0, 1fr) 268px; gap: 10px; padding: 12px; } .ag-hint { max-width: 170px; } }
+@media (max-width: 1319px) {
+  .view.agent-shell { grid-template-columns: 232px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+  .ag-docks { grid-column: 1 / -1; flex-direction: row; max-height: 240px; }
+}
+@media (max-width: 899px) {
+  .view.agent-shell { display: flex; flex-direction: column; overflow: auto; padding: 10px; }
+  .ag-sessions { max-height: 210px; flex: none; }
+  .ag-center { min-height: 62vh; }
+  .ag-docks { flex-direction: column; max-height: none; }
+  .ag-panel { min-height: 170px; }
+  .ag-suggests { grid-template-columns: 1fr; }
+  .ag-hint { display: none; }
+}
+
+/* ============================================================ adaptive pass
+   split-screen / varying monitor sizes. Plain media queries only — a
+   container-type on .syntara-main would turn it into a containing block and
+   break the fixed-position modals it wraps. */
+
+/* Header + section rows must wrap instead of overflowing the content area.
+   The auto margins keep wrapped second lines right-aligned. */
+.topbar { flex-wrap: wrap; row-gap: 10px; }
+.topbar-actions { flex-wrap: wrap; justify-content: flex-end; margin-left: auto; }
+.section-head { flex-wrap: wrap; row-gap: 14px; }
+.head-actions { flex-wrap: wrap; }
+@media (min-width: 761px) { .head-actions { margin-left: auto; } }
+.chat-tools { flex-wrap: wrap; }
+.search-row, .pending-strip, .first-run-steps { flex-wrap: wrap; }
+.model-footer { flex-wrap: wrap; }
+
+/* Agent composer control row: let the left chips and the hint + mic + send
+   group share two rows before the card edge starts clipping them. */
+.ag-control-row { flex-wrap: wrap; row-gap: 8px; }
+.ag-controls-right { margin-left: auto; }
+
+/* Composer hint: one ellipsized line so a long status string can never push
+   the mic/send buttons out of the card. */
+.composer-hint { display: block; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.composer-hint svg { vertical-align: -3px; margin-right: 4px; }
+
+/* Dropdown/overlay panels must stay reachable on short viewports. */
+.setup-panel, .model-menu { max-height: min(46vh, 420px); overflow-y: auto; }
+.modal-card { max-height: calc(100dvh - 40px); overflow: auto; }
+
+/* Ultrawide: cap the reading measure rather than stretching turns across
+   the whole viewport. */
+.ag-timeline > .ag-turn { width: 100%; max-width: 1040px; align-self: center; }
+@media (min-width: 1800px) { .scroll-view { padding-left: clamp(28px, 3vw, 56px); padding-right: clamp(28px, 3vw, 56px); } }
+
+/* Short windows: split-screen halves, small laptops. Tighten the fixed chrome   and the welcome hero first — content keeps its own scroll. */
+@media (max-height: 820px) {
+  .topbar { min-height: 58px; padding-top: 10px; padding-bottom: 10px; }
+  .composer textarea { min-height: 68px; }
+  .ag-composer textarea { min-height: 44px; }
+  .scroll-view { padding-top: 18px; padding-bottom: 18px; }
+  .welcome { margin-top: 2vh; }
+}
+@media (max-height: 620px) {
+  .topbar { min-height: 48px; padding-top: 8px; padding-bottom: 8px; }
+  .topbar:after { display: none; }
+  .composer textarea { min-height: 48px; }
+  .ag-composer textarea { min-height: 38px; }
+  .scroll-view { padding-top: 12px; padding-bottom: 12px; }
+  .welcome h1 { font-size: clamp(28px, 4vw, 40px); }
+  .ag-preview-frame { min-height: 140px; }
+  .ag-timeline { padding-top: 14px; padding-bottom: 14px; }
+}
+/* Cap dock height only in the wide (side-by-side) layout — the stacked
+   layout at ≤899px must keep scrolling instead of clipping. */
+@media (max-height: 620px) and (min-width: 900px) { .ag-docks { max-height: 170px; } }

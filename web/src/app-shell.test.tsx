@@ -75,4 +75,25 @@ describe("phase 3 shell (server-rendered App)", () => {
     expect(html).not.toContain("<span>Chat</span>")
     expect(html).not.toContain("<span>Agents</span>")
   })
+
+  it("renders the full phase-3 agent workspace when routed to #agents", () => {
+    const location = (globalThis as { window?: { location: { hash: string } } }).window?.location
+    if (!location) throw new Error("window stub missing")
+    location.hash = "#agents"
+    try {
+      const html = renderToStaticMarkup(<App />)
+      expect(html).toContain('id="panel-agents"')
+      expect(html).toContain('class="view agent-shell"')
+      expect(html).toContain('aria-label="Agent sessions"')
+      expect(html).toContain("Give the agent a task.")
+      expect(html).toContain('aria-label="Agent task"')
+      expect(html).toContain('aria-label="Progress"')
+      expect(html).toContain('aria-label="Preview"')
+      // The marketing hero and dashboard cards of the old layout are gone.
+      expect(html).not.toContain("Local agents that can actually work.")
+      expect(html).not.toContain("Run agent</button>")
+    } finally {
+      location.hash = ""
+    }
+  })
 })

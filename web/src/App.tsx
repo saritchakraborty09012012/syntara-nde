@@ -4,7 +4,6 @@ import {
   Activity,
   ArrowDown,
   ArrowUp,
-  Bot,
   BrainCircuit,
   Boxes,
   Check,
@@ -19,12 +18,13 @@ import {
   FileUp,
   FolderOpen,
   Gauge,
+  GitBranch,
   HardDrive,
   Link2,
-  ListChecks,
   LoaderCircle,
   MemoryStick,
   MessageSquare,
+  Mic,
   Moon,
   Package,
   PanelLeft,
@@ -37,7 +37,6 @@ import {
   Search,
   Server,
   Settings2,
-  ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   Sun,
@@ -103,13 +102,41 @@ import { mergePickerOptions, type PickerRow } from "@/lib/picker"
 import { canContinue, CONTINUE_NUDGE, createDeltaBuffer, retryAfterOf, retryDecision, statusOf } from "@/lib/send"
 import { ModelPicker } from "@/components/ModelPicker"
 import { FirstRunSetup } from "@/components/FirstRunSetup"
-import { AgentEvents } from "@/components/AgentEvents"
+import { ContextMeter } from "@/components/ContextMeter"
+import {
+  AUTO_COMPACT_PERCENT,
+  compactChatHistory,
+  contextUsage,
+  parseContextLimit,
+  type ContextUsage,
+} from "@/lib/context"
+import { readGitBranch } from "@/lib/git-branch"
+import { dictationLanguage, speechRecognitionSupported, startDictation, type DictationHandle } from "@/lib/voice"
 import { runAgentLoop, type AgentEvent } from "@/lib/agent/loop"
 import { AGENT_TOOL_SPECS } from "@/lib/agent/tools"
 import { createAgentExecutor } from "@/lib/agent/execute"
 import { summarizeArgs } from "@/lib/agent/ui"
 import { agentToolsAvailable } from "@/lib/agent-tools"
 import type { GrantStore, PermissionDecision } from "@/lib/agent/permissions"
+import {
+  AGENT_MODES,
+  createSession,
+  createTurn,
+  deleteSession as deleteStoredSession,
+  loadManifest,
+  loadSession,
+  modePolicy,
+  saveSession,
+  setActiveSession as setActiveStoredSession,
+  titleFromTask,
+  type AgentMode,
+  type AgentSession,
+  type AgentTurn,
+} from "@/lib/agent/sessions"
+import { AgentSessions } from "@/components/agent/AgentSessions"
+import { AgentStage } from "@/components/agent/AgentStage"
+import { AgentComposer } from "@/components/agent/AgentComposer"
+import { AgentDocks, type LastRunSummary } from "@/components/agent/AgentDocks"
 import { cn } from "@/lib/utils"
 
 const message = (role: ChatMessage["role"], content: string, images?: string[]): ChatMessage => {
@@ -153,6 +180,14 @@ const GRANT_LABELS = [
   { tool: "fs_write", label: "Write files" },
   { tool: "proc_run", label: "Run processes" },
 ] as const
+
+/* First-run task suggestions in the agent stage's empty state. */
+const AGENT_SUGGESTIONS = [
+  "Audit this repository and list the riskiest spots",
+  "Explain what this project does, end to end",
+  "Find why a test fails and propose the fix",
+  "Plan a refactor of the largest module",
+]
 
 type RunMetrics = { kind: "chat" | "agent"; tokensPerSec: number; firstTokenMs: number; totalMs: number; tokens: number }
 
@@ -290,12 +325,32 @@ export default function App() {
   const [memorySearch, setMemorySearch] = useState("")
   const [agentPrompt, setAgentPrompt] = useState("")
   const [agentBusy, setAgentBusy] = useState(false)
-  /* Phase 4c: structured loop events replace the old plain-text log, and a
-     pending permission request blocks the run until the user answers. */
-  const [runEvents, setRunEvents] = useState<AgentEvent[]>([])
+  /* Agent sessions (phase 3): transcripts live in memory with per-session
+     localStorage keys; a pending permission request blocks the run until
+     the user answers. */
+  const [agentSessions, setAgentSessions] = useState<AgentSession[]>(() => {
+    const manifest = loadManifest()
+    return manifest.entries
+      .map((entry) => loadSession(entry.id))
+      .filter((session): session is AgentSession => session !== null)
+  })
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(() => {
+    const manifest = loadManifest()
+    if (manifest.activeId && manifest.entries.some((entry) => entry.id === manifest.activeId)) return manifest.activeId
+    return manifest.entries[0]?.id ?? null
+  })
   const [agentTodo, setAgentTodo] = useState<string[]>([])
   const [permissionAsk, setPermissionAsk] = useState<{ tool: string; args: Record<string, unknown> } | null>(null)
   const permissionResolver = useRef<((decision: PermissionDecision) => void) | null>(null)
+  /* Topbar chips: branch of the active project's git repo (desktop only,
+     null elsewhere) and when chat auto-summary last folded the transcript. */
+  const [gitBranch, setGitBranch] = useState<string | null>(null)
+  const [lastCompactedAt, setLastCompactedAt] = useState<number | null>(null)
+  /* Voice typing (Web Speech API): `listening` drives the mic's pulse and
+     the draft is rebuilt live from final + interim transcript chunks. */
+  const [listening, setListening] = useState(false)
+  const dictationRef = useRef<DictationHandle | null>(null)
+  const dictationBaseRef = useRef("")
   /* Phase 5: in-app tail of the local host log (desktop shell only). */
   const [hostLog, setHostLog] = useState<HostLogTail | null>(null)
   const [hostLogBusy, setHostLogBusy] = useState(false)
@@ -469,6 +524,72 @@ export default function App() {
   }, [query, state.conversations])
 
   const effectiveModel = activeConversation?.model || selectedModel
+
+  const activeAgentSession = useMemo<AgentSession | null>(
+    () => (activeSessionId ? agentSessions.find((session) => session.id === activeSessionId) ?? null : null),
+    [agentSessions, activeSessionId],
+  )
+  /* Agent mode's current composer mode follows the persisted default so the
+     Settings card and the composer dropdown always show the same value. */
+  const agentMode: AgentMode = state.settings.agentDefaultMode ?? "build"
+  const agentMaxSteps = state.settings.agentMaxSteps ?? 8
+
+  /* Agent sessions persist per key with a debounce (the lib trims oversized
+     transcripts); the pointer lives in the manifest. */
+  useEffect(() => {
+    if (!activeSessionId) return
+    const session = agentSessions.find((item) => item.id === activeSessionId)
+    if (!session) return
+    const timer = window.setTimeout(() => {
+      try {
+        saveSession(session)
+      } catch {
+        /* Quota: the lib already retried a trimmed copy; losing this save
+           round is better than crashing the UI. */
+      }
+    }, 250)
+    return () => window.clearTimeout(timer)
+  }, [agentSessions, activeSessionId])
+
+  /* Topbar context meter: the active model's catalog context string parsed
+     to a token budget, and the estimated usage of what will be sent next.
+     Agent runs derive usage from the streamed event text (assistant output
+     plus tool payloads) because the loop owns its own message list. */
+  const activeModelMeta = useMemo(
+    () => state.models.find((model) => model.id === effectiveModel) ?? null,
+    [state.models, effectiveModel],
+  )
+  const modelContextLimit = useMemo(() => parseContextLimit(activeModelMeta?.context), [activeModelMeta])
+  const topbarUsage = useMemo<ContextUsage | null>(() => {
+    if (view === "agents") {
+      const lastTurn = activeAgentSession?.turns[activeAgentSession.turns.length - 1]
+      if (!lastTurn?.events.length) return null
+      const text = lastTurn.events.map((event) => {
+        if (event.type === "assistant_text") return event.text
+        if (event.type === "tool_end") return typeof event.output === "string" ? event.output : ""
+        return ""
+      }).join("\n")
+      return contextUsage([{ role: "assistant", content: text }], modelContextLimit)
+    }
+    if (!activeConversation) return null
+    return contextUsage(activeConversation.messages, modelContextLimit)
+  }, [view, activeAgentSession, activeConversation, modelContextLimit])
+
+  /* Git branch chip: read from the active project's `.git/HEAD` through the
+     desktop filesystem bridge; browser sessions and non-repo folders stay
+     hidden (readGitBranch resolves null). Re-reads when the project changes. */
+  useEffect(() => {
+    let cancelled = false
+    const root = activeProject?.rootPath ?? null
+    if (!root) {
+      setGitBranch(null)
+      return
+    }
+    void readGitBranch(root).then((branch) => {
+      if (!cancelled) setGitBranch(branch)
+    })
+    return () => { cancelled = true }
+  }, [activeProject?.rootPath])
 
   useEffect(() => {
     const theme = state.settings.theme === "system"
@@ -682,6 +803,37 @@ export default function App() {
     if (activeConversation) saveConversation({ ...activeConversation, model: row.id })
     if (!row.loaded && row.loadable && row.meta) void loadModel(row.meta)
   }
+
+  /* Agent view derivations: the composer's model list shares the chat
+     picker rows (one model choice for the whole app), the sidebar renders
+     from lightweight entries, and the progress dock summarises the last
+     finished run. */
+  const agentModelOptions = useMemo(() => pickerRows.map((row) => ({ value: row.id, label: row.label })), [pickerRows])
+  const sessionEntries = useMemo(
+    () => agentSessions.map((item) => ({ id: item.id, title: item.title, createdAt: item.createdAt, updatedAt: item.updatedAt })),
+    [agentSessions],
+  )
+  const lastAgentRun = useMemo<LastRunSummary | null>(() => {
+    const turn = activeAgentSession?.turns[activeAgentSession.turns.length - 1]
+    if (!turn || turn.status === "running") return null
+    const reversed = [...turn.events].reverse()
+    const doneEvent = reversed.find((event) => event.type === "done")
+    const errorEvent = turn.status === "error" ? reversed.find((event) => event.type === "error") : null
+    const text = doneEvent && doneEvent.type === "done" && doneEvent.text
+      ? doneEvent.text
+      : errorEvent && errorEvent.type === "error"
+        ? errorEvent.message
+        : null
+    const steps = doneEvent && doneEvent.type === "done"
+      ? doneEvent.steps
+      : turn.events.filter((event) => event.type === "step").length
+    return { status: turn.status, steps, text }
+  }, [activeAgentSession])
+  const modeLabelNow = AGENT_MODES.find((item) => item.id === agentMode)?.label ?? agentMode
+  const agentSpeed = metrics?.kind === "agent" && metrics.tokensPerSec > 0 ? ` · ${metrics.tokensPerSec.toFixed(1)} tok/s` : ""
+  const composerHint = agentBusy
+    ? `${modeLabelNow} mode · running…`
+    : `${modeLabelNow} mode · max ${agentMaxSteps} steps${agentSpeed}`
 
   useEffect(() => {
     if (!connected) return
@@ -990,10 +1142,22 @@ export default function App() {
     }
     const userMessage: StoredMessage = { ...message("user", textOut, imagesOut), docs: docsOut.length ? docsOut : undefined }
     const assistantMessage = message("assistant", "")
+    /* Auto-summary: when the transcript is near the model's context limit,
+       fold the oldest turns into one marker before the request is built.
+       The persisted conversation shrinks with it, which also keeps the
+       localStorage write under its 2 MB cap. */
+    let baseMessages = current.messages
+    if (modelContextLimit > 0 && contextUsage(baseMessages, modelContextLimit).percent >= AUTO_COMPACT_PERCENT) {
+      const outcome = compactChatHistory<StoredMessage>(baseMessages, { keepRecent: 6 }, (summary) => message("user", summary))
+      if (outcome.dropped > 0) {
+        baseMessages = outcome.messages
+        setLastCompactedAt(Date.now())
+      }
+    }
     const systemPreamble = systemPreambleFor(current)
     const memoryContext = memoryContextFor()
-    const requestMessages: ChatMessage[] = [...systemPreamble, ...memoryContext, ...current.messages.map(expandDocs), expandDocs(userMessage)]
-    const storedMessages: StoredMessage[] = [...current.messages, userMessage, assistantMessage]
+    const requestMessages: ChatMessage[] = [...systemPreamble, ...memoryContext, ...baseMessages.map(expandDocs), expandDocs(userMessage)]
+    const storedMessages: StoredMessage[] = [...baseMessages, userMessage, assistantMessage]
     const initial: Conversation = {
       ...current,
       model,
@@ -1128,6 +1292,47 @@ export default function App() {
   }
 
   const abortGeneration = () => abortRef.current?.abort()
+
+  /* Voice typing: mic toggles a Web Speech session for the composer that
+     asked for it (chat or agent). Live transcript chunks rebuild the text
+     on top of whatever was typed before listening started, so dictation
+     never clobbers existing input. */
+  const toggleDictation = (target: "chat" | "agent") => {
+    if (listening) {
+      dictationRef.current?.stop()
+      dictationRef.current = null
+      setListening(false)
+      return
+    }
+    const io = target === "chat"
+      ? { read: () => draft, write: (value: string) => setDraft(value) }
+      : { read: () => agentPrompt, write: (value: string) => setAgentPrompt(value) }
+    const started = startDictation({
+      lang: dictationLanguage(state.settings.voiceLanguage),
+      onText: (finals, interim) => {
+        const base = dictationBaseRef.current
+        const heard = [finals, interim].filter(Boolean).join(" ").trim()
+        io.write(base ? (heard ? `${base} ${heard}` : base) : heard)
+      },
+      onError: (message) => {
+        dictationRef.current = null
+        setListening(false)
+        setRuntimeError(message)
+      },
+      onEnd: () => {
+        dictationRef.current = null
+        setListening(false)
+      },
+    })
+    if (!started) {
+      setRuntimeError("Voice typing is not available here. Use Chrome or Edge over http(s) for dictation.")
+      return
+    }
+    dictationBaseRef.current = io.read().trim()
+    dictationRef.current = started
+    setListening(true)
+    setRuntimeError("")
+  }
 
   const regenerateLast = (conversationId: string, messageId: string) => {
     const conv = state.conversations.find((item) => item.id === conversationId)
@@ -1352,9 +1557,87 @@ export default function App() {
     }
   }
 
-  const createAgent = () => {
-    const now = Date.now()
-    setState((current) => ({ ...current, agents: [{ id: createId("agent"), ...defaultAgent, createdAt: now, updatedAt: now }, ...current.agents] }))
+  /* Settings → Agent: edits the first agent config (created on demand). */
+  const updateAgentSystemPrompt = (value: string) => {
+    setState((current) => {
+      if (current.agents.length) {
+        return {
+          ...current,
+          agents: current.agents.map((item, index) => (index === 0 ? { ...item, systemPrompt: value, updatedAt: Date.now() } : item)),
+        }
+      }
+      const now = Date.now()
+      return { ...current, agents: [{ id: createId("agent"), ...defaultAgent, systemPrompt: value, createdAt: now, updatedAt: now }] }
+    })
+  }
+
+  /* --- agent session lifecycle (phase 3) ------------------------------- */
+
+  const newAgentSession = () => {
+    /* Flush the current transcript before switching so a last-second edit
+       cannot be lost to the debounced save. */
+    const current = activeSessionId ? agentSessions.find((item) => item.id === activeSessionId) : null
+    if (current) {
+      try { saveSession(current) } catch { /* trimmed retry inside the lib */ }
+    }
+    const session = createSession(effectiveModel || null)
+    setAgentSessions((list) => [session, ...list])
+    setActiveSessionId(session.id)
+    setAgentPrompt("")
+    try { saveSession(session) } catch { /* quota — sidebar still shows it for this session */ }
+  }
+
+  const selectAgentSession = (id: string) => {
+    if (id === activeSessionId) return
+    const current = activeSessionId ? agentSessions.find((item) => item.id === activeSessionId) : null
+    if (current) {
+      try { saveSession(current) } catch { /* trimmed retry inside the lib */ }
+    }
+    setActiveSessionId(id)
+    try { setActiveStoredSession(id) } catch { /* pointer is cosmetic on quota */ }
+  }
+
+  const deleteAgentSession = (id: string) => {
+    const target = agentSessions.find((item) => item.id === id)
+    if (!target) return
+    const ok = window.confirm(`Delete session "${target.title}"? Its transcript is removed from this browser; files on disk are untouched.`)
+    if (!ok) return
+    setAgentSessions((list) => list.filter((item) => item.id !== id))
+    try {
+      const manifest = deleteStoredSession(id)
+      if (activeSessionId === id) setActiveSessionId(manifest.activeId)
+    } catch {
+      if (activeSessionId === id) setActiveSessionId(null)
+    }
+  }
+
+  /* Streamed loop events land on the session's active turn. */
+  const pushTurnEvent = (sessionId: string, turnId: string, event: AgentEvent) => {
+    setAgentSessions((list) =>
+      list.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              updatedAt: Date.now(),
+              turns: session.turns.map((turn) => (turn.id === turnId ? { ...turn, events: [...turn.events, event] } : turn)),
+            }
+          : session,
+      ),
+    )
+  }
+
+  const finishTurn = (sessionId: string, turnId: string, status: AgentTurn["status"]) => {
+    setAgentSessions((list) =>
+      list.map((session) =>
+        session.id === sessionId
+          ? {
+              ...session,
+              updatedAt: Date.now(),
+              turns: session.turns.map((turn) => (turn.id === turnId ? { ...turn, status } : turn)),
+            }
+          : session,
+      ),
+    )
   }
 
   /* One resolver per pending permission prompt: the loop's askPermission
@@ -1432,34 +1715,64 @@ export default function App() {
 
   const runAgent = async () => {
     const text = agentPrompt.trim()
-    const model = activeConversation?.model || selectedModel
+    const model = effectiveModel
     if (!text || agentBusy) return
     if (!model) {
       setRuntimeError("Choose a model before running the agent.")
       return
     }
     const root = activeProject?.rootPath ?? null
-    if (agentToolsAvailable() && !root) {
+    const policy = modePolicy(agentMode)
+    if (policy.tools !== "none" && agentToolsAvailable() && !root) {
       setRuntimeError("Choose a project folder for the agent before running it.")
       return
     }
-    /* Browser sessions get a planning-only agent (empty tool list — the
-       loop then answers honestly without pretending to touch files); the
-       desktop shell with a folder gets the real, gated tools. */
-    const tools = agentToolsAvailable() && root ? AGENT_TOOL_SPECS : []
+    /* Attachments ride along as clearly-marked context blocks in the task,
+       so a regenerated turn keeps the same context as the original. */
+    const docBlock = pendingDocs.map((doc) => `\n\n--- attachment: ${doc.name} ---\n${doc.content}`).join("")
+    const task = text + docBlock
+    const now = Date.now()
+    const turn = createTurn(task, agentMode, now)
+
+    /* A turn belongs to a session: reuse the active one, or start the
+       first session lazily so an empty sidebar is never a dead end. */
+    const existing = activeSessionId ? agentSessions.find((session) => session.id === activeSessionId) : undefined
+    const session = existing ?? createSession(model, now)
+    const patched: AgentSession = {
+      ...session,
+      title: session.turns.length ? session.title : titleFromTask(task),
+      model,
+      updatedAt: now,
+      turns: [...session.turns, turn],
+    }
+    setAgentSessions((list) => (existing ? list.map((item) => (item.id === patched.id ? patched : item)) : [patched, ...list]))
+    setActiveSessionId(patched.id)
+    setAgentPrompt("")
+    setPendingDocs([])
     setAgentBusy(true)
-    setRunEvents([])
+
+    /* Mode decides the tool surface before the permission gate: chat and
+       explain bind nothing, plan binds reads only, build/debug get the
+       full gated set. Browser sessions stay planning-only. */
+    const READ_ONLY_TOOLS = new Set(["fs_read", "fs_list", "todo"])
+    const tools = agentToolsAvailable() && root && policy.tools !== "none"
+      ? policy.tools === "read-only"
+        ? AGENT_TOOL_SPECS.filter((tool) => READ_ONLY_TOOLS.has(tool.spec.function.name))
+        : AGENT_TOOL_SPECS
+      : []
+
     const started = performance.now()
     const controller = new AbortController()
     abortRef.current = controller
     const sessionGrants = new Set<string>()
     const agent = state.agents[0]
+    const basePrompt = agent?.systemPrompt || defaultAgent.systemPrompt
     try {
       const result = await runAgentLoop({
         baseUrl: state.settings.baseUrl,
         model,
-        systemPrompt: agent?.systemPrompt || defaultAgent.systemPrompt,
-        task: text,
+        systemPrompt: `${basePrompt}\n\n${policy.prompt}`,
+        task,
         tools,
         executor: createAgentExecutor(root, { onTodo: setAgentTodo }),
         askPermission: (tool, args) =>
@@ -1471,21 +1784,27 @@ export default function App() {
         sessionGrants,
         grantStore,
         signal: controller.signal,
-        onEvent: (event) => setRunEvents((list) => [...list, event]),
+        onEvent: (event) => pushTurnEvent(patched.id, turn.id, event),
+        maxSteps: agentMaxSteps,
         maxTokens,
       })
       const totalMs = performance.now() - started
       const tokens = result.usage?.completion_tokens ?? 0
       const tokensPerSec = totalMs > 100 && tokens > 0 ? Math.round((tokens / (totalMs / 1000)) * 10) / 10 : 0
       setMetrics({ kind: "agent", tokensPerSec, firstTokenMs: 0, totalMs, tokens })
+      finishTurn(patched.id, turn.id, result.status === "done" ? "done" : result.status === "interrupted" ? "stopped" : "error")
     } catch (error) {
       /* The loop feeds expected failures back as events; reaching this
          branch means something unexpected broke in the wiring itself. */
-      setRunEvents((list) => [...list, { type: "error", message: error instanceof Error ? error.message : "The agent run failed." }])
+      pushTurnEvent(patched.id, turn.id, { type: "error", message: error instanceof Error ? error.message : "The agent run failed." })
+      finishTurn(patched.id, turn.id, "error")
     } finally {
       if (permissionResolver.current) settlePermission("deny")
       abortRef.current = null
       setAgentBusy(false)
+      /* Runs can commit (proc_run git …) — re-read the branch so the chip
+         reflects what the agent actually did. */
+      if (root) void readGitBranch(root).then(setGitBranch)
     }
   }
 
@@ -1846,7 +2165,10 @@ export default function App() {
       <aside className="syntara-sidebar">
         <div className="brand-lockup">
           <img src="/syntara-logo.png" alt="Syntara" className="brand-mark" />
-          <div><div className="brand-name">Syntara</div><div className="brand-by">By NDe</div></div>
+          <div className="brand-text"><div className="brand-name">Syntara</div><div className="brand-by">By NDe</div></div>
+          <button className="icon-btn nav-collapse-btn" onClick={() => updateSettings({ navCollapsed: !state.settings.navCollapsed })} title={state.settings.navCollapsed ? "Expand sidebar" : "Collapse sidebar"} aria-label={state.settings.navCollapsed ? "Expand sidebar" : "Collapse sidebar"} aria-expanded={!state.settings.navCollapsed}>
+            <PanelLeft size={15} />
+          </button>
         </div>
 
         {/* Phase 3: one Chat|Agent segmented switch where the workspace
@@ -1901,15 +2223,18 @@ export default function App() {
       <main className="syntara-main">
         <header className="topbar">
           <div className="topbar-left">
-            <button className="icon-btn" onClick={() => updateSettings({ navCollapsed: !state.settings.navCollapsed })} title={state.settings.navCollapsed ? "Expand sidebar" : "Collapse sidebar"} aria-label={state.settings.navCollapsed ? "Expand sidebar" : "Collapse sidebar"} aria-expanded={!state.settings.navCollapsed}>
-              <PanelLeft size={17} />
-            </button>
             <div>
               <span className="eyebrow">{VIEW_LABELS[view]}</span>
               <div className="runtime-inline"><span className={cn("status-light", connected && "on")} /> {selectedModel || "No model selected"}</div>
             </div>
           </div>
           <div className="topbar-actions">
+            <ContextMeter usage={topbarUsage} autoCompactAt={AUTO_COMPACT_PERCENT} lastCompactedAt={lastCompactedAt} />
+            {gitBranch ? (
+              <span className="git-chip" title={`Git branch: ${gitBranch}`}>
+                <GitBranch size={13} /> {gitBranch}
+              </span>
+            ) : null}
             <button className="ghost-btn" onClick={connect} disabled={connecting}><RefreshCw className={connecting ? "spin" : ""} size={15} /> {connecting ? "Connecting" : "Connect runtime"}</button>
             <button className="icon-btn" onClick={() => setView("settings")} title="Settings" aria-label="Settings"><Settings2 size={17} /></button>
           </div>
@@ -1922,9 +2247,6 @@ export default function App() {
           <section className={cn("view chat-view", state.settings.historyCollapsed && "history-collapsed")} id="panel-chat" role="tabpanel" aria-labelledby="mode-tab-chat">
             <div className="chat-toolbar">
               <div className="toolbar-left">
-                <button className="icon-btn" onClick={() => updateSettings({ historyCollapsed: !state.settings.historyCollapsed })} title={state.settings.historyCollapsed ? "Show conversation history" : "Hide conversation history"} aria-label={state.settings.historyCollapsed ? "Show conversation history" : "Hide conversation history"} aria-expanded={!state.settings.historyCollapsed}>
-                  <PanelLeft size={16} />
-                </button>
                 <ModelPicker rows={pickerRows} value={effectiveModel} loading={loadingModel} onSelect={pickModel} />
               </div>
               <div className="chat-tools">
@@ -1944,17 +2266,31 @@ export default function App() {
               </div>
             ) : null}
 
-            <div className="conversation-list">
-              <div className="conversation-search"><Search size={13} /><input ref={queryRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search conversations… (Ctrl+K)" /></div>
-              {visibleConversations.slice(0, 24).map((item) => (
-                <button key={item.id} className={cn("conversation-card", activeConversation?.id === item.id && "selected")} onClick={() => {
-                  setSelectedConversationId(item.id)
-                }}>
-                  <MessageSquare size={15} /> <span>{item.title}</span>
+            {state.settings.historyCollapsed ? (
+              <div className="history-rail">
+                <button className="icon-btn" onClick={() => updateSettings({ historyCollapsed: false })} title="Show conversation history" aria-label="Show conversation history" aria-expanded={false}>
+                  <PanelLeft size={14} />
                 </button>
-              ))}
-              {query.trim() && !visibleConversations.length ? <div className="empty-mini">No matching conversations.</div> : null}
-            </div>
+              </div>
+            ) : (
+              <div className="conversation-list">
+                <div className="conversation-list-head">
+                  <span>History</span>
+                  <button className="icon-btn" onClick={() => updateSettings({ historyCollapsed: true })} title="Hide conversation history" aria-label="Hide conversation history" aria-expanded={true}>
+                    <PanelLeft size={14} />
+                  </button>
+                </div>
+                <div className="conversation-search"><Search size={13} /><input ref={queryRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search conversations… (Ctrl+K)" /></div>
+                {visibleConversations.slice(0, 24).map((item) => (
+                  <button key={item.id} className={cn("conversation-card", activeConversation?.id === item.id && "selected")} onClick={() => {
+                    setSelectedConversationId(item.id)
+                  }}>
+                    <MessageSquare size={15} /> <span>{item.title}</span>
+                  </button>
+                ))}
+                {query.trim() && !visibleConversations.length ? <div className="empty-mini">No matching conversations.</div> : null}
+              </div>
+            )}
 
             <div className="chat-stage">
               {!activeConversation?.messages.length ? (
@@ -2012,51 +2348,92 @@ export default function App() {
               <div className="composer">
                 <textarea ref={messageRef} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={selectedModel ? (loading || loadingModel ? "Message Syntara… (queued until this finishes)" : "Message Syntara…") : "Choose a model to start"} aria-label="Message" disabled={!selectedModel} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send() } }} />
                 <div className="composer-foot">
-                  <div className="composer-hint"><SlidersHorizontal size={12} /> {thinking ? "Reasoning on" : "Direct generation"} · {maxTokens.toLocaleString()} max tokens · {temperature.toFixed(2)} temp{queued.length ? ` · ${queued.length} queued` : ""}{metrics && metrics.tokensPerSec > 0 ? ` · ${metrics.tokensPerSec.toFixed(1)} tok/s` : ""}</div>
-                  <button className={cn("send-btn", loading && "stop")} onClick={() => { if (loading) abortGeneration(); else void send() }} disabled={!selectedModel || (!loading && !draft.trim() && !pendingImages.length && !pendingDocs.length)} aria-label={loading ? "Stop generating" : "Send message"}>{loading ? <X size={17} /> : <ArrowUp size={17} />}</button>
+                  <div className="composer-hint"><SlidersHorizontal size={12} /> {listening ? "Listening… speak now" : thinking ? "Reasoning on" : "Direct generation"} · {maxTokens.toLocaleString()} max tokens · {temperature.toFixed(2)} temp{queued.length ? ` · ${queued.length} queued` : ""}{metrics && metrics.tokensPerSec > 0 ? ` · ${metrics.tokensPerSec.toFixed(1)} tok/s` : ""}</div>
+                  <div className="composer-actions">
+                    <button
+                      className={cn("mic-btn", listening && "listening")}
+                      onClick={() => toggleDictation("chat")}
+                      disabled={!speechRecognitionSupported()}
+                      title={speechRecognitionSupported() ? (listening ? "Stop voice typing" : "Start voice typing") : "Voice typing needs Chrome or Edge"}
+                      aria-label={listening ? "Stop voice typing" : "Start voice typing"}
+                      aria-pressed={listening}
+                    >
+                      <Mic size={16} />
+                    </button>
+                    <button className={cn("send-btn", loading && "stop")} onClick={() => { if (loading) abortGeneration(); else void send() }} disabled={!selectedModel || (!loading && !draft.trim() && !pendingImages.length && !pendingDocs.length)} aria-label={loading ? "Stop generating" : "Send message"}>{loading ? <X size={17} /> : <ArrowUp size={17} />}</button>
+                  </div>
                 </div>
               </div>
             </div>
           </section>
         )}
 
-        {view === "agents" && <section className="view scroll-view" id="panel-agents" role="tabpanel" aria-labelledby="mode-tab-agents">
-          {/* Shared picker (phase 3): same ModelPicker, rows and one-click
-              load path as chat — one model choice for the whole app. */}
-          <div className="agent-toolbar"><ModelPicker rows={pickerRows} value={effectiveModel} loading={loadingModel} onSelect={pickModel} /></div>
-          <div className="hero-panel agent-hero"><div><span className="section-kicker">AGENT MODE</span><h2>Local agents that can actually work.</h2><p>Build Codex/Claude-Code/Qwen-Code-style workflows around your local models, with explicit permissions and boundaries you control.</p></div><button className="primary-btn" onClick={createAgent}><Plus size={15} /> New agent</button></div>
-          {/* Phase 4c: the project folder bounds every tool call, and the
-              chips show — and let you revoke — persisted `always` grants. */}
-          <div className="card-panel agent-project">
-            <div className="panel-title"><span>Project folder</span><span className="permission-chip"><ShieldCheck size={13} /> {agentToolsAvailable() ? (activeProject?.rootPath ? "Tools active" : "Folder required") : "Planning only"}</span></div>
-            <div className="agent-project-row">
-              {state.projects.length > 1 ? (
-                <select className="project-select" value={activeProject?.id ?? ""} onChange={(e) => updateSettings({ selectedProjectId: e.target.value || null })} aria-label="Active project">
-                  {state.projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-                </select>
-              ) : activeProject ? <strong className="project-name">{activeProject.name}</strong> : null}
-              <span className="panel-note">{activeProject?.rootPath ?? (qdmAvailable() ? "No folder chosen — pick the directory the agent may work in." : "Folders are available in the desktop app; here the agent plans without touching files.")}</span>
-              <button className="ghost-btn" onClick={() => void pickAgentFolder()} disabled={!qdmAvailable()} title={qdmAvailable() ? undefined : "Available inside the Syntara desktop app"}><FolderOpen size={14} /> {activeProject?.rootPath ? "Change folder…" : "Choose folder…"}</button>
+        {/* Phase 3: agent mode is an opencode-style three-column workspace —
+            sessions rail, transcript card with the composer docked at the
+            bottom, and progress/preview docks on the right. The header,
+            sidebar and theme stay Syntara's own. */}
+        {view === "agents" && (
+          <section className="view agent-shell" id="panel-agents" role="tabpanel" aria-labelledby="mode-tab-agents">
+            <AgentSessions
+              entries={sessionEntries}
+              activeId={activeSessionId}
+              running={agentBusy}
+              projectName={activeProject?.name ?? null}
+              projectPath={activeProject?.rootPath ?? null}
+              toolsActive={agentToolsAvailable() && !!activeProject?.rootPath}
+              canPickFolder={qdmAvailable()}
+              grants={GRANT_LABELS.map(({ tool, label }) => ({ tool, label, granted: !!activeProject?.permissions?.includes(tool) }))}
+              onNew={newAgentSession}
+              onSelect={selectAgentSession}
+              onDelete={deleteAgentSession}
+              onPickFolder={() => void pickAgentFolder()}
+              onRevoke={revokeGrant}
+            />
+            <div className="ag-center">
+              <AgentStage
+                session={activeAgentSession}
+                running={agentBusy}
+                projectName={activeProject?.name ?? null}
+                copiedKey={copied}
+                onCopy={copy}
+                suggestions={AGENT_SUGGESTIONS}
+                onSuggest={setAgentPrompt}
+              />
+              <AgentComposer
+                value={agentPrompt}
+                onChange={setAgentPrompt}
+                onSend={() => void runAgent()}
+                onStop={stopAgent}
+                busy={agentBusy}
+                disabled={!selectedModel}
+                mode={agentMode}
+                onModeChange={(mode) => updateSettings({ agentDefaultMode: mode })}
+                model={effectiveModel}
+                modelOptions={agentModelOptions}
+                onModelChange={(id) => {
+                  const row = pickerRows.find((item) => item.id === id)
+                  if (row) pickModel(row)
+                }}
+                listening={listening}
+                micSupported={speechRecognitionSupported()}
+                onMicToggle={() => toggleDictation("agent")}
+                attachments={pendingDocs}
+                onRemoveAttachment={(name) => setPendingDocs((items) => items.filter((item) => item.name !== name))}
+                onAttachFiles={(files) => attachDocuments(Array.from(files || []).filter((file) => !file.type.startsWith("image/")))}
+                hint={composerHint}
+              />
             </div>
-            <div className="grant-row" aria-label="Tool permissions">
-              {GRANT_LABELS.map(({ tool, label }) => {
-                const granted = !!activeProject?.permissions?.includes(tool)
-                return (
-                  <span key={tool} className={cn("grant-chip", granted && "granted")}>
-                    <ShieldCheck size={12} /> {label}: {granted ? "always allowed" : "asks every run"}
-                    {granted ? <button className="chip-x" onClick={() => revokeGrant(tool)} aria-label={`Revoke always-allow for ${label}`}><X size={12} /></button> : null}
-                  </span>
-                )
-              })}
-            </div>
-          </div>
-          <div className="two-col">
-            <div className="card-panel"><div className="panel-title"><span>Task</span><span className="permission-chip"><ShieldCheck size={13} /> Permission-gated</span></div><textarea className="large-input" value={agentPrompt} onChange={(e) => setAgentPrompt(e.target.value)} placeholder="e.g. Audit this repository, propose fixes, run tests, and show me the diff." /><div className="task-actions"><button className="primary-btn" onClick={() => void runAgent()} disabled={!agentPrompt.trim() || agentBusy}>{agentBusy ? <LoaderCircle className="spin" size={15} /> : <Play size={15} />} {agentBusy ? "Planning…" : "Run agent"}</button>{agentBusy ? <button className="ghost-btn" onClick={stopAgent} title="Interrupt the run; in-flight tool calls are cut off"><X size={15} /> Stop</button> : null}</div></div>
-            <div className="card-panel"><div className="panel-title"><span>Execution</span><Activity size={15} /></div><AgentEvents events={runEvents} /></div>
-          </div>
-          <div className="card-panel agent-todo"><div className="panel-title"><span>Todo</span><ListChecks size={15} /></div>{agentTodo.length ? <ol className="todo-list">{agentTodo.map((item, i) => <li key={`${i}-${item}`}>{item}</li>)}</ol> : <div className="empty-mini">No todo list yet — the agent can create one with the todo tool.</div>}</div>
-          <div className="card-grid">{(state.agents.length ? state.agents : [{ id: "seed", ...defaultAgent, createdAt: Date.now(), updatedAt: Date.now() }]).map((agent) => <div className="feature-card" key={agent.id}><div className="feature-icon"><Bot size={18} /></div><strong>{agent.name}</strong><p>{agent.systemPrompt}</p><div className="chip-row">{agent.tools.map((tool) => <span key={tool}>{tool}</span>)}</div></div>)}</div>
-        </section>}
+            <AgentDocks
+              todo={agentTodo}
+              running={agentBusy}
+              lastRun={lastAgentRun}
+              previewUrl={null}
+              onClosePreview={() => undefined}
+              copiedKey={copied}
+              onCopy={copy}
+            />
+          </section>
+        )}
 
         {view === "models" && familyId && <ModelFamilyPage family={state.models.find((item) => item.id === familyId)} familyId={familyId} onBack={() => setView("models")} onDownload={(file) => { void guardRedownload(familyId, state.models.find((item) => item.id === familyId)?.name || file.name).then((approved) => { if (approved) void startUrlDownload(familyId, file.name, file.url, file.filename) }) }} activeTasks={familyActiveTasks} onPause={() => familyActiveTasks.forEach((task) => pauseDownload(task.id))} onResume={() => familyActiveTasks.forEach((task) => resumeDownload(task.id))} onCancel={() => familyActiveTasks.forEach((task) => cancelDownload(task.id))} />}
         {view === "models" && !route.family && <section className={cn("view scroll-view", dragging && "drop-zone-active")} onDragOver={(e) => { e.preventDefault(); setDragging(true) }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); installImportedModel(event.dataTransfer.files) }}><div className="section-head tabbed"><div><span className="section-kicker">MODEL HUB</span><h2>Discover, import, install, manage.</h2><div className="model-tabs">{MODEL_TABS.map((tab) => <button key={tab.id} type="button" className={cn("model-tab", modelTab === tab.id && "active")} aria-current={modelTab === tab.id ? "page" : undefined} onClick={() => openModelTab(tab.id)}>{tab.label}</button>)}</div><p>Formats, architectures, backends and hardware are evaluated independently.</p></div><div className="head-actions"><button className="ghost-btn" onClick={() => void pickExistingModel()} disabled={!qdmAvailable()} title={qdmAvailable() ? "Point Syntara at a model file you already have, then choose to copy or move it" : "Available in the desktop app"}><Link2 size={15} /> Connect existing model</button><button className="ghost-btn" onClick={() => modelImportRef.current?.click()}><Upload size={15} /> Import local model</button><input ref={modelImportRef} hidden type="file" onChange={(event) => installImportedModel(event.target.files)} /></div></div>{modelTab === "all" && (<><div className="search-row"><div className="search-box"><Search size={15} /><input value={modelSearch} onChange={(e) => setModelSearch(e.target.value)} placeholder="Search models, providers, capabilities…" /></div><div className="hardware-pill"><Cpu size={14} /> {hardware.cpu} · {hardware.ramGb ? `${hardware.ramGb} GB RAM` : "hardware scan"}</div></div><div className="model-grid">{filteredModels.map((model) => { const score = scoreModel(model, hardware); const catalogCount = modelCatalog[model.id]?.length ?? 0; const installableCount = downloadableCheckpoints(model.id).length; const tasks = activeTasksFor(state.downloads.filter((task) => task.modelId === model.id)); return <article key={model.id} className="model-card"><div className="model-card-top"><div className="model-icon"><Package size={18} /></div><div><div className="model-title">{model.name}</div><div className="model-provider">{model.provider} · {model.architecture}</div></div><span className={cn("compat-pill", score >= 75 ? "good" : score >= 55 ? "mid" : "heavy")}>{recommendationLabel(score)}</span></div><div className="model-specs"><span><MemoryStick size={13} /> {model.recommendedRam}</span><span><HardDrive size={13} /> {model.disk}</span><span><Zap size={13} /> {model.parameters}</span><span><Database size={13} /> Context: {model.context}</span></div><div className="chip-row">{(model.badges ?? []).slice(0, 6).map((badge) => <span key={badge.id} className={cn("inspect-badge", badge.level)} title={badge.message}>{badgeLabel(badge)}</span>)}{model.quantizations.map((tag) => <span key={tag} className="quant-tag">{tag}</span>)}{model.formats.map((tag) => <span key={tag}>{tag}</span>)}{model.capabilities.slice(0, 4).map((tag) => <span key={tag}>{tag.replace("*", "")}</span>)}</div>{tasks.length ? <DownloadProgress tasks={tasks} onPause={() => tasks.forEach((task) => pauseDownload(task.id))} onResume={() => tasks.forEach((task) => resumeDownload(task.id))} onCancel={() => tasks.forEach((task) => cancelDownload(task.id))} /> : null}<div className="model-footer"><a href={model.sourceUrl} target="_blank" rel="noreferrer"><Link2 size={13} /> Source</a>{catalogCount > 0 && <span className="model-count">{catalogCount} checkpoints</span>}{state.downloadedModels[model.id] && model.status === "available" && !tasks.length ? <span className="downloaded-flag">Downloaded before</span> : null}<div className="row-actions">{model.status === "installed" && <><button className="primary-btn small" onClick={() => void loadModel(model)} disabled={loadingModel?.id === model.id} title={loadingModel?.id === model.id ? loadingModel.phase : `Load ${model.name} into the local runtime`}>{loadingModel?.id === model.id ? <><LoaderCircle className="spin" size={13} /> {loadingModel.phase}</> : <><Play size={13} /> Load</>}</button><span className="installed-label"><Check size={13} /> Installed</span><button className="icon-btn" title="Detach model" onClick={() => detachModel(model.id)}><Link2 size={13} /></button><button className="icon-btn danger" title="Delete model metadata" onClick={() => deleteModel(model.id)}><Trash2 size={13} /></button></>}{model.status === "partial" && <><span className="partial-label" title={(model.badges ?? []).find((badge) => badge.level === "error")?.message ?? "The file on disk is truncated or still downloading."}>Incomplete</span><button className="icon-btn danger" title="Delete model metadata" onClick={() => deleteModel(model.id)}><Trash2 size={13} /></button></>}{model.status === "detached" && <button className="ghost-btn small" onClick={() => setState((current) => ({ ...current, models: current.models.map((item) => item.id === model.id ? { ...item, status: "available" } : item) }))}>Attach</button>}{model.status === "available" && !tasks.length && (!catalogCount || installableCount === 1) && <button className="primary-btn small" onClick={() => void startDownload(model)}><Download size={13} /> Install</button>}{catalogCount > 0 && <button className="primary-btn small" onClick={() => openFamily(model.id)}><Boxes size={13} /> Browse models</button>}</div></div></article> })}</div></>)}{modelTab === "installing" && <InstallingTab groups={installingList} onInstall={() => openModelTab("all")} onPause={(group) => group.tasks.forEach((task) => pauseDownload(task.id))} onResume={(group) => group.tasks.forEach((task) => resumeDownload(task.id))} onCancel={(group) => group.tasks.forEach((task) => cancelDownload(task.id))} />}{modelTab === "installed" && <InstalledTab entries={installedList} loading={qdmAvailable() && storageFiles === null} storageDir={storageDir} onInstall={() => openModelTab("all")} onLoad={(entry) => { const target = state.models.find((item) => item.id === entry.modelId); if (target) void loadModel(target) }} loadableIds={installedLoadable} loadingModelId={loadingModel?.id ?? null} />}</section>}
@@ -2070,7 +2447,7 @@ export default function App() {
 
         {view === "developer" && <section className="view scroll-view"><div className="section-head"><div><span className="section-kicker">DEVELOPER PLATFORM</span><h2>One local API for everything.</h2><p>Desktop, CLI, Python, n8n and IDE integrations all use the same Syntara local control surface.</p></div></div><div className="dev-grid"><DevCard icon={Server} title="Local API" body="OpenAI-compatible HTTP endpoints on localhost by default." code={`${state.settings.baseUrl}`} onCopy={copy} copied={copied === "api"} copyKey="api" /><DevCard icon={Code2} title="Python SDK" body="Use locally installed models from Python without hosting weights anywhere." code={`from syntara import Syntara\nclient = Syntara()\nprint(client.chat(model="qwen", message="Hello"))`} onCopy={copy} copied={copied === "python"} copyKey="python" /><DevCard icon={Terminal} title="Developer CLI" body="Manage models, serve the runtime, create backups and run local agents." code={`syntara models list\nsyntara chat\nsyntara serve`} onCopy={copy} copied={copied === "cli"} copyKey="cli" /><DevCard icon={Zap} title="n8n" body="Point an HTTP Request/OpenAI node at localhost and keep inference on-device." code={`POST ${state.settings.baseUrl}/chat/completions`} onCopy={copy} copied={copied === "n8n"} copyKey="n8n" /></div><div className="integration-strip"><div><Code2 size={17} /><strong>VS Code</strong><span>Local chat + coding workflows through Syntara API.</span></div><div><Sparkles size={17} /><strong>Cursor-type IDEs</strong><span>Use OpenAI-compatible local endpoints.</span></div><div><Boxes size={17} /><strong>MCP / Plugins</strong><span>Permissioned tools and extensible integrations.</span></div></div></section>}
 
-        {view === "settings" && <section className="view scroll-view"><div className="section-head"><div><span className="section-kicker">SETTINGS</span><h2>Your machine, your data, your controls.</h2><p>No account is required; settings and persistent state live locally.</p></div></div><div className="settings-grid"><div className="card-panel"><div className="panel-title"><span>About</span><Sparkles size={15} /></div><p className="panel-note">Syntara: The Universal Local AI Runtime by NDe: NoirDemons.</p><p className="panel-note">Local-first, privacy-first, open source. Your models run on your device.</p></div><div className="card-panel"><div className="panel-title"><span>Advanced</span><Terminal size={15} /></div><p className="panel-note">Reset removes chats, memories, agent configs and imported-model metadata from this browser. Files you already saved to disk are untouched.</p><button className="ghost-btn danger-text" onClick={() => setConfirmReset(true)}><Trash2 size={15} /> Reset app data</button></div><div className="card-panel"><div className="panel-title"><span>Help</span><CircleHelp size={15} /></div><div className="help-list">{helpItems.map((item) => <details key={item.q} className="help-item"><summary>{item.q}</summary><p>{item.a}</p></details>)}</div></div><div className="card-panel"><div className="panel-title"><span>Appearance</span><Settings2 size={15} /></div><label className="setting-row"><span>Theme</span><select value={state.settings.theme} onChange={(e) => updateSettings({ theme: e.target.value as ThemeMode })}><option value="dark">Dark</option><option value="light">Light</option><option value="system">System</option></select></label><label className="setting-row"><span>Reduced motion</span><input type="checkbox" checked={state.settings.reducedMotion} onChange={(e) => updateSettings({ reducedMotion: e.target.checked })} /></label></div><div className="card-panel"><div className="panel-title"><span>Runtime</span><Server size={15} /></div><label className="field-label">Local API base URL<input value={state.settings.baseUrl} onChange={(e) => updateSettings({ baseUrl: e.target.value })} /></label><label className="field-label">Default model<input value={state.settings.model} onChange={(e) => updateSettings({ model: e.target.value })} placeholder="Selected at runtime" /></label><label className="field-label">Performance mode<select value={state.settings.performanceMode} onChange={(e) => updateSettings({ performanceMode: e.target.value as AppSettings["performanceMode"] })}><option value="maximum">Maximum Performance</option><option value="balanced">Balanced</option><option value="efficiency">Efficiency</option><option value="battery">Battery Saving</option></select></label></div><div className="card-panel"><div className="panel-title"><span>Desktop behavior</span><SlidersHorizontal size={15} /></div><label className="setting-row"><span>Start with OS</span><input type="checkbox" checked={state.settings.autoStart} onChange={(e) => updateSettings({ autoStart: e.target.checked })} /></label><label className="setting-row"><span>Keep runtime in tray</span><input type="checkbox" checked={state.settings.tray} onChange={(e) => updateSettings({ tray: e.target.checked })} /></label></div><div className="card-panel"><div className="panel-title"><span>Backup & migration</span><FileDown size={15} /></div><p className="panel-note">Backups include chats, memories, projects, settings, agent configurations and model metadata — never model weights.</p><div className="backup-actions"><button className="primary-btn" onClick={exportBackup}><FileDown size={15} /> Create backup</button><button className="ghost-btn" onClick={() => backupRef.current?.click()}><FileUp size={15} /> Restore</button></div><input ref={backupRef} hidden type="file" accept=".syntara-backup,.json" onChange={(e) => void importBackup(e.target.files)} /></div>{qdmAvailable() ? <div className="card-panel"><div className="panel-title"><span>Host log</span><Terminal size={15} /></div><p className="panel-note">Tail of the local host log on this device — nothing leaves your machine.</p><div className="task-actions"><button className="ghost-btn" onClick={() => void loadHostLog()} disabled={hostLogBusy}>{hostLogBusy ? <LoaderCircle className="spin" size={15} /> : <Terminal size={15} />} {hostLogBusy ? "Reading…" : "Show last 200 lines"}</button>{hostLog && hostLog.exists ? <span className="panel-note">{hostLog.path}</span> : null}</div>{hostLog ? <pre className="health-json">{hostLog.exists ? (hostLog.lines.join("\n") || "(log exists but is empty)") : "No host log yet — it appears once the host starts."}</pre> : null}</div> : null}</div></section>}
+        {view === "settings" && <section className="view scroll-view"><div className="section-head"><div><span className="section-kicker">SETTINGS</span><h2>Your machine, your data, your controls.</h2><p>No account is required; settings and persistent state live locally.</p></div></div><div className="settings-grid"><div className="card-panel"><div className="panel-title"><span>About</span><Sparkles size={15} /></div><p className="panel-note">Syntara: The Universal Local AI Runtime by NDe: NoirDemons.</p><p className="panel-note">Local-first, privacy-first, open source. Your models run on your device.</p></div><div className="card-panel"><div className="panel-title"><span>Advanced</span><Terminal size={15} /></div><p className="panel-note">Reset removes chats, memories, agent configs and imported-model metadata from this browser. Files you already saved to disk are untouched.</p><button className="ghost-btn danger-text" onClick={() => setConfirmReset(true)}><Trash2 size={15} /> Reset app data</button></div><div className="card-panel"><div className="panel-title"><span>Help</span><CircleHelp size={15} /></div><div className="help-list">{helpItems.map((item) => <details key={item.q} className="help-item"><summary>{item.q}</summary><p>{item.a}</p></details>)}</div></div><div className="card-panel"><div className="panel-title"><span>Appearance</span><Settings2 size={15} /></div><label className="setting-row"><span>Theme</span><select value={state.settings.theme} onChange={(e) => updateSettings({ theme: e.target.value as ThemeMode })}><option value="dark">Dark</option><option value="light">Light</option><option value="system">System</option></select></label><label className="setting-row"><span>Reduced motion</span><input type="checkbox" checked={state.settings.reducedMotion} onChange={(e) => updateSettings({ reducedMotion: e.target.checked })} /></label><label className="setting-row"><span>Voice typing language</span><select value={state.settings.voiceLanguage ?? ""} onChange={(e) => updateSettings({ voiceLanguage: e.target.value })} title="Language used by the composer microphone (chat and agent)"><option value="">Browser default</option><option value="en-US">English (US)</option><option value="en-GB">English (UK)</option><option value="hi-IN">हिन्दी (Hindi)</option><option value="bn-IN">বাংলা (Bengali)</option><option value="es-ES">Español</option><option value="fr-FR">Français</option><option value="de-DE">Deutsch</option><option value="ja-JP">日本語</option><option value="zh-CN">中文 (简体)</option></select></label></div><div className="card-panel"><div className="panel-title"><span>Agent</span><Settings2 size={15} /></div><label className="field-label">System prompt<textarea rows={3} value={state.agents[0]?.systemPrompt ?? defaultAgent.systemPrompt} onChange={(e) => updateAgentSystemPrompt(e.target.value)} placeholder="How the agent should behave across runs" /></label><label className="setting-row"><span>Mode for new runs</span><select value={agentMode} onChange={(e) => updateSettings({ agentDefaultMode: e.target.value as AgentMode })} title="Preselected mode in the agent composer; applies to chat and agent runs alike">{AGENT_MODES.map((mode) => <option key={mode.id} value={mode.id}>{mode.label}</option>)}</select></label><label className="setting-row"><span>Max steps per run</span><select value={agentMaxSteps} onChange={(e) => updateSettings({ agentMaxSteps: Number(e.target.value) })} title="Step budget: each tool call or answer round counts as one step">{[4, 8, 12, 16, 24].map((n) => <option key={n} value={n}>{n} steps</option>)}</select></label></div><div className="card-panel"><div className="panel-title"><span>Runtime</span><Server size={15} /></div><label className="field-label">Local API base URL<input value={state.settings.baseUrl} onChange={(e) => updateSettings({ baseUrl: e.target.value })} /></label><label className="field-label">Default model<input value={state.settings.model} onChange={(e) => updateSettings({ model: e.target.value })} placeholder="Selected at runtime" /></label><label className="field-label">Performance mode<select value={state.settings.performanceMode} onChange={(e) => updateSettings({ performanceMode: e.target.value as AppSettings["performanceMode"] })}><option value="maximum">Maximum Performance</option><option value="balanced">Balanced</option><option value="efficiency">Efficiency</option><option value="battery">Battery Saving</option></select></label></div><div className="card-panel"><div className="panel-title"><span>Desktop behavior</span><SlidersHorizontal size={15} /></div><label className="setting-row"><span>Start with OS</span><input type="checkbox" checked={state.settings.autoStart} onChange={(e) => updateSettings({ autoStart: e.target.checked })} /></label><label className="setting-row"><span>Keep runtime in tray</span><input type="checkbox" checked={state.settings.tray} onChange={(e) => updateSettings({ tray: e.target.checked })} /></label></div><div className="card-panel"><div className="panel-title"><span>Backup & migration</span><FileDown size={15} /></div><p className="panel-note">Backups include chats, memories, projects, settings, agent configurations and model metadata — never model weights.</p><div className="backup-actions"><button className="primary-btn" onClick={exportBackup}><FileDown size={15} /> Create backup</button><button className="ghost-btn" onClick={() => backupRef.current?.click()}><FileUp size={15} /> Restore</button></div><input ref={backupRef} hidden type="file" accept=".syntara-backup,.json" onChange={(e) => void importBackup(e.target.files)} /></div>{qdmAvailable() ? <div className="card-panel"><div className="panel-title"><span>Host log</span><Terminal size={15} /></div><p className="panel-note">Tail of the local host log on this device — nothing leaves your machine.</p><div className="task-actions"><button className="ghost-btn" onClick={() => void loadHostLog()} disabled={hostLogBusy}>{hostLogBusy ? <LoaderCircle className="spin" size={15} /> : <Terminal size={15} />} {hostLogBusy ? "Reading…" : "Show last 200 lines"}</button>{hostLog && hostLog.exists ? <span className="panel-note">{hostLog.path}</span> : null}</div>{hostLog ? <pre className="health-json">{hostLog.exists ? (hostLog.lines.join("\n") || "(log exists but is empty)") : "No host log yet — it appears once the host starts."}</pre> : null}</div> : null}</div></section>}
       {/* Update available: dismissible; "Later" leaves the badge in the
           sidebar. Update opens the release page in the system browser, the
           same external-link pattern the rest of the app uses. */}
