@@ -1,4 +1,4 @@
-/* Agent stage (phase 3): the opencode-style session card — sticky header
+/* Agent stage (phase 3): the session card — sticky header
    with the project/session breadcrumb and run status, a transcript of
    user tasks and streamed run events, and an empty state that suggests
    first tasks. Tool cards come from the shared AgentEvents renderer. */

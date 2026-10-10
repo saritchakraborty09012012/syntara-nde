@@ -1,5 +1,4 @@
-/* Agent-mode sessions sidebar (phase 3), modelled on opencode's list:
-   a New session action, the project folder with its permission chips, and
+/* Agent-mode sessions sidebar (phase 3): a New session action, the project folder with its permission chips, and
    sessions grouped by day with a status dot on the active one. Pure
    presentation — App owns session state, persistence and deletion. */
 

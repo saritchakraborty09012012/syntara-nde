@@ -2423,7 +2423,7 @@ export default function App() {
           </section>
         )}
 
-        {/* Phase 3: agent mode is an opencode-style three-column workspace —
+        {/* Phase 3: agent mode is a three-column workspace —
             sessions rail, transcript card with the composer docked at the
             bottom, and progress/preview docks on the right. The header,
             sidebar and theme stay Syntara's own. */}

@@ -1,4 +1,4 @@
-/* Agent composer (phase 3), modelled on opencode's prompt input:
+/* Agent composer (phase 3), modelled on a modern agentic prompt input:
    a control row with [attach | mode | model] on the left and [mic | send]
    on the right, under the task textarea. Attachments become part of the
    task text; the mic uses the same voice-typing path as chat. */

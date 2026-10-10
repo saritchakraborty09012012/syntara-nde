@@ -713,7 +713,7 @@ select option { background-color: var(--bg-soft); color: var(--text); }
 .modal-error { margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--danger); }
 
 /* ============================================================ agent mode
-   opencode-style workspace (phase 3): sessions rail | transcript card with
+   three-column workspace (phase 3): sessions rail | transcript card with
    a docked composer | progress + preview docks. Syntara theme tokens only. */
 .view.agent-shell { display: grid; grid-template-columns: 264px minmax(0, 1fr) 302px; gap: 14px; padding: 16px; overflow: hidden; align-items: stretch; }
 

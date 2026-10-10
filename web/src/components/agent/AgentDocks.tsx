@@ -1,6 +1,5 @@
 /* Right-hand docks for agent mode (phase 3): a progress panel (todo list +
-   last-run summary) stacked over a live preview panel, mirroring opencode's
-   right column. The preview stays an honest empty state until a run exposes
+   last-run summary) stacked over a live preview panel — the right column. The preview stays an honest empty state until a run exposes
    a URL (phase 4 wires preview targets). */
 
 import { Check, Copy, Eye, ListChecks, LoaderCircle, X } from "lucide-react"

@@ -86,7 +86,7 @@ function composerProps(overrides: Partial<ComponentProps<typeof AgentComposer>> 
 }
 
 describe("AgentComposer", () => {
-  it("renders the opencode-style control row: attach, mode, model, mic, send", () => {
+  it("renders the control row: attach, mode, model, mic, send", () => {
     const html = renderToStaticMarkup(<AgentComposer {...composerProps({ mode: "plan" })} />)
     expect(html).toContain('aria-label="Attach files"')
     expect(html).toContain('aria-label="Agent mode"')
