@@ -7,9 +7,8 @@ import { useRef } from "react"
 import { ArrowUp, ChevronDown, FileUp, Mic, Paperclip, Square, X } from "lucide-react"
 
 import { AGENT_EFFORTS, AGENT_MODES, type AgentEffort, type AgentMode } from "@/lib/agent/sessions"
+import { formatBytes } from "@/lib/format"
 import { cn } from "@/lib/utils"
-
-const DOC_ACCEPT = ".txt,.md,.markdown,.csv,.json,.log,.py,.js,.jsx,.ts,.tsx,.html,.htm,.css,.scss,.yml,.yaml,.toml,.ini,.xml,.sh,.sql"
 
 export interface ComposerModelOption {
   value: string
@@ -36,7 +35,7 @@ interface AgentComposerProps {
   listening: boolean
   micSupported: boolean
   onMicToggle: () => void
-  attachments: Array<{ name: string }>
+  attachments: Array<{ name: string; size?: number }>
   onRemoveAttachment: (name: string) => void
   onAttachFiles: (files: FileList | null) => void
   hint: string
@@ -54,8 +53,10 @@ export function AgentComposer(props: AgentComposerProps) {
   const canSend = !props.disabled && (props.value.trim().length > 0 || props.attachments.length > 0)
 
   return (
+    /* Redesign: the agent composer reuses the chat composer's visual frame
+       (composer / composer-foot) so both modes feel like one product. */
     <form
-      className="ag-composer"
+      className="composer ag-composer"
       onSubmit={(event) => {
         event.preventDefault()
         if (props.busy) props.onStop()
@@ -68,6 +69,7 @@ export function AgentComposer(props: AgentComposerProps) {
             <div key={doc.name} className="pending-doc">
               <FileUp size={12} />
               <span>{doc.name}</span>
+              {doc.size ? <small className="doc-size">{formatBytes(doc.size)}</small> : null}
               <button type="button" onClick={() => props.onRemoveAttachment(doc.name)} aria-label={`Remove ${doc.name}`}>
                 <X size={12} />
               </button>
@@ -101,13 +103,13 @@ export function AgentComposer(props: AgentComposerProps) {
         }}
       />
 
-      <div className="ag-control-row">
+      <div className="composer-foot ag-control-row">
         <div className="ag-controls-left">
           <button
             type="button"
             className="ag-chip-btn"
             onClick={() => fileRef.current?.click()}
-            title="Attach text files as task context"
+            title="Attach files — images, text, presentations, archives, anything"
             aria-label="Attach files"
           >
             <Paperclip size={13} />
@@ -117,7 +119,6 @@ export function AgentComposer(props: AgentComposerProps) {
             hidden
             type="file"
             multiple
-            accept={DOC_ACCEPT}
             onChange={(event) => {
               props.onAttachFiles(event.target.files)
               event.target.value = ""

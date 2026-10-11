@@ -62,8 +62,8 @@ a { color: inherit; text-decoration: none; }
 .brand-name { font-weight: 800; letter-spacing: -.03em; font-size: 16px; }
 .brand-by { color: var(--muted-2); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; margin-top: 2px; }
 
-.new-chat { width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 13px; border: 1px solid rgba(99,215,255,.25); border-radius: 12px; background: linear-gradient(135deg, rgba(99,215,255,.12), rgba(157,107,255,.11)); cursor: pointer; font-weight: 700; transition: transform .18s var(--ease), border-color .18s; }
-.new-chat:hover { transform: translateY(-1px); border-color: rgba(99,215,255,.5); }
+/* Redesign: the sidebar's big "New chat" button was removed — a "+" sits in
+   the history list head instead (see .conversation-list-head). */
 .nav-section { margin-top: 18px; }
 .nav-label { color: var(--muted-2); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; padding: 0 10px 8px; }
 .nav-item { width: 100%; border: 0; background: transparent; color: var(--muted); display: flex; align-items: center; gap: 10px; padding: 10px 10px; border-radius: 10px; cursor: pointer; text-align: left; transition: background .16s, color .16s, transform .16s; }
@@ -118,7 +118,8 @@ a { color: inherit; text-decoration: none; }
 .scroll-view::-webkit-scrollbar-thumb { background: rgba(255,255,255,.09); border-radius: 8px; }
 
 .chat-view { display: grid; grid-template-columns: 210px minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; flex: 1 1 auto; min-height: 0; }
-.chat-toolbar { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; padding: 13px 22px; border-bottom: 1px solid var(--line); }
+/* Redesign: chat toolbar reduced — Reasoning + Export only, right-aligned. */
+.chat-toolbar { grid-column: 1 / -1; display: flex; justify-content: flex-end; align-items: center; padding: 8px 22px; border-bottom: 1px solid var(--line); }
 .model-selector { min-width: 250px; display: flex; gap: 8px; align-items: center; border: 1px solid var(--line); border-radius: 11px; padding: 8px 10px; background: rgba(255,255,255,.025); color: var(--muted); }
 .model-selector select { flex: 1; border: 0; outline: 0; background: transparent; color: var(--text); appearance: none; min-width: 0; font-size: 13px; }
 
@@ -265,8 +266,8 @@ a { color: inherit; text-decoration: none; }
 
 .spin { animation: spin 1s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } }
 
-@media (max-width: 1100px) { .syntara-shell { grid-template-columns: 86px minmax(0,1fr); }.brand-lockup { justify-content: center; }.brand-lockup > div { display: none; }.nav-collapse-btn { margin-left: 8px; }.new-chat span, .nav-item span, .runtime-chip div, .sidebar-mini-actions { display: none; }.new-chat { padding: 10px; }.nav-item { justify-content: center; }.nav-label { display: none; }.runtime-chip { justify-content: center; }.chat-view { grid-template-columns: 150px minmax(0,1fr); }.model-grid, .card-grid { grid-template-columns: 1fr 1fr; }.settings-grid, .two-col { grid-template-columns: 1fr; } }
-@media (max-width: 760px) { body { overflow: auto; }.syntara-shell { display: block; height: auto; max-height: none; overflow: visible; }.syntara-sidebar { min-height: auto; height: auto; overflow: visible; border-right: 0; border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 30; padding: 8px; }.brand-lockup { display: none; }.new-chat { display: none; }.nav-section { margin: 0; display: flex; overflow-x: auto; gap: 4px; }.nav-item { flex: 0 0 auto; justify-content: center; width: 44px; }.sidebar-bottom { display: none; }.syntara-main { height: auto; overflow: visible; min-height: calc(100vh - 62px); }.topbar { padding: 12px; }.scroll-view { padding: 16px; }.chat-view { grid-template-columns: 1fr; grid-template-rows: auto auto auto auto; flex: none; height: auto; }.chat-toolbar { padding: 10px 12px; }.conversation-list { grid-row: 2; grid-column: 1; display: flex; border-right: 0; border-bottom: 1px solid var(--line); overflow-x: auto; max-height: 140px; }.conversation-card { min-width: 150px; }.chat-stage { grid-row: 3; padding: 22px 13px; overflow: visible; }.composer-area { grid-column: 1; grid-row: 4; padding: 8px 13px 15px; }.suggestion-grid, .model-grid, .card-grid, .dev-grid, .metric-grid, .integration-strip { grid-template-columns: 1fr; }.section-head { align-items: flex-start; flex-direction: column; }.search-row { align-items: stretch; flex-direction: column; }.hardware-pill { justify-content: center; }.download-row { grid-template-columns: 36px minmax(0,1fr) auto; }.download-status { display: none; }.memory-create { grid-template-columns: 1fr; }.welcome { margin-top: 4vh; }.welcome h1 { font-size: 38px; } }
+@media (max-width: 1100px) { .syntara-shell { grid-template-columns: 86px minmax(0,1fr); }.brand-lockup { justify-content: center; }.brand-lockup > div { display: none; }.nav-collapse-btn { margin-left: 8px; }.nav-item span, .runtime-chip div, .sidebar-mini-actions { display: none; }.nav-item { justify-content: center; }.nav-label { display: none; }.runtime-chip { justify-content: center; }.chat-view { grid-template-columns: 150px minmax(0,1fr); }.model-grid, .card-grid { grid-template-columns: 1fr 1fr; }.settings-grid, .two-col { grid-template-columns: 1fr; } }
+@media (max-width: 760px) { body { overflow: auto; }.syntara-shell { display: block; height: auto; max-height: none; overflow: visible; }.syntara-sidebar { min-height: auto; height: auto; overflow: visible; border-right: 0; border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 30; padding: 8px; }.brand-lockup { display: none; }.nav-section { margin: 0; display: flex; overflow-x: auto; gap: 4px; }.nav-item { flex: 0 0 auto; justify-content: center; width: 44px; }.sidebar-bottom { display: none; }.syntara-main { height: auto; overflow: visible; min-height: calc(100vh - 62px); }.topbar { padding: 12px; }.scroll-view { padding: 16px; }.chat-view { grid-template-columns: 1fr; grid-template-rows: auto auto auto auto; flex: none; height: auto; }.chat-toolbar { padding: 10px 12px; }.conversation-list { grid-row: 2; grid-column: 1; display: flex; border-right: 0; border-bottom: 1px solid var(--line); overflow-x: auto; max-height: 140px; }.conversation-card { min-width: 150px; }.chat-stage { grid-row: 3; padding: 22px 13px; overflow: visible; }.composer-area { grid-column: 1; grid-row: 4; padding: 8px 13px 15px; }.suggestion-grid, .model-grid, .card-grid, .dev-grid, .metric-grid, .integration-strip { grid-template-columns: 1fr; }.section-head { align-items: flex-start; flex-direction: column; }.search-row { align-items: stretch; flex-direction: column; }.hardware-pill { justify-content: center; }.download-row { grid-template-columns: 36px minmax(0,1fr) auto; }.download-status { display: none; }.memory-create { grid-template-columns: 1fr; }.welcome { margin-top: 4vh; }.welcome h1 { font-size: 38px; } }
 
 :root[data-reduced-motion="true"] * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 
@@ -326,7 +327,7 @@ a { color: inherit; text-decoration: none; }
 .conversation-search-row { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
 .conversation-search-row .conversation-search { flex: 1; min-width: 0; margin-bottom: 0; }
 .conversation-search-row .icon-btn { flex: none; width: 30px; height: 30px; }
-.history-rail { border-right: 1px solid var(--line); padding: 14px 7px; display: flex; justify-content: center; }
+.history-rail { border-right: 1px solid var(--line); padding: 14px 7px; display: flex; flex-direction: column; justify-content: flex-start; align-items: center; gap: 8px; }
 .history-rail .icon-btn { width: 30px; height: 30px; }
 .conversation-search { display: flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 9px; padding: 7px 9px; margin-bottom: 8px; color: var(--muted-2); }
 .conversation-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 12px; }
@@ -472,8 +473,7 @@ button, input, textarea, select { font-family: inherit; }
 .brand-name, .section-head h2, .hero-panel h2, .welcome h1 { font-family: 'Orbitron', sans-serif; }
 .brand-name { letter-spacing: .08em; text-transform: uppercase; font-size: 15px; }
 .brand-by { color: var(--accent); letter-spacing: .18em; }
-.new-chat, .primary-btn, .send-btn { border-radius: 2px; text-transform: uppercase; letter-spacing: .12em; font-family: 'Orbitron', sans-serif; font-size: 13px; }
-.new-chat { justify-content: flex-start; padding: 13px 15px; background: linear-gradient(90deg, rgba(69,224,255,.18), rgba(61,255,168,.05)); border-color: rgba(69,224,255,.46); clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%); }
+.primary-btn, .send-btn { border-radius: 2px; text-transform: uppercase; letter-spacing: .12em; font-family: 'Orbitron', sans-serif; font-size: 13px; }
 .nav-section { margin-top: 28px; }
 .nav-label, .eyebrow, .section-kicker { font-family: 'Orbitron', monospace; letter-spacing: .2em; }
 .nav-label { color: var(--accent); }
@@ -492,7 +492,7 @@ button, input, textarea, select { font-family: inherit; }
 .primary-btn { background: linear-gradient(105deg, var(--accent), var(--accent-2)); box-shadow: 0 0 28px rgba(69,224,255,.22); color: #03131f; }
 .primary-btn:hover { box-shadow: 0 0 40px rgba(69,224,255,.4); }
 .view.scroll-view { padding: 34px 40px; }
-.chat-toolbar { padding: 16px 30px; background: color-mix(in srgb, var(--bg) 72%, transparent); }
+.chat-toolbar { padding: 10px 30px; background: color-mix(in srgb, var(--bg) 72%, transparent); }
 .model-selector, .composer, .card-panel, .model-card, .feature-card, .dev-card, .metric-card, .download-row, .empty-state-card, .hero-panel { border-radius: 3px; border-color: var(--line); background: linear-gradient(135deg, rgba(10,20,32,.72), rgba(4,10,15,.86)); box-shadow: inset 0 1px 0 rgba(69,224,255,.06); }
 .conversation-list { background: color-mix(in srgb, var(--bg) 40%, transparent); border-right-color: var(--line); padding: 18px 14px; }
 .conversation-card { border-radius: 2px; padding: 11px 10px; font-family: 'Share Tech Mono', monospace; }
@@ -535,7 +535,6 @@ button, input, textarea, select { font-family: inherit; }
 :root[data-theme="light"] .brand-mark { border-color: rgba(0,120,160,.55); box-shadow: 0 0 22px rgba(0,120,160,.18); }
 :root[data-theme="light"] .update-badge,
 :root[data-theme="light"] .sidebar-mini-actions .update-badge { border-color: rgba(0,120,160,.55); background: rgba(0,140,190,.10); box-shadow: 0 0 14px rgba(0,120,160,.18); }
-:root[data-theme="light"] .new-chat { background: linear-gradient(90deg, rgba(0,140,190,.14), rgba(0,150,110,.06)); border-color: rgba(0,120,160,.4); color: var(--text); }
 :root[data-theme="light"] .nav-item:hover { background: rgba(0,140,190,.08); }
 :root[data-theme="light"] .nav-item.active { background: linear-gradient(90deg, rgba(0,140,190,.14), rgba(28,95,214,.06)); box-shadow: inset 0 0 24px rgba(0,140,190,.06); }
 :root[data-theme="light"] .runtime-chip,
@@ -588,12 +587,10 @@ select option { background-color: var(--bg-soft); color: var(--text); }
   .nav-collapsed .syntara-sidebar:after { display: none; }
   .nav-collapsed .brand-lockup { justify-content: center; padding-left: 0; padding-right: 0; }
   .nav-collapsed .brand-lockup > div { display: none; }
-  .nav-collapsed .new-chat span,
   .nav-collapsed .nav-item span,
   .nav-collapsed .runtime-chip div,
   .nav-collapsed .sidebar-mini-actions { display: none; }
   .nav-collapsed .update-badge-collapsed { display: grid; }
-  .nav-collapsed .new-chat { padding: 10px; justify-content: center; }
   .nav-collapsed .nav-item { justify-content: center; }
   .nav-collapsed .nav-label { display: none; }
   .nav-collapsed .runtime-chip { justify-content: center; }
@@ -722,6 +719,10 @@ select option { background-color: var(--bg-soft); color: var(--text); }
    a docked composer | progress + preview docks. Syntara theme tokens only. */
 .view.agent-shell { display: grid; grid-template-columns: 264px minmax(0, 1fr) 302px; gap: 14px; padding: 16px; overflow: hidden; align-items: stretch; }
 .view.agent-shell.rail-collapsed { grid-template-columns: 46px minmax(0, 1fr) 302px; }
+/* Redesign: both dock panes toggled off (and no pinned panel) — the
+   transcript expands across the freed column. */
+.view.agent-shell.docks-collapsed { grid-template-columns: 264px minmax(0, 1fr); }
+.view.agent-shell.rail-collapsed.docks-collapsed { grid-template-columns: 46px minmax(0, 1fr); }
 
 /* --- sessions rail --- */
 .ag-sessions { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); overflow: hidden; }
@@ -805,14 +806,10 @@ select option { background-color: var(--bg-soft); color: var(--text); }
 .ag-empty h2 { margin: 0; font-size: 24px; letter-spacing: .01em; }
 .ag-empty h2 span, .ag-empty .section-kicker + h2 { color: inherit; }
 .ag-empty p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
-.ag-suggests { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; margin-top: 10px; }
-.ag-suggests button { border: 1px solid var(--line); background: rgba(255, 255, 255, .03); color: var(--muted); border-radius: 10px; padding: 11px 13px; font-size: 12px; line-height: 1.5; text-align: left; cursor: pointer; transition: color .16s, border-color .16s, background .16s; }
-.ag-suggests button:hover { color: var(--text); border-color: var(--accent); background: rgba(69, 224, 255, .07); }
-
-/* composer */
-.ag-composer { border-top: 1px solid var(--line); background: linear-gradient(180deg, rgba(9, 14, 23, .7), rgba(9, 14, 23, .96)); padding: 10px 14px 12px; display: grid; gap: 8px; }
-.ag-composer textarea { display: block; width: 100%; resize: none; min-height: 54px; max-height: 190px; background: transparent; border: 0; color: var(--text); font: inherit; font-size: 13px; line-height: 1.6; padding: 4px 2px; outline: none; }
-.ag-composer textarea::placeholder { color: var(--muted-2); }
+/* composer — redesign: shares the chat composer's visual frame; only the
+   dock spacing is agent-specific. */
+.ag-composer { margin: 10px 14px 12px; }
+.ag-composer textarea { max-height: 190px; }
 .ag-control-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .ag-controls-left, .ag-controls-right { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .ag-hint { font-family: 'Share Tech Mono', ui-monospace, monospace; font-size: 10px; color: var(--muted-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
@@ -825,7 +822,12 @@ select option { background-color: var(--bg-soft); color: var(--text); }
 .ag-chip.model-chip .ag-chip-label { max-width: 150px; }
 .ag-chip-caret { flex: none; opacity: .7; }
 .ag-chip select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: 0; background: transparent; font: inherit; color: inherit; }
-.ag-composer .pending-strip { margin: 0; }
+.ag-composer .pending-strip { margin: 10px 14px 0; max-width: none; }
+/* Redesign: agent header row — pane toggles left, Export right. */
+.ag-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--line); }
+.ag-toolbar-left { display: flex; align-items: center; gap: 6px; }
+.ag-toolbar .icon-btn.active { color: var(--accent); border-color: rgba(99,215,255,.35); background: rgba(99,215,255,.08); }
+.doc-size { color: var(--muted-2); font-size: 10px; margin-left: 2px; }
 
 /* --- right docks --- */
 .ag-docks { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
@@ -850,7 +852,7 @@ select option { background-color: var(--bg-soft); color: var(--text); }
    content area is ≥1042px, so the shrunken 3-col keeps the center card at
    ≥490px (composer min ≈438px). ≤1319px folds the docks under the workspace
    row; ≤899px stacks everything. */
-@media (max-width: 1559px) { .view.agent-shell { grid-template-columns: 240px minmax(0, 1fr) 268px; gap: 10px; padding: 12px; } .view.agent-shell.rail-collapsed { grid-template-columns: 46px minmax(0, 1fr) 268px; } .ag-hint { max-width: 170px; } }
+@media (max-width: 1559px) { .view.agent-shell { grid-template-columns: 240px minmax(0, 1fr) 268px; gap: 10px; padding: 12px; } .view.agent-shell.rail-collapsed { grid-template-columns: 46px minmax(0, 1fr) 268px; } .view.agent-shell.docks-collapsed { grid-template-columns: 240px minmax(0, 1fr); } .view.agent-shell.rail-collapsed.docks-collapsed { grid-template-columns: 46px minmax(0, 1fr); } .ag-hint { max-width: 170px; } }
 @media (max-width: 1319px) {
   .view.agent-shell { grid-template-columns: 232px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
   .view.agent-shell.rail-collapsed { grid-template-columns: 46px minmax(0, 1fr); }
@@ -862,7 +864,6 @@ select option { background-color: var(--bg-soft); color: var(--text); }
   .ag-center { min-height: 62vh; }
   .ag-docks { flex-direction: column; max-height: none; }
   .ag-panel { min-height: 170px; }
-  .ag-suggests { grid-template-columns: 1fr; }
   .ag-hint { display: none; }
 }
 

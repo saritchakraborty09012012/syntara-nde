@@ -2,7 +2,8 @@
    with the project/session breadcrumb, run status and the running orb,
    a transcript of user tasks and streamed run events, and an empty state
    with the wordmark, a small robot-on-laptop illustration and rotating
-   first-run lines. Tool cards come from the shared AgentEvents renderer. */
+   first-run lines. Tool cards come from the shared AgentEvents renderer.
+   Redesign: suggested prompts live only in the composer's chip row. */
 
 import { useEffect, useRef, useState } from "react"
 import { Check, Copy, LoaderCircle } from "lucide-react"
@@ -24,8 +25,6 @@ interface AgentStageProps {
   projectName: string | null
   copiedKey: string | null
   onCopy: (text: string, key: string) => void
-  suggestions: string[]
-  onSuggest: (text: string) => void
 }
 
 function modeLabel(turn: AgentTurn): string {
@@ -130,13 +129,6 @@ export function AgentStage(props: AgentStageProps) {
               It plans, reads, edits and runs tools inside your project folder — every write and every
               process asks for permission first.
             </p>
-            <div className="ag-suggests">
-              {props.suggestions.map((text) => (
-                <button key={text} type="button" onClick={() => props.onSuggest(text)}>
-                  {text}
-                </button>
-              ))}
-            </div>
           </div>
         ) : (
           props.session.turns.map((turn) => (
@@ -171,11 +163,4 @@ export function AgentStage(props: AgentStageProps) {
       </div>
     </section>
   )
-}
-
-/* Short hint line for the composer (mirrors the chat composer hint). */
-export function agentHint(label: string, busy: boolean, tokensPerSec: number): string {
-  if (busy) return `${label} mode · running…`
-  const speed = tokensPerSec > 0 ? ` · ${tokensPerSec.toFixed(1)} tok/s` : ""
-  return `${label} mode${speed}`
 }

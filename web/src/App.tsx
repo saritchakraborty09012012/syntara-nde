@@ -7,6 +7,7 @@ import {
   BrainCircuit,
   Boxes,
   Check,
+  ChevronDown,
   CircleHelp,
   Clock,
   Code2,
@@ -14,6 +15,7 @@ import {
   Cpu,
   Database,
   Download,
+  Eye,
   FileDown,
   FileUp,
   FolderOpen,
@@ -21,6 +23,7 @@ import {
   GitBranch,
   HardDrive,
   Link2,
+  ListChecks,
   LoaderCircle,
   MemoryStick,
   MessageSquare,
@@ -28,6 +31,7 @@ import {
   Moon,
   Package,
   PanelLeft,
+  Paperclip,
   Pause,
   Pencil,
   Play,
@@ -100,7 +104,6 @@ import { volumeRows, type VolumeRow } from "@/lib/storage-plan"
 import { badgeLabel, groupComplete, metaFromInspect, pickInspectTarget } from "@/lib/inspect"
 import { mergePickerOptions, type PickerRow } from "@/lib/picker"
 import { canContinue, CONTINUE_NUDGE, createDeltaBuffer, retryAfterOf, retryDecision, statusOf } from "@/lib/send"
-import { ModelPicker } from "@/components/ModelPicker"
 import { FirstRunSetup } from "@/components/FirstRunSetup"
 import { ContextMeter } from "@/components/ContextMeter"
 import {
@@ -319,15 +322,18 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   /* Track 2b - queue while busy: the ref is the synchronous source of
      truth for the flush paths, the state mirrors it for the chips. */
-  type QueuedSend = { id: string; text: string; images: string[]; docs: Array<{ name: string; content: string }>; conversationId: string | null }
+  type QueuedSend = { id: string; text: string; images: string[]; docs: Array<{ name: string; content: string; size?: number }>; conversationId: string | null }
   const [queued, setQueued] = useState<QueuedSend[]>([])
   const queuedRef = useRef<QueuedSend[]>([])
   /* What the send path is doing while it waits (retry notices, queued
      during a model load); cleared the moment a send starts or ends. */
   const [retryNote, setRetryNote] = useState("")
   const [thinking, setThinking] = useState(false)
-  const [maxTokens, setMaxTokens] = useState(4096)
-  const [temperature, setTemperature] = useState(0.7)
+  /* Redesign: the chat Setup panel (temperature / max-tokens / system
+     prompt) was removed — kaam nahi. These defaults stay wired to sendAs
+     and the composer hint. */
+  const [maxTokens] = useState(4096)
+  const [temperature] = useState(0.7)
   const [query, setQuery] = useState("")
   const [modelSearch, setModelSearch] = useState("")
   const [selectedMemory, setSelectedMemory] = useState<MemoryItem | null>(null)
@@ -354,6 +360,11 @@ export default function App() {
      loads it in a sandboxed iframe. Cleared when the user closes the dock
      or switches sessions. */
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  /* Redesign: the agent header's Progress/Preview icons toggle each dock
+     pane. Phase E upgrades this to split panes with drag-resize and the
+     sidebar overlay choreography; the state shape stays the same. */
+  const [progressOpen, setProgressOpen] = useState(true)
+  const [previewOpen, setPreviewOpen] = useState(true)
   const [permissionAsk, setPermissionAsk] = useState<{ tool: string; args: Record<string, unknown> } | null>(null)
   const permissionResolver = useRef<((decision: PermissionDecision) => void) | null>(null)
   /* Phase 3 docks: plan review, pending question, preview reload nonce and
@@ -388,7 +399,7 @@ export default function App() {
   const [hostLogBusy, setHostLogBusy] = useState(false)
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
   const [pendingImages, setPendingImages] = useState<string[]>([])
-  const [pendingDocs, setPendingDocs] = useState<Array<{ name: string; content: string }>>([])
+  const [pendingDocs, setPendingDocs] = useState<Array<{ name: string; content: string; size?: number }>>([])
   const [copied, setCopied] = useState<string | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const modelImportRef = useRef<HTMLInputElement>(null)
@@ -427,10 +438,9 @@ export default function App() {
       setStorageFiles((current) => current ?? [])
     }
   }
-  const [setupOpen, setSetupOpen] = useState(false)
   /* First run: the terms, then the model folder (setup.ts owns the rules,
-     FirstRunSetup renders them). The record is versioned localStorage, so a
-     terms change asks again instead of being accepted forever. */
+      FirstRunSetup renders them). The record is versioned localStorage, so a
+      terms change asks again instead of being accepted forever. */
   const [firstRunNeeded, setFirstRunNeeded] = useState(() =>
     typeof window === "undefined" ? false : setupRequired(window.localStorage),
   )
@@ -804,7 +814,7 @@ export default function App() {
      synchronously (so enqueue can never race a render); the flush runs
      from an effect, after commit, so it resolves the conversation and
      history from fresh state instead of a stale closure. */
-  const enqueue = (text: string, images: string[], docs: Array<{ name: string; content: string }>) => {
+  const enqueue = (text: string, images: string[], docs: Array<{ name: string; content: string; size?: number }>) => {
     if (!text && !images.length && !docs.length) return
     queuedRef.current = [...queuedRef.current, { id: createId("q"), text, images, docs, conversationId: activeConversation?.id ?? null }]
     setQueued(queuedRef.current)
@@ -846,6 +856,9 @@ export default function App() {
      from lightweight entries, and the progress dock summarises the last
      finished run. */
   const agentModelOptions = useMemo(() => pickerRows.map((row) => ({ value: row.id, label: row.label })), [pickerRows])
+  /* Chat composer model chip label (redesign: the picker lives in the
+     textbox now, not the toolbar). */
+  const chatModelLabel = pickerRows.find((row) => row.id === effectiveModel)?.label ?? effectiveModel ?? "No model"
   const sessionEntries = useMemo(
     () => agentSessions.map((item) => ({
       id: item.id,
@@ -940,12 +953,11 @@ export default function App() {
         if (redownload) { settleRedownload(false); return }
         if (confirmReset) { setConfirmReset(false); return }
         if (selectedMemory) { setSelectedMemory(null); return }
-        if (setupOpen) setSetupOpen(false)
       }
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [confirmReset, redownload, selectedMemory, setupOpen, state.settings.historyCollapsed])
+  }, [confirmReset, redownload, selectedMemory, state.settings.historyCollapsed])
 
   useEffect(() => {
     return () => abortRef.current?.abort()
@@ -1163,7 +1175,7 @@ export default function App() {
     return item.images?.length ? { id: item.id, role: item.role, content, images: item.images } : { id: item.id, role: item.role, content }
   }
 
-  const sendAs = async (text: string, images: string[], base?: Conversation, docs: Array<{ name: string; content: string }> = pendingDocs, conversationId?: string | null) => {
+  const sendAs = async (text: string, images: string[], base?: Conversation, docs: Array<{ name: string; content: string; size?: number }> = pendingDocs, conversationId?: string | null) => {
     if (loading) return
     const current = base
       || (conversationId ? state.conversations.find((item) => item.id === conversationId) : null)
@@ -1496,7 +1508,6 @@ export default function App() {
     setDraft(target.content)
     setPendingImages(target.images || [])
     setPendingDocs(target.docs || [])
-    setSetupOpen(false)
     window.setTimeout(() => messageRef.current?.focus(), 0)
   }
 
@@ -1521,6 +1532,35 @@ export default function App() {
     URL.revokeObjectURL(url)
   }
 
+  /* Agent session export (redesign): structured JSON for now; Phase D
+     swaps both chat and agent exports to a hand-rolled PDF download. */
+  const exportAgentSession = (session: AgentSession) => {
+    const slug = session.title.replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-").toLowerCase() || "session"
+    const payload = {
+      kind: "syntara-agent-session",
+      schema: 1,
+      exportedAt: new Date().toISOString(),
+      title: session.title,
+      model: session.model,
+      folder: session.folderName ?? null,
+      turns: session.turns.map((turn) => ({
+        id: turn.id,
+        at: turn.at,
+        mode: turn.mode,
+        task: turn.task,
+        status: turn.status,
+        events: turn.events,
+      })),
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" })
+    const url = URL.createObjectURL(blob)
+    const anchor = document.createElement("a")
+    anchor.href = url
+    anchor.download = `syntara-agent-${slug}.json`
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
+
   const attachImages = async (files: FileList | File[] | null) => {
     const images = Array.from(files || []).filter((file) => file.type.startsWith("image/"))
     if (!images.length) return
@@ -1538,12 +1578,22 @@ export default function App() {
 
   const isTextDocument = (file: File) => TEXT_DOC_EXTENSIONS.test(file.name) || file.type === "text/plain" || file.type.startsWith("text/")
 
+  /* Universal attach: every file type is accepted. Text-like files up to
+     256 KB are inlined verbatim; anything else (presentations, archives,
+     apks, videos, oversized text) becomes an honest name/size metadata
+     chip so the model knows the file exists without base64 token bloat. */
   const attachDocuments = async (files: File[]) => {
-    const accepted = files.filter(isTextDocument)
-    const docs: Array<{ name: string; content: string }> = []
-    for (const file of accepted) {
-      if (file.size > MAX_DOC_BYTES) { setRuntimeError(`Attachment "${file.name}" is larger than 256 KB; skipped.`); continue }
-      try { docs.push({ name: file.name, content: await file.text() }) } catch { setRuntimeError(`Could not read attachment "${file.name}".`) }
+    const docs: Array<{ name: string; content: string; size?: number }> = []
+    for (const file of files) {
+      if (isTextDocument(file)) {
+        if (file.size > MAX_DOC_BYTES) {
+          docs.push({ name: file.name, content: `(file too large to inline: ${formatBytes(file.size)}; content omitted)`, size: file.size })
+          continue
+        }
+        try { docs.push({ name: file.name, content: await file.text(), size: file.size }) } catch { setRuntimeError(`Could not read attachment "${file.name}".`) }
+        continue
+      }
+      docs.push({ name: file.name, content: `(attached file: ${file.name} — ${formatBytes(file.size)}${file.type ? `, ${file.type}` : ""}; binary, content not inlined)`, size: file.size })
     }
     if (docs.length) setPendingDocs((current) => [...current, ...docs])
   }
@@ -2414,7 +2464,8 @@ export default function App() {
           ))}
         </div>
 
-        {view !== "agents" ? <button className="new-chat" onClick={() => { startConversation(); if (view !== "chat") setView("chat") }}><Plus size={16} /> <span>New chat</span></button> : null}
+        {/* Redesign: the big "New chat" button is gone — a "+" sits next to
+            the history toggle, matching agent mode's sessions rail. */}
         <div className="nav-section">
           <div className="nav-label">Menu</div>
           {NAV.map(({ id, icon: Icon }) => (
@@ -2466,29 +2517,18 @@ export default function App() {
 
         {view === "chat" && (
           <section className={cn("view chat-view", state.settings.historyCollapsed && "history-collapsed")} id="panel-chat" role="tabpanel" aria-labelledby="mode-tab-chat">
+            {/* Redesign: the secondary header is export-only for chat (no
+                model picker, attach or setup — those live in the textbox). */}
             <div className="chat-toolbar">
-              <div className="toolbar-left">
-                <ModelPicker rows={pickerRows} value={effectiveModel} loading={loadingModel} onSelect={pickModel} />
-              </div>
               <div className="chat-tools">
                 <button className={cn("tool-pill", thinking && "selected")} onClick={() => setThinking((value) => !value)}><Sparkles size={14} /> Reasoning</button>
-                <button className="tool-pill" onClick={() => fileRef.current?.click()}><Upload size={14} /> Attach</button><button className={cn("tool-pill", setupOpen && "selected")} onClick={() => setSetupOpen((value) => !value)}><Settings2 size={14} /> Setup</button>{activeConversation ? <button className="tool-pill" onClick={() => exportConversation(activeConversation)}><FileDown size={14} /> Export</button> : null}
-                <input ref={fileRef} hidden type="file" accept="image/*,.txt,.md,.markdown,.csv,.json,.log,.py,.js,.jsx,.ts,.tsx,.html,.htm,.css,.scss,.yml,.yaml,.toml,.ini,.xml,.sh,.sql" multiple onChange={(event) => handleAttach(event.target.files)} />
+                {activeConversation ? <button className="tool-pill" onClick={() => exportConversation(activeConversation)}><FileDown size={14} /> Export</button> : null}
               </div>
             </div>
 
-            {setupOpen && activeConversation ? (
-              <div className="setup-panel">
-                <label className="field-label">System prompt<textarea className="setup-prompt" value={activeConversation.systemPrompt ?? ""} onChange={(e) => saveConversation({ ...activeConversation, systemPrompt: e.target.value })} placeholder="Optional model-level instructions for this conversation only. Applied on every request." /></label>
-                <label className="field-label">KV cache slot<input type="number" min={0} step={1} value={activeConversation.cacheSlot ?? ""} placeholder="Auto" onChange={(e) => saveConversation({ ...activeConversation, cacheSlot: e.target.value === "" ? undefined : Math.max(0, Math.floor(Number(e.target.value))) })} /></label>
-                <label className="field-label">Temperature<span className="range-value">{temperature.toFixed(2)}</span><input type="range" min={0} max={2} step={0.05} value={temperature} onChange={(e) => setTemperature(Number(e.target.value))} /></label>
-                <label className="field-label">Max tokens<input type="number" min={1} step={1} value={maxTokens} onChange={(e) => setMaxTokens(Math.max(1, Math.floor(Number(e.target.value) || 1)))} /></label>
-                <p className="panel-note">KV slots share the runtime's prompt cache. Temperature and token limits apply to this conversation's next generation.</p>
-              </div>
-            ) : null}
-
             {state.settings.historyCollapsed ? (
               <div className="history-rail">
+                <button className="icon-btn" onClick={() => { startConversation(); if (view !== "chat") setView("chat") }} title="New chat" aria-label="New chat"><Plus size={14} /></button>
                 <button className="icon-btn" onClick={() => updateSettings({ historyCollapsed: false })} title="Show conversation history" aria-label="Show conversation history" aria-expanded={false}>
                   <PanelLeft size={14} />
                 </button>
@@ -2497,6 +2537,7 @@ export default function App() {
               <div className="conversation-list">
                 <div className="conversation-list-head">
                   <span>History</span>
+                  <button className="icon-btn" onClick={() => { startConversation(); if (view !== "chat") setView("chat") }} title="New chat" aria-label="New chat"><Plus size={14} /></button>
                 </div>
                 <div className="conversation-search-row">
                   <div className="conversation-search"><Search size={13} /><input ref={queryRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search conversations… (Ctrl+K)" /></div>
@@ -2545,7 +2586,7 @@ export default function App() {
                       <div className="message-body">
                         <div className="message-role">{item.role === "assistant" ? "Syntara" : "You"}</div>
                         {item.images?.length ? <div className="image-strip">{item.images.map((url) => <img key={url} src={url} alt="Attached" />)}</div> : null}
-                        {item.docs?.length ? <div className="pending-strip docs-inline">{item.docs.map((doc) => <span key={doc.name} className="doc-chip"><FileUp size={11} /> {doc.name}</span>)}</div> : null}
+                        {item.docs?.length ? <div className="pending-strip docs-inline">{item.docs.map((doc) => <span key={doc.name} className="doc-chip"><FileUp size={11} /> {doc.name}{doc.size ? ` · ${formatBytes(doc.size)}` : ""}</span>)}</div> : null}
                         <div className={cn("message-content", item.role === "assistant" && "md-wrap")}>{item.content
                           ? item.role === "assistant" ? <Markdown text={item.content} /> : item.content
                           : (loading && item.role === "assistant" ? <span className="typing"><i /><i /><i /></span> : "")}</div>
@@ -2566,13 +2607,56 @@ export default function App() {
 
             <div className="composer-area">
               {pendingImages.length ? <div className="pending-strip">{pendingImages.map((url) => <div key={url} className="pending-image"><img src={url} alt="" /><button onClick={() => setPendingImages((items) => items.filter((item) => item !== url))}><X size={12} /></button></div>)}</div> : null}
-              {pendingDocs.length ? <div className="pending-strip">{pendingDocs.map((doc) => <div key={doc.name} className="pending-doc"><FileUp size={12} /><span>{doc.name}</span><button onClick={() => setPendingDocs((items) => items.filter((item) => item.name !== doc.name))}><X size={12} /></button></div>)}</div> : null}
+              {pendingDocs.length ? <div className="pending-strip">{pendingDocs.map((doc) => <div key={doc.name} className="pending-doc"><FileUp size={12} /><span>{doc.name}</span>{doc.size ? <small className="doc-size">{formatBytes(doc.size)}</small> : null}<button onClick={() => setPendingDocs((items) => items.filter((item) => item.name !== doc.name))}><X size={12} /></button></div>)}</div> : null}
               {queued.length ? <div className="pending-strip queue-strip">{queued.map((item) => <div key={item.id} className="pending-doc queue-chip" title="Sent automatically when the current reply finishes"><Clock size={12} /><span>{item.text.slice(0, 48)}{item.text.length > 48 ? "…" : ""}{!item.text ? `${item.images.length} image(s)` : ""}</span><button onClick={() => removeFromQueue(item.id)} aria-label="Remove from queue"><X size={12} /></button></div>)}</div> : null}
               <div className="composer">
                 <textarea ref={messageRef} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={selectedModel ? (loading || loadingModel ? "Message Syntara… (queued until this finishes)" : "Message Syntara…") : "Choose a model to start"} aria-label="Message" disabled={!selectedModel} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send() } }} />
+                {/* Redesign: attach + model select live at the bottom-left of
+                    the textbox in both modes. Universal file input — every
+                    type is accepted; text inlines, binaries become chips. */}
                 <div className="composer-foot">
-                  <div className="composer-hint"><SlidersHorizontal size={12} /> {listening ? "Listening… speak now" : thinking ? "Reasoning on" : "Direct generation"} · {maxTokens.toLocaleString()} max tokens · {temperature.toFixed(2)} temp{queued.length ? ` · ${queued.length} queued` : ""}{metrics && metrics.tokensPerSec > 0 ? ` · ${metrics.tokensPerSec.toFixed(1)} tok/s` : ""}</div>
+                  <div className="ag-controls-left">
+                    <button
+                      type="button"
+                      className="ag-chip-btn"
+                      onClick={() => fileRef.current?.click()}
+                      title="Attach files — images, text, presentations, archives, anything"
+                      aria-label="Attach files"
+                    >
+                      <Paperclip size={14} />
+                    </button>
+                    <input
+                      ref={fileRef}
+                      hidden
+                      type="file"
+                      multiple
+                      onChange={(event) => { handleAttach(event.target.files); event.target.value = "" }}
+                    />
+                    <span className="ag-chip select-chip model-chip" title={`Model: ${chatModelLabel}`}>
+                      <span className="ag-chip-label">{chatModelLabel}</span>
+                      <ChevronDown size={12} className="ag-chip-caret" aria-hidden="true" />
+                      <select
+                        value={effectiveModel}
+                        onChange={(event) => {
+                          const row = pickerRows.find((item) => item.id === event.target.value)
+                          if (row) pickModel(row)
+                        }}
+                        aria-label="Model"
+                      >
+                        {!effectiveModel ? <option value="">No model</option> : null}
+                        {pickerRows.map((row) => (
+                          <option key={row.id} value={row.id} disabled={!row.loaded && !row.loadable} title={row.loaded ? "Loaded" : row.loadable ? "Installed" : "No local file"}>
+                            {row.label}{row.loaded ? "" : row.loadable ? " — installed" : " — no file"}
+                          </option>
+                        ))}
+                        {effectiveModel && !pickerRows.some((row) => row.id === effectiveModel) ? (
+                          <option value={effectiveModel}>{effectiveModel}</option>
+                        ) : null}
+                      </select>
+                    </span>
+                  </div>
                   <div className="composer-actions">
+                    <div className="composer-hint"><SlidersHorizontal size={12} /> {listening ? "Listening… speak now" : thinking ? "Reasoning on" : "Direct generation"} · {maxTokens.toLocaleString()} max tokens · {temperature.toFixed(2)} temp{queued.length ? ` · ${queued.length} queued` : ""}{metrics && metrics.tokensPerSec > 0 ? ` · ${metrics.tokensPerSec.toFixed(1)} tok/s` : ""}</div>
                     <button
                       className={cn("mic-btn", listening && "listening")}
                       onClick={() => toggleDictation("chat")}
@@ -2595,8 +2679,14 @@ export default function App() {
             sessions rail, transcript card with the composer docked at the
             bottom, and progress/preview docks on the right. The header,
             sidebar and theme stay Syntara's own. */}
-        {view === "agents" && (
-          <section className={cn("view agent-shell", state.settings.agentRailCollapsed && "rail-collapsed")} id="panel-agents" role="tabpanel" aria-labelledby="mode-tab-agents">
+        {view === "agents" && (() => {
+          /* Pinned panels (permission/question/plan) always need the docks
+             column; otherwise hide it entirely when both panes are toggled
+             off so the transcript expands. */
+          const pinnedDock = !!permissionAsk || !!agentQuestion || !!agentPlan
+          const docksVisible = pinnedDock || progressOpen || previewOpen
+          return (
+          <section className={cn("view agent-shell", state.settings.agentRailCollapsed && "rail-collapsed", !docksVisible && "docks-collapsed")} id="panel-agents" role="tabpanel" aria-labelledby="mode-tab-agents">
             {state.settings.agentRailCollapsed ? (
               <div className="ag-rail">
                 <button
@@ -2629,14 +2719,42 @@ export default function App() {
             />
             )}
             <div className="ag-center">
+              {/* Redesign header row: Progress/Preview pane toggles on the
+                  left, Export (whole session) on the right. The stage keeps
+                  only its breadcrumb/status strip. */}
+              <div className="ag-toolbar">
+                <div className="ag-toolbar-left">
+                  <button
+                    className={cn("icon-btn", progressOpen && "active")}
+                    onClick={() => setProgressOpen((value) => !value)}
+                    title={progressOpen ? "Hide progress panel" : "Show progress panel"}
+                    aria-label={progressOpen ? "Hide progress panel" : "Show progress panel"}
+                    aria-pressed={progressOpen}
+                  >
+                    <ListChecks size={15} />
+                  </button>
+                  <button
+                    className={cn("icon-btn", previewOpen && "active")}
+                    onClick={() => setPreviewOpen((value) => !value)}
+                    title={previewOpen ? "Hide preview panel" : "Show preview panel"}
+                    aria-label={previewOpen ? "Hide preview panel" : "Show preview panel"}
+                    aria-pressed={previewOpen}
+                  >
+                    <Eye size={15} />
+                  </button>
+                </div>
+                {activeAgentSession?.turns.length ? (
+                  <button className="tool-pill" onClick={() => exportAgentSession(activeAgentSession)} title="Export this session">
+                    <FileDown size={14} /> Export
+                  </button>
+                ) : null}
+              </div>
               <AgentStage
                 session={activeAgentSession}
                 running={agentBusy}
                 projectName={activeProject?.name ?? null}
                 copiedKey={copied}
                 onCopy={copy}
-                suggestions={AGENT_SUGGESTIONS}
-                onSuggest={setAgentPrompt}
               />
               <AgentComposer
                 value={agentPrompt}
@@ -2660,7 +2778,7 @@ export default function App() {
                 onMicToggle={() => toggleDictation("agent")}
                 attachments={pendingDocs}
                 onRemoveAttachment={(name) => setPendingDocs((items) => items.filter((item) => item.name !== name))}
-                onAttachFiles={(files) => attachDocuments(Array.from(files || []).filter((file) => !file.type.startsWith("image/")))}
+                onAttachFiles={(files) => attachDocuments(Array.from(files || []))}
                 hint={composerHint}
                 suggestions={AGENT_SUGGESTIONS}
               />
@@ -2709,6 +2827,8 @@ export default function App() {
               onReloadPreview={() => setPreviewNonce((value) => value + 1)}
               copiedKey={copied}
               onCopy={copy}
+              showProgress={progressOpen}
+              showPreview={previewOpen}
             />
             {approvalNudgeOpen ? (
               <div className="approval-nudge" role="status">
@@ -2738,7 +2858,8 @@ export default function App() {
               </div>
             ) : null}
           </section>
-        )}
+          )
+        })()}
 
         {view === "models" && familyId && <ModelFamilyPage family={state.models.find((item) => item.id === familyId)} familyId={familyId} onBack={() => setView("models")} onDownload={(file) => { void guardRedownload(familyId, state.models.find((item) => item.id === familyId)?.name || file.name).then((approved) => { if (approved) void startUrlDownload(familyId, file.name, file.url, file.filename) }) }} activeTasks={familyActiveTasks} onPause={() => familyActiveTasks.forEach((task) => pauseDownload(task.id))} onResume={() => familyActiveTasks.forEach((task) => resumeDownload(task.id))} onCancel={() => familyActiveTasks.forEach((task) => cancelDownload(task.id))} />}
         {view === "models" && !route.family && <section className={cn("view scroll-view", dragging && "drop-zone-active")} onDragOver={(e) => { e.preventDefault(); setDragging(true) }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); installImportedModel(event.dataTransfer.files) }}><div className="section-head tabbed"><div><span className="section-kicker">MODEL HUB</span><h2>Discover, import, install, manage.</h2><div className="model-tabs">{MODEL_TABS.map((tab) => <button key={tab.id} type="button" className={cn("model-tab", modelTab === tab.id && "active")} aria-current={modelTab === tab.id ? "page" : undefined} onClick={() => openModelTab(tab.id)}>{tab.label}</button>)}</div><p>Formats, architectures, backends and hardware are evaluated independently.</p></div><div className="head-actions"><button className="ghost-btn" onClick={() => void pickExistingModel()} disabled={!qdmAvailable()} title={qdmAvailable() ? "Point Syntara at a model file you already have, then choose to copy or move it" : "Available in the desktop app"}><Link2 size={15} /> Connect existing model</button><button className="ghost-btn" onClick={() => modelImportRef.current?.click()}><Upload size={15} /> Import local model</button><input ref={modelImportRef} hidden type="file" onChange={(event) => installImportedModel(event.target.files)} /></div></div>{modelTab === "all" && (<><div className="search-row"><div className="search-box"><Search size={15} /><input value={modelSearch} onChange={(e) => setModelSearch(e.target.value)} placeholder="Search models, providers, capabilities…" /></div><div className="hardware-pill"><Cpu size={14} /> {hardware.cpu} · {hardware.ramGb ? `${hardware.ramGb} GB RAM` : "hardware scan"}</div></div><div className="model-grid">{filteredModels.map((model) => { const score = scoreModel(model, hardware); const catalogCount = modelCatalog[model.id]?.length ?? 0; const installableCount = downloadableCheckpoints(model.id).length; const tasks = activeTasksFor(state.downloads.filter((task) => task.modelId === model.id)); return <article key={model.id} className="model-card"><div className="model-card-top"><div className="model-icon"><Package size={18} /></div><div><div className="model-title">{model.name}</div><div className="model-provider">{model.provider} · {model.architecture}</div></div><span className={cn("compat-pill", score >= 75 ? "good" : score >= 55 ? "mid" : "heavy")}>{recommendationLabel(score)}</span></div><div className="model-specs"><span><MemoryStick size={13} /> {model.recommendedRam}</span><span><HardDrive size={13} /> {model.disk}</span><span><Zap size={13} /> {model.parameters}</span><span><Database size={13} /> Context: {model.context}</span></div><div className="chip-row">{(model.badges ?? []).slice(0, 6).map((badge) => <span key={badge.id} className={cn("inspect-badge", badge.level)} title={badge.message}>{badgeLabel(badge)}</span>)}{model.quantizations.map((tag) => <span key={tag} className="quant-tag">{tag}</span>)}{model.formats.map((tag) => <span key={tag}>{tag}</span>)}{model.capabilities.slice(0, 4).map((tag) => <span key={tag}>{tag.replace("*", "")}</span>)}</div>{tasks.length ? <DownloadProgress tasks={tasks} onPause={() => tasks.forEach((task) => pauseDownload(task.id))} onResume={() => tasks.forEach((task) => resumeDownload(task.id))} onCancel={() => tasks.forEach((task) => cancelDownload(task.id))} /> : null}<div className="model-footer"><a href={model.sourceUrl} target="_blank" rel="noreferrer"><Link2 size={13} /> Source</a>{catalogCount > 0 && <span className="model-count">{catalogCount} checkpoints</span>}{state.downloadedModels[model.id] && model.status === "available" && !tasks.length ? <span className="downloaded-flag">Downloaded before</span> : null}<div className="row-actions">{model.status === "installed" && <><button className="primary-btn small" onClick={() => void loadModel(model)} disabled={loadingModel?.id === model.id} title={loadingModel?.id === model.id ? loadingModel.phase : `Load ${model.name} into the local runtime`}>{loadingModel?.id === model.id ? <><LoaderCircle className="spin" size={13} /> {loadingModel.phase}</> : <><Play size={13} /> Load</>}</button><span className="installed-label"><Check size={13} /> Installed</span><button className="icon-btn" title="Detach model" onClick={() => detachModel(model.id)}><Link2 size={13} /></button><button className="icon-btn danger" title="Delete model metadata" onClick={() => deleteModel(model.id)}><Trash2 size={13} /></button></>}{model.status === "partial" && <><span className="partial-label" title={(model.badges ?? []).find((badge) => badge.level === "error")?.message ?? "The file on disk is truncated or still downloading."}>Incomplete</span><button className="icon-btn danger" title="Delete model metadata" onClick={() => deleteModel(model.id)}><Trash2 size={13} /></button></>}{model.status === "detached" && <button className="ghost-btn small" onClick={() => setState((current) => ({ ...current, models: current.models.map((item) => item.id === model.id ? { ...item, status: "available" } : item) }))}>Attach</button>}{model.status === "available" && !tasks.length && (!catalogCount || installableCount === 1) && <button className="primary-btn small" onClick={() => void startDownload(model)}><Download size={13} /> Install</button>}{catalogCount > 0 && <button className="primary-btn small" onClick={() => openFamily(model.id)}><Boxes size={13} /> Browse models</button>}</div></div></article> })}</div></>)}{modelTab === "installing" && <InstallingTab groups={installingList} onInstall={() => openModelTab("all")} onPause={(group) => group.tasks.forEach((task) => pauseDownload(task.id))} onResume={(group) => group.tasks.forEach((task) => resumeDownload(task.id))} onCancel={(group) => group.tasks.forEach((task) => cancelDownload(task.id))} />}{modelTab === "installed" && <InstalledTab entries={installedList} loading={qdmAvailable() && storageFiles === null} storageDir={storageDir} onInstall={() => openModelTab("all")} onLoad={(entry) => { const target = state.models.find((item) => item.id === entry.modelId); if (target) void loadModel(target) }} loadableIds={installedLoadable} loadingModelId={loadingModel?.id ?? null} />}</section>}

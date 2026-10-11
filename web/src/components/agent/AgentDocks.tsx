@@ -71,6 +71,10 @@ interface AgentDocksProps {
   onReloadPreview: () => void
   copiedKey: string | null
   onCopy: (text: string, key: string) => void
+  /* Redesign: the agent header's Progress/Preview icons toggle each pane.
+     Pinned panels (permission/question/plan) ignore these and always show. */
+  showProgress?: boolean
+  showPreview?: boolean
 }
 
 function formatElapsed(ms: number): string {
@@ -299,144 +303,148 @@ export function AgentDocks(props: AgentDocksProps) {
         </section>
       ) : null}
 
-      <section className="ag-panel" aria-label="Progress">
-        <div className="ag-panel-head">
-          <ListChecks size={13} />
-          <span>Progress</span>
-          {props.running ? <LoaderCircle size={12} className="spin" /> : null}
-          {elapsed !== null ? (
-            <span className="ag-elapsed" title="Run elapsed time">
-              <Timer size={11} /> {formatElapsed(elapsed)}
-            </span>
-          ) : null}
-        </div>
-        <div className="ag-panel-body">
-          {statusText ? (
-            <div className="ag-status-line" role="status">
-              <span className="typing" aria-hidden="true">
-                <i />
-                <i />
-                <i />
+      {props.showProgress !== false ? (
+        <section className="ag-panel" aria-label="Progress">
+          <div className="ag-panel-head">
+            <ListChecks size={13} />
+            <span>Progress</span>
+            {props.running ? <LoaderCircle size={12} className="spin" /> : null}
+            {elapsed !== null ? (
+              <span className="ag-elapsed" title="Run elapsed time">
+                <Timer size={11} /> {formatElapsed(elapsed)}
               </span>
-              {statusText}
-            </div>
-          ) : null}
-
-          {commands.length ? (
-            <div className="ag-commands" aria-label="Terminal commands">
-              <div className="ag-subhead">
-                <Terminal size={12} /> Commands
-              </div>
-              {commands.map((row, index) => (
-                <div key={`${index}-${row.label}`} className={cn("ag-command", row.ok === true && "ok", row.ok === false && "fail")}>
-                  <span className="ag-command-prompt" aria-hidden="true">
-                    $
-                  </span>
-                  <code>{row.label}</code>
-                  <span className="ag-command-state">
-                    {row.ok === null ? <LoaderCircle size={11} className="spin" /> : row.ok ? <Check size={11} /> : <X size={11} />}
-                    {row.ok !== null && row.durationMs ? <span>{row.durationMs} ms</span> : null}
-                  </span>
-                </div>
-              ))}
-            </div>
-          ) : null}
-
-          {subagents.length ? (
-            <div className="ag-subagents" aria-label="Sub-agents">
-              <div className="ag-subhead">
-                <Users size={12} /> Sub-agents
-              </div>
-              {subagents.map((row, index) => (
-                <div key={`${index}-${row.task}`} className={cn("ag-subagent", row.ok === true && "ok", row.ok === false && "fail")}>
-                  <span title={row.task}>{row.task}</span>
-                  {row.ok === null ? <LoaderCircle size={11} className="spin" /> : row.ok ? <Check size={11} /> : <X size={11} />}
-                </div>
-              ))}
-            </div>
-          ) : null}
-
-          {lastRun ? (
-            <div className={cn("ag-last-run", lastRun.status)} role="status">
-              <div className="ag-last-run-head">
-                <Check size={12} />
-                <span>
-                  {lastRun.status === "done"
-                    ? `Completed in ${lastRun.steps} step${lastRun.steps === 1 ? "" : "s"}`
-                    : lastRun.status === "stopped"
-                      ? "Stopped before finishing"
-                      : "Run failed"}
+            ) : null}
+          </div>
+          <div className="ag-panel-body">
+            {statusText ? (
+              <div className="ag-status-line" role="status">
+                <span className="typing" aria-hidden="true">
+                  <i />
+                  <i />
+                  <i />
                 </span>
-                {lastRun.text && lastRunCopyKey ? (
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    onClick={() => props.onCopy(lastRun.text as string, lastRunCopyKey)}
-                    title="Copy final answer"
-                    aria-label="Copy final answer"
-                  >
-                    {props.copiedKey === lastRunCopyKey ? <Check size={12} /> : <Copy size={12} />}
-                  </button>
-                ) : null}
+                {statusText}
               </div>
-              {lastRun.text ? <p className="ag-last-run-text">{lastRun.text}</p> : null}
-            </div>
-          ) : null}
+            ) : null}
 
-          {props.todo.length ? (
-            <ol className="todo-list">
-              {props.todo.map((item, index) => (
-                <li key={`${index}-${item}`}>{item}</li>
-              ))}
-            </ol>
-          ) : (
-            <div className="empty-mini">
-              {props.running
-                ? "The agent can create a todo list with the todo tool."
-                : "No todo list yet — it appears when the agent plans its work."}
-            </div>
-          )}
-        </div>
-      </section>
+            {commands.length ? (
+              <div className="ag-commands" aria-label="Terminal commands">
+                <div className="ag-subhead">
+                  <Terminal size={12} /> Commands
+                </div>
+                {commands.map((row, index) => (
+                  <div key={`${index}-${row.label}`} className={cn("ag-command", row.ok === true && "ok", row.ok === false && "fail")}>
+                    <span className="ag-command-prompt" aria-hidden="true">
+                      $
+                    </span>
+                    <code>{row.label}</code>
+                    <span className="ag-command-state">
+                      {row.ok === null ? <LoaderCircle size={11} className="spin" /> : row.ok ? <Check size={11} /> : <X size={11} />}
+                      {row.ok !== null && row.durationMs ? <span>{row.durationMs} ms</span> : null}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
 
-      <section className="ag-panel ag-preview" aria-label="Preview">
-        <div className="ag-panel-head">
-          <Eye size={13} />
-          <span>Preview</span>
-          {props.previewUrl ? (
-            <span className="ag-panel-actions">
-              <button
-                type="button"
-                className="icon-btn"
-                onClick={props.onReloadPreview}
-                title="Reload preview"
-                aria-label="Reload preview"
-              >
-                <RefreshCw size={12} />
-              </button>
-              <button type="button" className="icon-btn" onClick={props.onClosePreview} aria-label="Close preview">
-                <X size={12} />
-              </button>
-            </span>
-          ) : null}
-        </div>
-        <div className="ag-panel-body">
-          {props.previewUrl ? (
-            <iframe
-              key={props.previewNonce}
-              className="ag-preview-frame"
-              src={props.previewUrl}
-              title="Local dev preview"
-              sandbox="allow-scripts allow-forms allow-same-origin"
-            />
-          ) : (
-            <div className="empty-mini ag-preview-empty">
-              When a run starts a local dev server (for example <code>npm run dev</code>), its page
-              opens here. Everything stays on this machine.
-            </div>
-          )}
-        </div>
-      </section>
+            {subagents.length ? (
+              <div className="ag-subagents" aria-label="Sub-agents">
+                <div className="ag-subhead">
+                  <Users size={12} /> Sub-agents
+                </div>
+                {subagents.map((row, index) => (
+                  <div key={`${index}-${row.task}`} className={cn("ag-subagent", row.ok === true && "ok", row.ok === false && "fail")}>
+                    <span title={row.task}>{row.task}</span>
+                    {row.ok === null ? <LoaderCircle size={11} className="spin" /> : row.ok ? <Check size={11} /> : <X size={11} />}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {lastRun ? (
+              <div className={cn("ag-last-run", lastRun.status)} role="status">
+                <div className="ag-last-run-head">
+                  <Check size={12} />
+                  <span>
+                    {lastRun.status === "done"
+                      ? `Completed in ${lastRun.steps} step${lastRun.steps === 1 ? "" : "s"}`
+                      : lastRun.status === "stopped"
+                        ? "Stopped before finishing"
+                        : "Run failed"}
+                  </span>
+                  {lastRun.text && lastRunCopyKey ? (
+                    <button
+                      type="button"
+                      className="icon-btn"
+                      onClick={() => props.onCopy(lastRun.text as string, lastRunCopyKey)}
+                      title="Copy final answer"
+                      aria-label="Copy final answer"
+                    >
+                      {props.copiedKey === lastRunCopyKey ? <Check size={12} /> : <Copy size={12} />}
+                    </button>
+                  ) : null}
+                </div>
+                {lastRun.text ? <p className="ag-last-run-text">{lastRun.text}</p> : null}
+              </div>
+            ) : null}
+
+            {props.todo.length ? (
+              <ol className="todo-list">
+                {props.todo.map((item, index) => (
+                  <li key={`${index}-${item}`}>{item}</li>
+                ))}
+              </ol>
+            ) : (
+              <div className="empty-mini">
+                {props.running
+                  ? "The agent can create a todo list with the todo tool."
+                  : "No todo list yet — it appears when the agent plans its work."}
+              </div>
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      {props.showPreview !== false ? (
+        <section className="ag-panel ag-preview" aria-label="Preview">
+          <div className="ag-panel-head">
+            <Eye size={13} />
+            <span>Preview</span>
+            {props.previewUrl ? (
+              <span className="ag-panel-actions">
+                <button
+                  type="button"
+                  className="icon-btn"
+                  onClick={props.onReloadPreview}
+                  title="Reload preview"
+                  aria-label="Reload preview"
+                >
+                  <RefreshCw size={12} />
+                </button>
+                <button type="button" className="icon-btn" onClick={props.onClosePreview} aria-label="Close preview">
+                  <X size={12} />
+                </button>
+              </span>
+            ) : null}
+          </div>
+          <div className="ag-panel-body">
+            {props.previewUrl ? (
+              <iframe
+                key={props.previewNonce}
+                className="ag-preview-frame"
+                src={props.previewUrl}
+                title="Local dev preview"
+                sandbox="allow-scripts allow-forms allow-same-origin"
+              />
+            ) : (
+              <div className="empty-mini ag-preview-empty">
+                When a run starts a local dev server (for example <code>npm run dev</code>), its page
+                opens here. Everything stays on this machine.
+              </div>
+            )}
+          </div>
+        </section>
+      ) : null}
     </div>
   )
 }

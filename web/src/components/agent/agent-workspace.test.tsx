@@ -149,18 +149,18 @@ function stageSession(): AgentSession {
 }
 
 describe("AgentStage", () => {
-  it("shows the empty state with task suggestions", () => {
+  it("shows the empty state (suggestions live in the composer chips now)", () => {
     const html = renderToStaticMarkup(
-      <AgentStage session={null} running={false} projectName="syntara" copiedKey={null} onCopy={noop} suggestions={["Audit this repository and list the riskiest spots"]} onSuggest={noop} />,
+      <AgentStage session={null} running={false} projectName="syntara" copiedKey={null} onCopy={noop} />,
     )
     expect(html).toContain("Give the agent a task.")
-    expect(html).toContain("Audit this repository and list the riskiest spots")
+    expect(html).not.toContain("ag-suggests")
     expect(html).toContain("permission first")
   })
 
   it("renders the turn as a right-aligned task with copy-only actions and the run stream", () => {
     const html = renderToStaticMarkup(
-      <AgentStage session={stageSession()} running={false} projectName="syntara" copiedKey={null} onCopy={noop} suggestions={[]} onSuggest={noop} />,
+      <AgentStage session={stageSession()} running={false} projectName="syntara" copiedKey={null} onCopy={noop} />,
     )
     expect(html).toContain("Fix the parser bug")
     expect(html).toContain('aria-label="Copy task"')
@@ -175,7 +175,7 @@ describe("AgentStage", () => {
     const session = stageSession()
     session.turns[0].status = "running"
     const html = renderToStaticMarkup(
-      <AgentStage session={session} running projectName="syntara" copiedKey={null} onCopy={noop} suggestions={[]} onSuggest={noop} />,
+      <AgentStage session={session} running projectName="syntara" copiedKey={null} onCopy={noop} />,
     )
     expect(html).toContain("ag-status-pill running")
     expect(html).toContain("ag-orb")
@@ -183,7 +183,7 @@ describe("AgentStage", () => {
 
   it("greets with the kicker, rotating line and robot illustration when empty", () => {
     const html = renderToStaticMarkup(
-      <AgentStage session={null} running={false} projectName="syntara" copiedKey={null} onCopy={noop} suggestions={[]} onSuggest={noop} />,
+      <AgentStage session={null} running={false} projectName="syntara" copiedKey={null} onCopy={noop} />,
     )
     expect(html).toContain("SYNTARA AGENT")
     expect(html).toContain("Local agents that can actually work.")

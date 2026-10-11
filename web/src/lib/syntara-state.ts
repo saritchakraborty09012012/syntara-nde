@@ -11,7 +11,7 @@ export interface StoredMessage {
   images?: string[]
   /* Text documents attached to a user turn (name + full text). Sent verbatim in
      every request that includes this message, so regenerations stay faithful. */
-  docs?: Array<{ name: string; content: string }>
+  docs?: Array<{ name: string; content: string; size?: number }>
   /* Generation ended before completion (stopped by the user, or the
      runtime failed mid-answer) - the transcript keeps the partial text
      and the UI offers Continue (track 2c). */
