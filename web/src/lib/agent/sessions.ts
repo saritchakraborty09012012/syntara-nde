@@ -29,6 +29,65 @@ export const AGENT_MODES: AgentModeInfo[] = [
   { id: "debug", label: "Debug", hint: "Full tools with emphasis on diagnosing failures" },
 ]
 
+/* Effort levels (redesign): how thoroughly the agent thinks before and
+   during a run. Each level contributes its own system-prompt instruction
+   on top of the mode prompt, and scales the step budget and temperature.
+   Ordered least to most deliberate; the default is "medium". */
+export type AgentEffort = "low" | "medium" | "high" | "extreme"
+
+export interface AgentEffortInfo {
+  id: AgentEffort
+  label: string
+  /* 2–3 word purpose shown next to/under the label. */
+  purpose: string
+}
+
+export const AGENT_EFFORTS: AgentEffortInfo[] = [
+  { id: "low", label: "Low", purpose: "Quick drafts" },
+  { id: "medium", label: "Medium", purpose: "Balanced default" },
+  { id: "high", label: "High", purpose: "Deep reasoning" },
+  { id: "extreme", label: "Extreme", purpose: "Max deliberation" },
+]
+
+export interface EffortPolicy {
+  /* Extra system-prompt instruction for the effort level. Combined with the
+     mode prompt, every mode×effort pair gets a distinct composite prompt. */
+  prompt: string
+  /* Step budget the run gets when the user has not pinned agentMaxSteps. */
+  maxSteps: number
+  /* Sampling temperature passed to the loop. */
+  temperature: number
+}
+
+export function effortPolicy(effort: AgentEffort): EffortPolicy {
+  switch (effort) {
+    case "low":
+      return {
+        prompt: "Effort: low — give a quick, direct draft. Prefer the first sound approach over exploring alternatives, and keep the answer short.",
+        maxSteps: 4,
+        temperature: 0.3,
+      }
+    case "medium":
+      return {
+        prompt: "Effort: medium — balance speed and care. Reason enough to stay correct, but do not over-explore once the approach is clear.",
+        maxSteps: 8,
+        temperature: 0.2,
+      }
+    case "high":
+      return {
+        prompt: "Effort: high — think deeply before acting. Check assumptions, consider edge cases, and verify your work before finishing.",
+        maxSteps: 14,
+        temperature: 0.15,
+      }
+    case "extreme":
+      return {
+        prompt: "Effort: extreme — deliberate at maximum depth. Explore multiple approaches, weigh trade-offs explicitly, test claims against the code, and self-critique before replying.",
+        maxSteps: 22,
+        temperature: 0.1,
+      }
+  }
+}
+
 export interface AgentTurn {
   id: string
   task: string

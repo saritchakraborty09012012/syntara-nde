@@ -6,7 +6,7 @@
 import { useRef } from "react"
 import { ArrowUp, ChevronDown, FileUp, Mic, Paperclip, Square, X } from "lucide-react"
 
-import { AGENT_MODES, type AgentMode } from "@/lib/agent/sessions"
+import { AGENT_EFFORTS, AGENT_MODES, type AgentEffort, type AgentMode } from "@/lib/agent/sessions"
 import { cn } from "@/lib/utils"
 
 const DOC_ACCEPT = ".txt,.md,.markdown,.csv,.json,.log,.py,.js,.jsx,.ts,.tsx,.html,.htm,.css,.scss,.yml,.yaml,.toml,.ini,.xml,.sh,.sql"
@@ -26,6 +26,10 @@ interface AgentComposerProps {
   disabled: boolean
   mode: AgentMode
   onModeChange: (mode: AgentMode) => void
+  /* Effort level (redesign): sits next to the mode dropdown and scales the
+     run's deliberation, step budget and temperature. */
+  effort: AgentEffort
+  onEffortChange: (effort: AgentEffort) => void
   model: string
   modelOptions: ComposerModelOption[]
   onModelChange: (model: string) => void
@@ -43,6 +47,7 @@ interface AgentComposerProps {
 export function AgentComposer(props: AgentComposerProps) {
   const fileRef = useRef<HTMLInputElement | null>(null)
   const modeInfo = AGENT_MODES.find((item) => item.id === props.mode) ?? AGENT_MODES[0]
+  const effortInfo = AGENT_EFFORTS.find((item) => item.id === props.effort) ?? AGENT_EFFORTS[1]
   const modelLabel = props.modelOptions.find((option) => option.value === props.model)?.label
     || props.model
     || "No model"
@@ -129,6 +134,22 @@ export function AgentComposer(props: AgentComposerProps) {
             >
               {AGENT_MODES.map((item) => (
                 <option key={item.id} value={item.id} title={item.hint}>{item.label}</option>
+              ))}
+            </select>
+          </span>
+
+          <span className="ag-chip select-chip" title={`Effort: ${effortInfo.purpose}`}>
+            <span className="ag-chip-label">{effortInfo.label}</span>
+            <ChevronDown size={12} className="ag-chip-caret" aria-hidden="true" />
+            <select
+              value={props.effort}
+              onChange={(event) => props.onEffortChange(event.target.value as AgentEffort)}
+              aria-label="Agent effort"
+            >
+              {AGENT_EFFORTS.map((item) => (
+                <option key={item.id} value={item.id} title={item.purpose}>
+                  {item.label} — {item.purpose}
+                </option>
               ))}
             </select>
           </span>

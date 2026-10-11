@@ -1,6 +1,6 @@
 /* Type-only edge to the agent session model (AgentMode); erased at compile
    time, so there is no runtime cycle with sessions.ts → createId. */
-import type { AgentMode } from "./agent/sessions"
+import type { AgentEffort, AgentMode } from "./agent/sessions"
 
 export type ThemeMode = "dark" | "light" | "system"
 
@@ -167,6 +167,9 @@ export interface AppSettings {
      composer and the per-run step budget. Optional so legacy states load. */
   agentDefaultMode?: AgentMode
   agentMaxSteps?: number
+  /* Effort level (redesign): scales deliberation, step budget and
+     temperature per run. Absent = "medium". */
+  agentEffort?: AgentEffort
   /* Approval mode for gated agent tools (phase 3 settings): "ask" (default)
      prompts per gated call; "auto" answers "once" for every prompt without
      a dialog. The nudge popup appears after repeated asks and its choice

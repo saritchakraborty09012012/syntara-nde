@@ -82,6 +82,8 @@ function composerProps(overrides: Partial<ComponentProps<typeof AgentComposer>> 
     disabled: false,
     mode: "build" as const,
     onModeChange: noop,
+    effort: "medium" as const,
+    onEffortChange: noop,
     model: "qwen-local",
     modelOptions: [{ value: "qwen-local", label: "Qwen" }],
     onModelChange: noop,
@@ -97,11 +99,13 @@ function composerProps(overrides: Partial<ComponentProps<typeof AgentComposer>> 
 }
 
 describe("AgentComposer", () => {
-  it("renders the control row: attach, mode, model, mic, send", () => {
+  it("renders the control row: attach, mode, effort, model, mic, send", () => {
     const html = renderToStaticMarkup(<AgentComposer {...composerProps({ mode: "plan" })} />)
     expect(html).toContain('aria-label="Attach files"')
     expect(html).toContain('aria-label="Agent mode"')
     expect(html).toContain(">Plan</option>")
+    expect(html).toContain('aria-label="Agent effort"')
+    expect(html).toContain("Medium — Balanced default")
     expect(html).toContain('aria-label="Model"')
     expect(html).toContain("Qwen")
     expect(html).toContain('aria-label="Start voice typing"')

@@ -119,9 +119,11 @@ import { agentToolsAvailable } from "@/lib/agent-tools"
 import type { GrantStore, PermissionDecision } from "@/lib/agent/permissions"
 import {
   AGENT_MODES,
+  AGENT_EFFORTS,
   createSession,
   createTurn,
   deleteSession as deleteStoredSession,
+  effortPolicy,
   loadManifest,
   loadSession,
   modePolicy,
@@ -130,6 +132,7 @@ import {
   setActiveSession as setActiveStoredSession,
   suggestSessionTitle,
   titleFromTask,
+  type AgentEffort,
   type AgentMode,
   type AgentSession,
   type AgentTurn,
@@ -561,7 +564,12 @@ export default function App() {
   /* Agent mode's current composer mode follows the persisted default so the
      Settings card and the composer dropdown always show the same value. */
   const agentMode: AgentMode = state.settings.agentDefaultMode ?? "build"
-  const agentMaxSteps = state.settings.agentMaxSteps ?? 8
+  /* Effort level (redesign): drives the extra system-prompt instruction,
+     the temperature and — when the user has not pinned agentMaxSteps —
+     the per-run step budget. */
+  const agentEffort: AgentEffort = state.settings.agentEffort ?? "medium"
+  const effort = effortPolicy(agentEffort)
+  const agentMaxSteps = state.settings.agentMaxSteps ?? effort.maxSteps
 
   /* Agent sessions persist per key with a debounce (the lib trims oversized
      transcripts); the pointer lives in the manifest. */
@@ -868,10 +876,11 @@ export default function App() {
     return { status: turn.status, steps, text }
   }, [activeAgentSession])
   const modeLabelNow = AGENT_MODES.find((item) => item.id === agentMode)?.label ?? agentMode
+  const effortLabelNow = AGENT_EFFORTS.find((item) => item.id === agentEffort)?.label ?? agentEffort
   const agentSpeed = metrics?.kind === "agent" && metrics.tokensPerSec > 0 ? ` · ${metrics.tokensPerSec.toFixed(1)} tok/s` : ""
   const composerHint = agentBusy
-    ? `${modeLabelNow} mode · running…`
-    : `${modeLabelNow} mode · max ${agentMaxSteps} steps${agentSpeed}`
+    ? `${modeLabelNow} · ${effortLabelNow} · running…`
+    : `${modeLabelNow} · ${effortLabelNow} · max ${agentMaxSteps} steps${agentSpeed}`
 
   useEffect(() => {
     if (!connected) return
@@ -1819,6 +1828,9 @@ export default function App() {
     const sessionGrants = new Set<string>()
     const agent = state.agents[0]
     const basePrompt = agent?.systemPrompt || defaultAgent.systemPrompt
+    /* Mode × effort: the base agent prompt stays intact and each level adds
+       its own instruction, so every pair gets a distinct composite. */
+    const composedPrompt = `${basePrompt}\n\n${policy.prompt}\n\n${effort.prompt}`
     /* Tracks whether submit_plan already produced the plan dock content,
        so the plan-mode text fallback only runs when it did not. */
     let planSubmitted = false
@@ -1826,7 +1838,7 @@ export default function App() {
       const result = await runAgentLoop({
         baseUrl: state.settings.baseUrl,
         model,
-        systemPrompt: `${basePrompt}\n\n${policy.prompt}`,
+        systemPrompt: composedPrompt,
         task,
         tools,
         executor: createAgentExecutor(root, {
@@ -1926,6 +1938,7 @@ export default function App() {
         signal: controller.signal,
         onEvent: (event) => pushTurnEvent(patched.id, turn.id, event),
         maxSteps: agentMaxSteps,
+        temperature: effort.temperature,
         maxTokens,
       })
       const totalMs = performance.now() - started
@@ -2634,6 +2647,8 @@ export default function App() {
                 disabled={!selectedModel}
                 mode={agentMode}
                 onModeChange={(mode) => updateSettings({ agentDefaultMode: mode })}
+                effort={agentEffort}
+                onEffortChange={(level) => updateSettings({ agentEffort: level })}
                 model={effectiveModel}
                 modelOptions={agentModelOptions}
                 onModelChange={(id) => {

@@ -5,6 +5,7 @@ import {
   createSession,
   createTurn,
   deleteSession,
+  effortPolicy,
   filterSessions,
   groupSessions,
   groupSessionsByFolder,
@@ -52,6 +53,29 @@ describe("modePolicy", () => {
     const prompts = ["build", "plan", "explain", "chat", "debug"].map((mode) => modePolicy(mode as never).prompt)
     expect(new Set(prompts).size).toBe(prompts.length)
     expect(prompts.every((prompt) => prompt.length > 20)).toBe(true)
+  })
+})
+
+describe("effortPolicy", () => {
+  it("gives each effort level a distinct prompt, step budget and temperature", () => {
+    const levels = ["low", "medium", "high", "extreme"] as const
+    const policies = levels.map(effortPolicy)
+    const prompts = policies.map((policy) => policy.prompt)
+    expect(new Set(prompts).size).toBe(prompts.length)
+    expect(policies.every((policy) => policy.prompt.length > 20)).toBe(true)
+    /* Step budgets and temperatures are monotonic: more effort, more steps,
+       less sampling noise. */
+    expect(policies.map((policy) => policy.maxSteps)).toEqual([4, 8, 14, 22])
+    expect(policies.map((policy) => policy.temperature)).toEqual([0.3, 0.2, 0.15, 0.1])
+  })
+
+  it("composes with every mode into a unique pair (mode×effort distinct)", () => {
+    const modes = ["build", "plan", "explain", "chat", "debug"] as const
+    const levels = ["low", "medium", "high", "extreme"] as const
+    const composites = modes.flatMap((mode) =>
+      levels.map((level) => `${modePolicy(mode).prompt}\n\n${effortPolicy(level).prompt}`),
+    )
+    expect(new Set(composites).size).toBe(composites.length)
   })
 })
 
