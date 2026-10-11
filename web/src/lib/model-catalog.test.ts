@@ -130,3 +130,51 @@ describe("model catalog", () => {
     }
   })
 })
+
+/* Phase 5 curation repair (2026-10-10): the five entries re-verified against
+   the HF API. Duplicated weight sets are gone (original/ copies of the same
+   checkpoint), the misfiled guardrail is out of the Aya family, and the
+   specialty checkpoints carry honest parameters plus capability tags. */
+describe("phase 5 catalog repair", () => {
+  const find = (family: string, repo: string) => modelCatalog[family].find((model) => model.repo === repo)
+
+  it("keeps only the canonical sharded set for gpt-oss checkpoints", () => {
+    const gpt20 = find("gpt-oss-local", "openai/gpt-oss-20b")
+    expect(gpt20?.files.map((file) => file.label)).toEqual([
+      "model-00000-of-00002.safetensors",
+      "model-00001-of-00002.safetensors",
+      "model-00002-of-00002.safetensors",
+    ])
+    expect(gpt20?.size).toBe("12.8 GB")
+
+    const gpt120 = find("gpt-oss-local", "openai/gpt-oss-120b")
+    expect(gpt120?.files).toHaveLength(15)
+    expect(gpt120?.files.some((file) => file.label.startsWith("original/"))).toBe(false)
+    expect(gpt120?.size).toBe("60.8 GB")
+  })
+
+  it("no longer files a guardrail classifier under Cohere Aya", () => {
+    expect(modelCatalog["aya-local"].map((model) => model.repo)).toEqual([
+      "CohereForAI/aya-23-8B",
+      "CohereForAI/aya-23-35B",
+    ])
+    const repos = Object.values(modelCatalog).flat().map((model) => model.repo)
+    expect(repos).not.toContain("convaiinnovations/laya")
+  })
+
+  it("describes the specialty checkpoints honestly", () => {
+    const ltx = find("ltx-local", "Lightricks/LTX-2.5")
+    expect(ltx).toMatchObject({
+      bRating: "22B",
+      parameters: "22B",
+      size: "187.1 GB (all variants)",
+      gated: true,
+      capabilities: ["video*"],
+    })
+
+    const drive = find("qwen-local", "Qwen/Qwen-Drive-1.0-4B")
+    expect(drive?.capabilities).toEqual(["text", "vision*"])
+    expect(drive?.files).toHaveLength(4)
+    expect(drive?.size).toBe("12.8 GB")
+  })
+})

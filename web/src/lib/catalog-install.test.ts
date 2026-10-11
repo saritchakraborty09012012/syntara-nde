@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { catalogFileTarget, downloadableCheckpoints } from "./catalog-install"
+import { catalogCapabilities, catalogFileTarget, downloadableCheckpoints } from "./catalog-install"
 import { modelCatalog } from "./model-catalog"
 
 describe("catalog install helpers", () => {
@@ -34,5 +34,17 @@ describe("catalog install helpers", () => {
   it("labels a single-file checkpoint with the repo itself", () => {
     const single = modelCatalog["gpt2-local"][0]
     expect(catalogFileTarget(single, single.files[0]).name).toBe(single.repo)
+  })
+
+  it("resolves capability tags checkpoint-first, then family, then a text floor", () => {
+    const drive = modelCatalog["qwen-local"].find((model) => model.repo === "Qwen/Qwen-Drive-1.0-4B")
+    const qwenFamily = { capabilities: ["text", "vision*", "tools*", "long-context*"] }
+    expect(catalogCapabilities(drive!, qwenFamily)).toEqual(["text", "vision*"])
+
+    const plain = modelCatalog["qwen-local"].find((model) => model.repo === "Qwen/Qwen2-7B")
+    expect(catalogCapabilities(plain!, qwenFamily)).toEqual(["text", "vision*", "tools*", "long-context*"])
+
+    expect(catalogCapabilities(modelCatalog["gpt2-local"][0], { capabilities: [] })).toEqual(["text"])
+    expect(catalogCapabilities(modelCatalog["gpt2-local"][0])).toEqual(["text"])
   })
 })

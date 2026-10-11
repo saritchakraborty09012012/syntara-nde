@@ -1,5 +1,5 @@
-/* Checkpoint-level install helpers shared by the model card and the family
-   page. Kept out of model-catalog.ts because that file is generated and must
+/* Checkpoint-level helpers shared by the model card and the family page.
+   Kept out of model-catalog.ts because that file is generated and must
    never be edited by hand.
 
    A "checkpoint" is one catalog entry (one repo, possibly sharded into several
@@ -23,4 +23,18 @@ export function catalogFileTarget(model: CatalogModel, file: CatalogFile): { nam
     name: model.files.length === 1 ? model.repo : `${model.repo} · ${file.label}`,
     filename: `${model.repo.replace(/\//g, "_")}_${segment}`,
   }
+}
+
+/* Capability tags for the family table's Capabilities column. A checkpoint's
+   own tags win (they are set where the family's claims would overpromise);
+   otherwise the family seed's curated tags apply; families seeded through
+   emptyFamily fall back to a bare "text" floor so the column never renders
+   blank for a text-generation family. "*" marks variant-dependent tags. */
+export function catalogCapabilities(
+  model: CatalogModel,
+  family?: { capabilities: string[] } | null,
+): string[] {
+  if (model.capabilities?.length) return model.capabilities
+  if (family?.capabilities?.length) return family.capabilities
+  return ["text"]
 }

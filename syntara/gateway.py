@@ -47,6 +47,9 @@ _RESTART_LIMIT = 3
 
 # Origins the desktop/dev UI legitimately come from; anything else gets no
 # CORS grant (AGENTS §26: accidental exposure is a bug, not a default).
+# The deployed site playground talks to the user's local gateway, so its
+# origin is granted explicitly - still only for browsers that the user's own
+# gateway answers, which stays loopback-bound.
 DEFAULT_CORS_ORIGINS = (
     "http://127.0.0.1:5173",
     "http://localhost:5173",
@@ -54,6 +57,7 @@ DEFAULT_CORS_ORIGINS = (
     "http://localhost:8000",
     "http://tauri.localhost",
     "tauri://localhost",
+    "https://syntara-nde.vercel.app",
 )
 
 _PROFILE_WINDOW = 120
@@ -906,6 +910,13 @@ class _Responder:
                                "GET, POST, OPTIONS")
             self.h.send_header("Access-Control-Allow-Headers",
                                "content-type, authorization, x-request-id")
+            # Private Network Access: a page on the public web reaching a
+            # loopback endpoint triggers a preflight that asks for the
+            # private-network permission; without echoing this header the
+            # browser blocks the real request even though CORS itself was
+            # granted. Only granted origins ever reach this branch.
+            if self.h.headers.get("Access-Control-Request-Private-Network"):
+                self.h.send_header("Access-Control-Allow-Private-Network", "true")
             # Browsers hide non-safelisted response headers from cross-origin
             # JS unless they are listed here (the desktop UI and the dev
             # server are both cross-origin to localhost). Without this,

@@ -114,6 +114,16 @@ class GatewayTest(unittest.TestCase):
         except urllib.error.HTTPError as exc:
             return exc.code, dict(exc.headers), exc.read()
 
+    def options(self, gw: HostGateway, path: str, headers: dict | None = None):
+        """CORS preflight round-trip (browser sends no body, expects 204)."""
+        req = urllib.request.Request(gw.url + path, method="OPTIONS",
+                                     headers=headers or {})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.status, dict(resp.headers), resp.read()
+        except urllib.error.HTTPError as exc:
+            return exc.code, dict(exc.headers), exc.read()
+
     # --------------------------------------------------------------- health
 
     def test_health_reports_ready_and_scheduler_shape(self):
@@ -425,6 +435,44 @@ class GatewayTest(unittest.TestCase):
                                  headers={"Origin": "https://evil.example"})
         self.assertIsNone(headers.get("Access-Control-Allow-Origin"))
         self.assertIsNone(headers.get("Access-Control-Expose-Headers"))
+
+    def test_cors_grants_deployed_site_origin(self):
+        gw = self.start_gateway()
+        status, headers, _ = self.get(
+            gw, "/health",
+            headers={"Origin": "https://syntara-nde.vercel.app"})
+        self.assertEqual(status, 200)
+        self.assertEqual(headers.get("Access-Control-Allow-Origin"),
+                         "https://syntara-nde.vercel.app")
+
+    def test_pna_preflight_is_answered_only_for_granted_origins(self):
+        gw = self.start_gateway()
+        preflight = {
+            "Origin": "https://syntara-nde.vercel.app",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Private-Network": "true",
+        }
+        status, headers, _ = self.options(gw, "/v1/chat/completions",
+                                          headers=preflight)
+        self.assertEqual(status, 204)
+        self.assertEqual(headers.get("Access-Control-Allow-Origin"),
+                         "https://syntara-nde.vercel.app")
+        self.assertEqual(headers.get("Access-Control-Allow-Private-Network"),
+                         "true")
+
+        # No PNA request -> no PNA grant (the header is an answer, not a
+        # standing capability).
+        preflight.pop("Access-Control-Request-Private-Network")
+        _, headers, _ = self.options(gw, "/v1/chat/completions",
+                                     headers=preflight)
+        self.assertIsNone(headers.get("Access-Control-Allow-Private-Network"))
+
+        # Unknown origin -> no CORS grant at all, PNA or otherwise.
+        preflight["Origin"] = "https://evil.example"
+        _, headers, _ = self.options(gw, "/v1/chat/completions",
+                                     headers=preflight)
+        self.assertIsNone(headers.get("Access-Control-Allow-Origin"))
+        self.assertIsNone(headers.get("Access-Control-Allow-Private-Network"))
 
     def test_api_key_enforced_when_configured(self):
         gw = HostGateway(_entry(), port=0, runtime_factory=FakeRuntime,

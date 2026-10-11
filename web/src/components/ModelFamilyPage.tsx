@@ -1,7 +1,7 @@
 import { Fragment, useState } from "react"
 import { ArrowLeft, Download, ExternalLink, Link2, Package } from "lucide-react"
 import { modelCatalog, type CatalogFile, type CatalogModel } from "@/lib/model-catalog"
-import { catalogFileTarget } from "@/lib/catalog-install"
+import { catalogFileTarget, catalogCapabilities } from "@/lib/catalog-install"
 import { qdmAvailable } from "@/lib/native-download"
 import { DownloadProgress } from "@/components/DownloadProgress"
 import type { DownloadTask, ModelMeta } from "@/lib/syntara-state"
@@ -110,6 +110,7 @@ export function ModelFamilyPage({ family, familyId, onBack, onDownload, activeTa
                 <th>B rating</th>
                 <th>Parameters</th>
                 <th>Size on disk</th>
+                <th>Capabilities</th>
                 <th>Download</th>
               </tr>
             </thead>
@@ -131,6 +132,7 @@ export function ModelFamilyPage({ family, familyId, onBack, onDownload, activeTa
                       <td>{model.bRating}</td>
                       <td>{model.parameters}</td>
                       <td>{model.size}</td>
+                      <td className="ft-caps">{catalogCapabilities(model, family).join(", ")}</td>
                       <td className="ft-actions">
                         {model.missing ? (
                           <button className="ghost-btn small" disabled title="This repository is no longer available on Hugging Face">
@@ -174,7 +176,7 @@ export function ModelFamilyPage({ family, familyId, onBack, onDownload, activeTa
                     </tr>
                     {!single && !model.gated && !model.missing && expanded && (
                       <tr className="ft-files-row">
-                        <td colSpan={5}>
+                        <td colSpan={6}>
                           <div className="ft-files">
                             <p className="ft-files-note">
                               Sharded checkpoint — every listed file is required. Each button downloads one file to the
@@ -197,6 +199,7 @@ export function ModelFamilyPage({ family, familyId, onBack, onDownload, activeTa
               })}
             </tbody>
           </table>
+          <p className="ft-cap-note">Capabilities marked * depend on the checkpoint variant.</p>
         </div>
       )}
     </section>

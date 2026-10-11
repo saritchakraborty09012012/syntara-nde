@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react"
 import { Container } from "./ui"
 
-const LINKS: Array<{ id: string; label: string }> = [
+const LINKS: Array<{ id: string; label: string; page?: string }> = [
   { id: "why", label: "Why" },
   { id: "install", label: "Install" },
   { id: "models", label: "Models" },
   { id: "agents", label: "Agents" },
   { id: "developers", label: "Developers" },
+  // Standalone page rather than a landing-page anchor: same nav works from
+  // every page because `home` prefixes it ("./" on subpages, "" at the root).
+  { id: "playground", label: "Playground", page: "playground.html" },
   { id: "open", label: "Open source" },
   { id: "faq", label: "FAQ" },
   { id: "roadmap", label: "Roadmap" },
@@ -54,7 +57,11 @@ export function Nav({ home = "" }: { home?: string }) {
 
         <nav className="hidden flex-1 items-center justify-center gap-6 lg:flex" aria-label="Primary">
           {LINKS.map((link) => (
-            <a key={link.id} href={`${home}#${link.id}`} className="nav-link">
+            <a
+              key={link.id}
+              href={link.page ? `${home}${link.page}` : `${home}#${link.id}`}
+              className="nav-link"
+            >
               {link.label}
             </a>
           ))}

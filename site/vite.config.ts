@@ -54,10 +54,10 @@ export default defineConfig({
   base: "./",
   plugins: [react(), tailwindcss(), serveOnlineApp()],
   resolve: { alias: { "@": path.resolve(siteRoot, "./src") } },
-  // Multi-page build: the landing page plus the standalone About / Privacy / FAQ
-  // pages. All four sit at the root of the output, so the relative asset base
-  // keeps working on the custom domain, on GitHub Pages project paths and in
-  // any subdirectory.
+  // Multi-page build: the landing page plus the standalone About / Privacy /
+  // FAQ / Playground pages. All five sit at the root of the output, so the
+  // relative asset base keeps working on the custom domain, on GitHub Pages
+  // project paths and in any subdirectory.
   build: {
     rollupOptions: {
       input: {
@@ -65,6 +65,7 @@ export default defineConfig({
         about: path.resolve(siteRoot, "about.html"),
         privacy: path.resolve(siteRoot, "privacy.html"),
         faq: path.resolve(siteRoot, "faq.html"),
+        playground: path.resolve(siteRoot, "playground.html"),
       },
     },
   },

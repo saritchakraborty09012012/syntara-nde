@@ -240,6 +240,8 @@ a { color: inherit; text-decoration: none; }
 .ft-files-note { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
 .ft-file { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255,255,255,.02); }
 .ft-file-label { font-family: 'Share Tech Mono', ui-monospace, monospace; font-size: 11px; color: var(--muted); word-break: break-all; }
+.ft-caps { color: var(--muted); white-space: nowrap; }
+.ft-cap-note { margin: 8px 2px 0; color: var(--muted-2); font-size: 11px; letter-spacing: .02em; }
 :root[data-theme="light"] .ft-files-row > td { background: rgba(17,24,39,.04); }
 
 .download-list { display: grid; gap: 9px; }.download-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 12px; }.download-main { min-width: 0; }.download-main strong { display: block; font-size: 14px; }.download-main > span { display: block; color: var(--muted-2); font-size: 13px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }.progress-track { height: 6px; background: rgba(255,255,255,.06); border-radius: 99px; margin-top: 8px; overflow: hidden; }.progress-track span { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); border-radius: inherit; }.download-status { color: var(--muted); text-transform: uppercase; letter-spacing: .08em; font-size: 13px; }

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#020409" />
+    <title>Playground — Chat with your local Syntara model | NDe</title>
+    <meta
+      name="description"
+      content="A minimal OpenAI-compatible playground for Syntara's local gateway: connect this page to the Syntara on your machine, pick a loaded model and stream a chat conversation. Prompts stay on your hardware — no account, no relay."
+    />
+    <meta
+      name="keywords"
+      content="Syntara playground, local AI playground, OpenAI-compatible local API, run LLM locally, chat with local model, NDe, NoirDemons"
+    />
+    <meta name="author" content="NDe" />
+    <link rel="canonical" href="https://syntara-nde.vercel.app/playground.html" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Syntara by NDe" />
+    <meta property="og:title" content="Playground — Chat with your local Syntara model | NDe" />
+    <meta
+      property="og:description"
+      content="Connect this page to the Syntara gateway running on your machine and stream a chat conversation from your own model. Prompts never leave your hardware."
+    />
+    <meta property="og:image" content="syntara-suit.png" />
+    <meta property="og:url" content="https://syntara-nde.vercel.app/playground.html" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Playground — Chat with your local Syntara model | NDe" />
+    <meta
+      name="twitter:description"
+      content="Connect this page to the Syntara gateway running on your machine and stream a chat conversation from your own model. Prompts never leave your hardware."
+    />
+    <meta name="twitter:image" content="syntara-suit.png" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebPage",
+        "name": "Syntara Playground",
+        "url": "https://syntara-nde.vercel.app/playground.html",
+        "description": "A minimal OpenAI-compatible playground that talks to the Syntara local gateway on your own machine.",
+        "isPartOf": {
+          "@type": "WebSite",
+          "name": "Syntara by NDe",
+          "url": "https://syntara-nde.vercel.app/"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "NDe",
+          "alternateName": ["NoirDemons", "node"],
+          "url": "https://github.com/saritchakraborty09012012"
+        },
+        "license": "https://opensource.org/licenses/MIT"
+      }
+    </script>
+    <link rel="icon" type="image/png" href="syntara-logo.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Chakra+Petch:wght@400;500;600;700&family=Share+Tech+Mono&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      // Apply saved theme before first paint (default: dark).
+      (function () {
+        try {
+          var t = localStorage.getItem("syntara-theme");
+          document.documentElement.dataset.theme = t === "light" ? "light" : "dark";
+        } catch (e) {
+          document.documentElement.dataset.theme = "dark";
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <noscript>
+      <main>
+        <h1>Syntara Playground — chat with your local model</h1>
+        <p>
+          This page is a minimal chat client for the OpenAI-compatible API that Syntara
+          exposes on your own machine. It needs JavaScript to stream responses from your
+          local gateway at <code>http://127.0.0.1:8000</code>.
+        </p>
+        <ul>
+          <li>Start the Syntara desktop app and enable the local API server in Settings.</li>
+          <li>Load a model, then open this page and press Connect.</li>
+          <li>Your prompts go from this tab to your machine only — nothing is relayed.</li>
+        </ul>
+        <p>
+          Enable JavaScript for the interactive playground, or read the API docs in the
+          <a href="https://github.com/saritchakraborty09012012/syntara-nde">repository</a>.
+        </p>
+      </main>
+    </noscript>
+    <div id="root"></div>
+    <script type="module" src="/src/entries/playground.tsx"></script>
+  </body>
+</html>

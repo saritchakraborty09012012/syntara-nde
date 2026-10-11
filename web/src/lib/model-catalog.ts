@@ -1,6 +1,9 @@
 /* Model catalog — GENERATED from Syntara_Model_Catalog_With_Params_Size.txt
    and verified against the Hugging Face API (file lists, sizes, access flags)
-   on 2026-09-28. Do not edit by hand; regenerate when the source changes.
+   on 2026-09-28; Phase 5 curation repair on 2026-10-10 (duplicate weight
+   sets dropped, misfiled entries removed, capabilities tags added).
+   The original source file is gone — run tools/verify_catalog.py against
+   this file instead of regenerating.
 
    Download URLs are data-only on purpose: the UI renders Download buttons
    that read these URLs at click time, never <a href> links, so the links are
@@ -22,6 +25,9 @@ export interface CatalogModel {
   gated?: boolean
   /** Repo or weight files no longer exist on Hugging Face (download would 404). */
   missing?: boolean
+  /** Conservative capability tags for this checkpoint. A "*" suffix means the
+      tag depends on the checkpoint variant. Absent = the family's tags. */
+  capabilities?: string[]
   files: CatalogFile[]
 }
 
@@ -45,7 +51,7 @@ export const modelCatalog: Record<string, CatalogModel[]> = {
       "repo": "openai/gpt-oss-20b",
       "bRating": "20B",
       "parameters": "20B",
-      "size": "25.6 GB",
+      "size": "12.8 GB",
       "files": [
         {
           "label": "model-00000-of-00002.safetensors",
@@ -58,10 +64,6 @@ export const modelCatalog: Record<string, CatalogModel[]> = {
         {
           "label": "model-00002-of-00002.safetensors",
           "url": "https://huggingface.co/openai/gpt-oss-20b/resolve/main/model-00002-of-00002.safetensors?download=true"
-        },
-        {
-          "label": "original/model.safetensors",
-          "url": "https://huggingface.co/openai/gpt-oss-20b/resolve/main/original/model.safetensors?download=true"
         }
       ]
     },
@@ -69,7 +71,7 @@ export const modelCatalog: Record<string, CatalogModel[]> = {
       "repo": "openai/gpt-oss-120b",
       "bRating": "120B",
       "parameters": "120B",
-      "size": "121.5 GB",
+      "size": "60.8 GB",
       "files": [
         {
           "label": "model-00000-of-00014.safetensors",
@@ -130,34 +132,6 @@ export const modelCatalog: Record<string, CatalogModel[]> = {
         {
           "label": "model-00014-of-00014.safetensors",
           "url": "https://huggingface.co/openai/gpt-oss-120b/resolve/main/model-00014-of-00014.safetensors?download=true"
-        },
-        {
-          "label": "original/model--00001-of-00007.safetensors",
-          "url": "https://huggingface.co/openai/gpt-oss-120b/resolve/main/original/model--00001-of-00007.safetensors?download=true"
-        },
-        {
-          "label": "original/model--00002-of-00007.safetensors",
-          "url": "https://huggingface.co/openai/gpt-oss-120b/resolve/main/original/model--00002-of-00007.safetensors?download=true"
-        },
-        {
-          "label": "original/model--00003-of-00007.safetensors",
-          "url": "https://huggingface.co/openai/gpt-oss-120b/resolve/main/original/model--00003-of-00007.safetensors?download=true"
-        },
-        {
-          "label": "original/model--00004-of-00007.safetensors",
-          "url": "https://huggingface.co/openai/gpt-oss-120b/resolve/main/original/model--00004-of-00007.safetensors?download=true"
-        },
-        {
-          "label": "original/model--00005-of-00007.safetensors",
-          "url": "https://huggingface.co/openai/gpt-oss-120b/resolve/main/original/model--00005-of-00007.safetensors?download=true"
-        },
-        {
-          "label": "original/model--00006-of-00007.safetensors",
-          "url": "https://huggingface.co/openai/gpt-oss-120b/resolve/main/original/model--00006-of-00007.safetensors?download=true"
-        },
-        {
-          "label": "original/model--00007-of-00007.safetensors",
-          "url": "https://huggingface.co/openai/gpt-oss-120b/resolve/main/original/model--00007-of-00007.safetensors?download=true"
         }
       ]
     }
@@ -7859,6 +7833,7 @@ export const modelCatalog: Record<string, CatalogModel[]> = {
       "bRating": "4B",
       "parameters": "4B",
       "size": "12.8 GB",
+      "capabilities": ["text", "vision*"],
       "files": [
         {
           "label": "model.safetensors",
@@ -11027,26 +11002,6 @@ export const modelCatalog: Record<string, CatalogModel[]> = {
         }
       ],
       "gated": true
-    },
-    {
-      "repo": "convaiinnovations/laya",
-      "bRating": "Unknown",
-      "parameters": "Unknown",
-      "size": "2.2 GB",
-      "files": [
-        {
-          "label": "model.safetensors",
-          "url": "https://huggingface.co/convaiinnovations/laya/resolve/main/model.safetensors?download=true"
-        },
-        {
-          "label": "multilingual/model.safetensors",
-          "url": "https://huggingface.co/convaiinnovations/laya/resolve/main/multilingual/model.safetensors?download=true"
-        },
-        {
-          "label": "typed-decisions/model.safetensors",
-          "url": "https://huggingface.co/convaiinnovations/laya/resolve/main/typed-decisions/model.safetensors?download=true"
-        }
-      ]
     }
   ],
   "other-open-weight-local": [
@@ -11259,9 +11214,10 @@ export const modelCatalog: Record<string, CatalogModel[]> = {
   "ltx-local": [
     {
       "repo": "Lightricks/LTX-2.5",
-      "bRating": "Unknown",
-      "parameters": "Unknown",
-      "size": "187.1 GB",
+      "bRating": "22B",
+      "parameters": "22B",
+      "size": "187.1 GB (all variants)",
+      "capabilities": ["video*"],
       "files": [
         {
           "label": "diffusion_models/ltx-2.5-22b-dev-transformer-bf16.safetensors",
