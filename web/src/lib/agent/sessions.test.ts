@@ -7,6 +7,7 @@ import {
   deleteSession,
   filterSessions,
   groupSessions,
+  groupSessionsByFolder,
   loadManifest,
   loadSession,
   MAX_EVENTS_PER_TURN,
@@ -184,6 +185,31 @@ describe("groupSessions", () => {
 
   it("returns no groups when there is nothing to show", () => {
     expect(groupSessions([], Date.now())).toEqual([])
+  })
+})
+
+describe("groupSessionsByFolder", () => {
+  it("groups by project folder, newest sessions first, active folder on top", () => {
+    const now = Date.now()
+    const groups = groupSessionsByFolder(
+      [
+        { id: "a", title: "in mail", createdAt: now, updatedAt: now - 5000, folderId: "p2", folderName: "Mail" },
+        { id: "b", title: "in landing", createdAt: now, updatedAt: now - 1000, folderId: "p1", folderName: "Landing" },
+        { id: "c", title: "older landing", createdAt: now, updatedAt: now - 9000, folderId: "p1", folderName: "Landing" },
+        { id: "d", title: "orphan", createdAt: now, updatedAt: now - 2000 },
+      ],
+      "a",
+    )
+    expect(groups.map((group) => group.label)).toEqual(["Mail", "Landing", "No folder"])
+    expect(groups[1].entries.map((entry) => entry.id)).toEqual(["b", "c"])
+    expect(groups[2].entries[0].id).toBe("d")
+  })
+
+  it("defaults a folderless entry under the No folder label", () => {
+    const groups = groupSessionsByFolder([{ id: "x", title: "t", createdAt: 1, updatedAt: 1 }], null)
+    expect(groups).toHaveLength(1)
+    expect(groups[0].label).toBe("No folder")
+    expect(groups[0].folderId).toBeNull()
   })
 })
 

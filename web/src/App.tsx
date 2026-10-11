@@ -846,6 +846,8 @@ export default function App() {
       updatedAt: item.updatedAt,
       /* Sidebar search blob: same 2 KB cap the persisted manifest uses. */
       text: item.turns.map((turn) => turn.task).join("\n").slice(0, 2000),
+      folderId: item.folderId ?? null,
+      folderName: item.folderName ?? null,
     })),
     [agentSessions],
   )
@@ -1620,7 +1622,7 @@ export default function App() {
     if (current) {
       try { saveSession(current) } catch { /* trimmed retry inside the lib */ }
     }
-    const session = createSession(effectiveModel || null)
+    const session = createSession(effectiveModel || null, Date.now(), activeProject ? { id: activeProject.id, name: activeProject.name } : null)
     setAgentSessions((list) => [session, ...list])
     setActiveSessionId(session.id)
     setAgentPrompt("")
@@ -1787,7 +1789,7 @@ export default function App() {
        first session lazily so an empty sidebar is never a dead end. */
     const existing = activeSessionId ? agentSessions.find((session) => session.id === activeSessionId) : undefined
     const firstTurn = !existing || existing.turns.length === 0
-    const session = existing ?? createSession(model, now)
+    const session = existing ?? createSession(model, now, activeProject ? { id: activeProject.id, name: activeProject.name } : null)
     const patched: AgentSession = {
       ...session,
       title: session.turns.length ? session.title : titleFromTask(task),

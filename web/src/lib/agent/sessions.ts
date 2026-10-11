@@ -45,6 +45,11 @@ export interface AgentSession {
   updatedAt: number
   model: string | null
   turns: AgentTurn[]
+  /* Project folder this session was started under (sidebar groups by it).
+     Stamped once at creation; renaming a project later does not rewrite
+     old sessions. Older sessions simply lack both fields. */
+  folderId?: string | null
+  folderName?: string | null
 }
 
 export interface SessionManifestEntry {
@@ -55,6 +60,9 @@ export interface SessionManifestEntry {
   /* Capped join of the session's task texts so the sidebar can search
      without loading every transcript. Older entries simply lack it. */
   text?: string
+  /* Folder grouping (see AgentSession.folderId/folderName). */
+  folderId?: string | null
+  folderName?: string | null
 }
 
 export interface SessionManifest {
@@ -136,8 +144,17 @@ export async function suggestSessionTitle(options: {
   }
 }
 
-export function createSession(model: string | null, now = Date.now()): AgentSession {
-  return { id: createId("sess"), title: "New session", createdAt: now, updatedAt: now, model, turns: [] }
+export function createSession(model: string | null, now = Date.now(), folder?: { id: string; name: string } | null): AgentSession {
+  return {
+    id: createId("sess"),
+    title: "New session",
+    createdAt: now,
+    updatedAt: now,
+    model,
+    turns: [],
+    folderId: folder?.id ?? null,
+    folderName: folder?.name ?? null,
+  }
 }
 
 export function createTurn(task: string, mode: AgentMode, now = Date.now()): AgentTurn {
@@ -165,6 +182,8 @@ function parseSession(raw: string | null): AgentSession | null {
       updatedAt: isFiniteNumber(value.updatedAt) ? value.updatedAt : Date.now(),
       model: typeof value.model === "string" ? value.model : null,
       turns,
+      folderId: typeof value.folderId === "string" ? value.folderId : null,
+      folderName: typeof value.folderName === "string" ? value.folderName : null,
     }
   } catch {
     return null
@@ -266,8 +285,10 @@ export function saveSession(session: AgentSession, storage: Storage = localStora
     createdAt: trimmed.createdAt,
     updatedAt: trimmed.updatedAt,
     /* Search blob: every task in the session, capped so the manifest
-       itself stays small (it is loaded on every sidebar render). */
+        itself stays small (it is loaded on every sidebar render). */
     text: trimmed.turns.map((turn) => turn.task).join("\n").slice(0, 2000),
+    folderId: trimmed.folderId ?? null,
+    folderName: trimmed.folderName ?? null,
   }
   const others = manifest.entries.filter((item) => item.id !== trimmed.id)
   /* Manifest stays newest-first regardless of which session was saved, so
@@ -330,6 +351,40 @@ export function groupSessions(entries: SessionManifestEntry[], now = Date.now())
     else groups[2].entries.push(entry)
   }
   return groups.filter((group) => group.entries.length > 0)
+}
+
+/* Agent sidebar (folder accordion): one group per project folder, newest
+   first; sessions without a folder (legacy or none selected) collect under
+   "No folder". Within a folder, sessions are newest-first. The active
+   session's folder is flagged so the UI can default it open. */
+export const NO_FOLDER_LABEL = "No folder"
+
+export interface SessionFolderGroup {
+  label: string
+  folderId: string | null
+  entries: SessionManifestEntry[]
+}
+
+export function groupSessionsByFolder(entries: SessionManifestEntry[], activeId: string | null): SessionFolderGroup[] {
+  const folders = new Map<string, SessionFolderGroup>()
+  for (const entry of [...entries].sort((a, b) => b.updatedAt - a.updatedAt)) {
+    const label = entry.folderName?.trim() || NO_FOLDER_LABEL
+    const key = entry.folderId ?? ""
+    const group = folders.get(key)
+    if (group) group.entries.push(entry)
+    else folders.set(key, { label, folderId: entry.folderId ?? null, entries: [entry] })
+  }
+  /* Active folder first so the open accordion shows the current session
+     without scrolling; the rest keep their newest-first order. */
+  const activeFolderId = entries.find((entry) => entry.id === activeId)?.folderId ?? null
+  const activeKey = activeFolderId ?? ""
+  return [...folders.entries()]
+    .sort(([a], [b]) => {
+      if (a === activeKey) return -1
+      if (b === activeKey) return 1
+      return 0
+    })
+    .map(([, group]) => group)
 }
 
 /* Sidebar search: every whitespace-separated term must appear in the

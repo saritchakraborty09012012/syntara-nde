@@ -746,11 +746,20 @@ select option { background-color: var(--bg-soft); color: var(--text); }
 .ag-mini-btn:hover:not(:disabled) { color: var(--text); border-color: var(--line-strong); }
 .ag-mini-btn:disabled { opacity: .45; cursor: not-allowed; }
 .ag-mini-btn.wide { width: 100%; }
-.ag-session-list { flex: 1; min-height: 0; overflow: auto; padding: 8px; display: flex; flex-direction: column; gap: 10px; }
+.ag-session-list { flex: 1; min-height: 0; overflow: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
 .ag-session-list::-webkit-scrollbar, .ag-timeline::-webkit-scrollbar, .ag-panel-body::-webkit-scrollbar { width: 7px; }
 .ag-session-list::-webkit-scrollbar-thumb, .ag-timeline::-webkit-scrollbar-thumb, .ag-panel-body::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .09); border-radius: 8px; }
-.ag-session-group { display: grid; gap: 2px; }
-.ag-session-group-label { font-family: 'Share Tech Mono', ui-monospace, monospace; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted-2); padding: 6px 8px 3px; }
+/* Folder accordion (redesign): one collapsible row per project folder; its
+   sessions sit indented underneath while open. */
+.ag-folder-group { display: grid; gap: 1px; }
+.ag-folder-head { display: flex; align-items: center; gap: 7px; width: 100%; border: 0; background: transparent; color: var(--muted); padding: 7px 8px; cursor: pointer; border-radius: 9px; font-size: 12px; font-weight: 600; text-align: left; transition: background .15s, color .15s; }
+.ag-folder-head:hover { background: rgba(69, 224, 255, .06); color: var(--text); }
+.ag-folder-head.open { color: var(--text); }
+.ag-folder-caret { flex: none; transition: transform .16s; color: var(--muted-2); }
+.ag-folder-head.open .ag-folder-caret { transform: rotate(90deg); }
+.ag-folder-label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ag-folder-count { flex: none; font-family: 'Share Tech Mono', ui-monospace, monospace; font-size: 10px; color: var(--muted-2); border: 1px solid var(--line); border-radius: 999px; padding: 1px 6px; }
+.ag-folder-sessions { display: grid; gap: 2px; margin-left: 14px; padding-left: 6px; border-left: 1px solid var(--line); }
 .ag-session-row { position: relative; display: flex; align-items: center; border-radius: 9px; transition: background .15s; }
 .ag-session-row:hover { background: rgba(69, 224, 255, .06); }
 .ag-session-row.active { background: linear-gradient(90deg, rgba(69, 224, 255, .14), rgba(69, 224, 255, .04)); box-shadow: inset 2px 0 0 var(--accent); }

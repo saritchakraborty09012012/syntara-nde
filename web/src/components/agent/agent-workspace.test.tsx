@@ -40,12 +40,12 @@ describe("AgentSessions", () => {
     expect(html).toContain("Choose folder")
   })
 
-  it("groups sessions, marks the active running row and exposes deletes", () => {
+  it("groups sessions inside project folders, marks the active running row and exposes deletes", () => {
     const now = Date.now()
     const html = renderToStaticMarkup(
       <AgentSessions
         {...sessionProps({
-          entries: [{ id: "s1", title: "Fix parser", createdAt: now, updatedAt: now }],
+          entries: [{ id: "s1", title: "Fix parser", createdAt: now, updatedAt: now, folderId: "p1", folderName: "syntara" }],
           activeId: "s1",
           running: true,
           projectName: "syntara",
@@ -54,11 +54,13 @@ describe("AgentSessions", () => {
         })}
       />,
     )
-    expect(html).toContain("Today")
+    expect(html).toContain("syntara")
     expect(html).toContain("Fix parser")
     expect(html).toContain("ag-session-dot busy")
     expect(html).toContain("tools active")
     expect(html).toContain('aria-label="Delete session: Fix parser"')
+    expect(html).toContain('aria-label="Collapse folder: syntara"')
+    expect(html).toContain("ag-folder-sessions")
   })
 
   it("only offers the collapse control when App wires onCollapse", () => {
