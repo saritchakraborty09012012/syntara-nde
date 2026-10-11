@@ -72,6 +72,7 @@ import {
 import { installedEntries, installingGroups, type InstalledEntry, type InstallingGroup, type StorageFileEntry } from "@/lib/installed"
 import { bestStarterModel, detectHardware, recommendationLabel, scoreModel } from "@/lib/model-hub"
 import { formatBytes, formatEta } from "@/lib/format"
+import { downloadPdf } from "@/lib/pdf"
 import { activeRequests, supportsCacheSlots } from "@/lib/runtime"
 import { checkForUpdate } from "@/lib/update-check"
 import { Markdown } from "@/components/Markdown"
@@ -1513,52 +1514,44 @@ export default function App() {
 
   const exportConversation = (conv: Conversation) => {
     const slug = conv.title.replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-").toLowerCase() || "conversation"
-    const payload = {
-      kind: "syntara-conversation",
-      schema: 1,
-      exportedAt: new Date().toISOString(),
+    downloadPdf(`syntara-${slug}.pdf`, {
       title: conv.title,
-      model: conv.model,
-      systemPrompt: conv.systemPrompt || "",
-      cacheSlot: conv.cacheSlot ?? null,
-      messages: conv.messages.map((item) => ({ id: item.id, role: item.role, content: item.content, images: item.images, docs: item.docs })),
-    }
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" })
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement("a")
-    anchor.href = url
-    anchor.download = `syntara-${slug}.json`
-    anchor.click()
-    URL.revokeObjectURL(url)
+      meta: [
+        `Model: ${conv.model}`,
+        `Exported: ${new Date().toLocaleString()}`,
+        conv.systemPrompt ? `System prompt: ${conv.systemPrompt.slice(0, 120)}${conv.systemPrompt.length > 120 ? "…" : ""}` : "",
+      ].filter(Boolean),
+      blocks: conv.messages.map((item) => ({
+        heading: item.role === "user" ? "User" : "Assistant",
+        body: [
+          item.content,
+          ...(item.images?.length ? [`(${item.images.length} attached image${item.images.length === 1 ? "" : "s"})`] : []),
+          ...(item.docs?.length ? item.docs.map((doc) => `[Attached file: ${doc.name}${doc.size ? `, ${formatBytes(doc.size)}` : ""}]\n${doc.content}`) : []),
+        ].filter(Boolean).join("\n\n"),
+      })),
+    })
   }
 
-  /* Agent session export (redesign): structured JSON for now; Phase D
-     swaps both chat and agent exports to a hand-rolled PDF download. */
+  /* Agent session export (redesign): PDF via the hand-rolled writer —
+     one block per turn (task + the run's final answer/status). */
   const exportAgentSession = (session: AgentSession) => {
     const slug = session.title.replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-").toLowerCase() || "session"
-    const payload = {
-      kind: "syntara-agent-session",
-      schema: 1,
-      exportedAt: new Date().toISOString(),
-      title: session.title,
-      model: session.model,
-      folder: session.folderName ?? null,
-      turns: session.turns.map((turn) => ({
-        id: turn.id,
-        at: turn.at,
-        mode: turn.mode,
-        task: turn.task,
-        status: turn.status,
-        events: turn.events,
-      })),
-    }
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" })
-    const url = URL.createObjectURL(blob)
-    const anchor = document.createElement("a")
-    anchor.href = url
-    anchor.download = `syntara-agent-${slug}.json`
-    anchor.click()
-    URL.revokeObjectURL(url)
+    downloadPdf(`syntara-agent-${slug}.pdf`, {
+      title: `Agent session — ${session.title}`,
+      meta: [
+        `Model: ${session.model}`,
+        session.folderName ? `Project: ${session.folderName}` : "",
+        `Exported: ${new Date().toLocaleString()}`,
+      ].filter(Boolean),
+      blocks: session.turns.map((turn, index) => {
+        const done = [...turn.events].reverse().find((event) => event.type === "done")
+        const modeLabel = AGENT_MODES.find((item) => item.id === turn.mode)?.label ?? turn.mode
+        const lines = [`Mode: ${modeLabel}`, `Status: ${turn.status}`]
+        if (done && done.type === "done") lines.push(`Steps: ${done.steps}`)
+        if (done && done.text) lines.push("", done.text)
+        return { heading: `Turn ${index + 1}: ${turn.task}`, body: lines.join("\n") }
+      }),
+    })
   }
 
   const attachImages = async (files: FileList | File[] | null) => {
