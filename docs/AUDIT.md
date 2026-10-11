@@ -318,3 +318,64 @@ Deviations from the original Phase 0 checklist: `docs/ARCHITECTURE.md` was
 sources of truth. This audit references it instead, and §5 above records
 which parts of that target diagram are actually implemented (see finding 1:
 not yet).
+
+---
+
+## UI rebuild pass (phases 1-6) - verification report
+
+Commit range: `6c27423` -> `cdf5eb8` (UI rebuild phases 1-6, plus the CI
+name-purge fix `f8e9ec9` in the middle).
+This section records what the UI/UX rebuild actually shipped and what was -
+and was not - exercised in this environment. It is separate from the baseline
+audit above, which covers the original phase 0-5 plan.
+
+### Shipped in this pass
+
+- Web app: rail/history collapse toggles, per-mode voice languages, docks
+  (permissions moved out of the modal into the workspace dock), plan/question
+  flow, preview tools + folder bar, progress/stage ornament, settings cards,
+  session search/ranking, first-turn session naming, per-run project memory,
+  unsafe-git refusal hardening (`-D`/`--delete`), console ring, file search.
+- Model catalog: capabilities column (checkpoint > family seed > text floor),
+  curation repairs (gpt-oss duplicate `original/` sets dropped, misfiled
+  `convaiinnovations/laya` guardrail removed, honest LTX-2.5/Qwen-Drive
+  metadata), and `tools/verify_catalog.py`.
+- Gateway: CORS grant for the deployed site origin plus a
+  `Access-Control-Allow-Private-Network` answer on PNA preflights (granted
+  origins only).
+- Site: `playground.html` streaming chat client for the visitor's own local
+  gateway, with honest failure states; nav link and sitemap entry.
+- CI: the name-purge gate stays green across every file in the pass.
+
+### Verified in this environment
+
+| Check | Result |
+| --- | --- |
+| `npm --prefix web run build` (tsc -b + vite) | **ran - exit 0** at every phase boundary and at the final commit |
+| `npm --prefix web test` (vitest) | **ran - 338/338 (39 files)**, up from 293 at the mid-pass checkpoint commit (`9ae6b60`) (+45: catalog repair, capabilities, docks, plan/question, preview/folder tools, console ring, file search, execute) |
+| `python -m unittest syntara.tests.test_gateway` | **ran - 42/42** (40 + 2 new: deployed-origin CORS grant, PNA preflight grant/deny matrix) |
+| `npm --prefix site run build` | **ran - exit 0**; `playground.html` emitted with relative assets; web app staged |
+| `python tools/check_names.py` | **ran - clean (1194 files)** |
+| `python tools/verify_catalog.py --offline` | **ran - OK** (121 checkpoints, 2774 files, structural checks) |
+| `python tools/verify_catalog.py` (full HF) | **ran - OK** (same counts, hf-verified; failure path: unknown `--family` exits 2) |
+| HF API spot-checks behind the catalog repairs | **ran** - repo metadata, file listings, tree byte sums and README usage sections for all five suspect entries; resolve URLs redirect (2xx) anonymously |
+
+### Not run - stated honestly, not implied
+
+| Check | Why |
+| --- | --- |
+| GUI click-through of the docks, plan/question flow, folder bar, capabilities column, settings cards | No webview automation in this environment; the JSX is type-checked and the logic is unit-tested where it is pure |
+| Playground page against a live local gateway with a loaded model | No model loads on this 15.3 GiB machine (17.7 GiB Qwen3.8 exceeds RAM); the gateway side (origin grant, PNA preflight, deny matrix) is contract-tested, and every client failure path has an honest message |
+| Real-model chat/agent session end-to-end | Same RAM constraint as the baseline audit |
+| macOS/Linux production builds and desktop installers | Deferred to the final packaging step; this is a Windows machine |
+| Browser-session agent run against the deployed site origin | The origin grant is test-covered; a live deployed-page run happens after the site deploys this commit |
+
+### Known limitations carried through this pass (unchanged, still honest)
+
+- Preview-page console/devtools are offline in the browser build (the
+  console ring only sees the app window; a preview iframe is cross-origin).
+- The browser build cannot spawn background processes; `proc_run`-class tools
+  exist only behind the desktop bridge.
+- `doc_read` and media readers are scoped to the desktop bridge as well.
+- Old-blob session migration is a no-op: no pre-migration keys exist in any
+  shipped store.

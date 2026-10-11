@@ -7,6 +7,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- **A playground page on the site** (`playground.html`, linked from the nav and
+  the sitemap): a minimal OpenAI-compatible chat client that connects the
+  browser tab *directly* to the visitor's own local Syntara gateway (default
+  `http://127.0.0.1:8000`) — model list, streaming replies, stop button, and
+  honest failure states (gateway not running, wrong origin, no model loaded,
+  private-network permission, API-key required). There is no Syntara server in
+  between: prompts travel from the tab to the visitor's machine and nowhere
+  else, and the gateway only answers origins it explicitly allows while
+  staying loopback-bound. To make that first https→loopback connect work, the
+  gateway now grants the deployed site origin in its CORS list and answers
+  Private-Network-Access preflights with `Access-Control-Allow-Private-Network`
+  — only for granted origins, and only when the browser asks.
+- **`tools/verify_catalog.py`** — a stdlib-only verifier that cross-checks the
+  web model catalog against the Hugging Face API: repository existence (404s
+  must be flagged `missing`), gated-flag parity (`false`/`true`/`auto`/`manual`
+  vs the catalog), and every listed weight file against the repository's file
+  listing, plus local structural checks (direct download URLs, no duplicate
+  URLs, non-empty file lists). `--limit`, `--family` and `--offline` for fast
+  runs; exit 0 clean, 1 problems, 2 usage/network error. A full run is green:
+  121 checkpoints, 2774 files.
+- **A Capabilities column on the model family pages.** Each checkpoint shows
+  conservative capability tags (`text`, `vision*`, `tools*`, `long-context*`,
+  …; `*` = variant-dependent). A checkpoint's own tags win where the family's
+  claims would overpromise (Qwen-Drive is `text, vision*`; LTX-2.5 is
+  `video*`), then the family's curated seed tags, then a bare `text` floor so
+  the column never renders blank.
 - **The desktop app now tells you when an update exists.** A few seconds after
   start it compares its own version against the latest GitHub release — one
   unauthenticated GET to the public releases API, no local data in the request,
@@ -24,6 +50,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 
+- **Model-catalog curation pass.** `openai/gpt-oss-20b` and `openai/gpt-oss-120b`
+  listed both the canonical sharded weights *and* the repo's `original/`
+  single-copy set — the family page's "size on disk" doubled (25.6 GB / 121.5 GB
+  instead of 12.8 GB / 60.8 GB) and "Install" queued the model twice. Only the
+  canonical shards remain. `Lightricks/LTX-2.5` now states its real parameter
+  count (22B, taken from the weight filenames) and labels its size as the sum
+  of *all* variants, and `Qwen/Qwen-Drive-1.0-4B` carries honest `text`,
+  `vision*` capability tags instead of inheriting the wider Qwen family's
+  tools/long-context claims. All five re-verified entries pass
+  `tools/verify_catalog.py` against the live Hugging Face API.
 - **Every Syntara logo is a rounded rectangle now.** The artwork always drew a
   rounded glass tile but shipped on an opaque black square, and the web app
   clipped it with a 3px radius while the site nav used a diagonal `cut-sm`
@@ -38,6 +74,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- **`convaiinnovations/laya` is no longer listed under the Cohere Aya family.**
+  It is a text-classification guardrail from a different organization — not a
+  Cohere Aya model and not a chat checkpoint — so the entry was removed from
+  the catalog rather than left to look like a downloadable chat model.
 - **The macOS and Linux installers could not be built at all.** The installer
   workflow pinned no interpreter for the stdlib-only staging scripts, so they ran
   under whatever `python3` the runner image shipped. `tools/fetch_llama_cpp.py`

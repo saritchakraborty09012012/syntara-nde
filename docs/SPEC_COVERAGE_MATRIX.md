@@ -40,6 +40,9 @@ row names the concrete files that own the behavior.
 | Legacy local entries repaired once per session (badge backfill) | ✅ | `web/src/App.tsx` (auto-inspect effect) |
 | Universal conversion/quantization, every-safetensors architecture | 🔴 | `docs/`, engine (`docs/tuning.md`) — native toolchain + weights required |
 | Download queue / bandwidth scheduling | 🔴 | Architecture/extension point |
+| Family-page capabilities column (checkpoint tag > family seed > text floor; `*` = variant-dependent) | ✅ | `web/src/lib/catalog-install.ts` `catalogCapabilities`, `web/src/components/ModelFamilyPage.tsx` (UI rebuild Phase 5) |
+| Catalog curation repairs: canonical shard sets only (no duplicated `original/` weight copies), no misfiled non-chat entries, HF-verified sizes/gated flags | ✅ | `web/src/lib/model-catalog.ts`, `web/src/lib/model-catalog.test.ts` ("phase 5 catalog repair" describe) |
+| Catalog verification gate against the HF API (repo existence, gated-flag parity, every listed file, local structural checks) | ✅ | `tools/verify_catalog.py` (`--limit`/`--family`/`--offline`; exit 0 clean / 1 problems / 2 usage-network) |
 
 ## Chat
 
@@ -108,6 +111,7 @@ row names the concrete files that own the behavior.
 | CLI engine delegation (`SYNTARA_ENGINE`, no PATH guessing to avoid recursion) | ✅ | `syntara/cli.py` (this iteration), tests |
 | Conversion wrappers: streaming/resumable/cancellable/cached + planner auto-trigger (`syntara convert --plan`) | ✅ | `syntara/conversion.py`, `syntara/cli.py` (this iteration), plan proposal in `c/resource_plan.py`, `--print-argv` in `c/syntara`, tests |
 | CORS exposes `retry-after` + `x-syntara-queue-wait-ms` to granted origins only | ✅ | `syntara/gateway.py` `_cors` (Phase 2e) |
+| CORS grants the deployed site origin, and answers Private-Network-Access preflights (`Access-Control-Allow-Private-Network`) only for granted origins | ✅ | `syntara/gateway.py` `DEFAULT_CORS_ORIGINS`/`_cors`, `syntara/tests/test_gateway.py` (UI rebuild Phase 5) |
 
 ## Integrations
 
@@ -127,6 +131,7 @@ row names the concrete files that own the behavior.
 | Downloads JS hardened (guards, no clobber of architecture labels) | ✅ | `site/src/lib/releases.ts` (typed guard fetch; arch labels are constants) |
 | Honest install guide (real `syntara.cmd` ships, restored from upstream) | ✅ | `site/src/components/Install.tsx`; `c/syntara.cmd` (audit 0.4.3) |
 | Suit-theme UI (Syntra Suit image, Orbitron/Chakra Petch/Share Tech Mono) | ✅ | `site/src/index.css`, `site/public/syntara-suit.png`, `web/src/index.css` (CSS-only app skin) |
+| Playground page: streaming OpenAI-compatible chat straight to the visitor's local gateway, with honest failure states (gateway down, wrong origin, no model loaded, PNA/loopback notes) | ✅ | `site/playground.html`, `site/src/components/pages/PlaygroundPage.tsx`, nav link + sitemap entry (UI rebuild Phase 5) |
 
 ## Native engine, hardware backends, desktop packaging
 

@@ -57,6 +57,8 @@ CPU · GPU · RAM · VRAM · SSD
 - In-app host log viewer (reads a local file; nothing is uploaded)
 - Desktop shell auto-starts the local host on loopback — no account, no cloud
 - Model Hub and integrated download manager
+- HF-verified model catalog: family pages with a Capabilities column, honest gated/missing flags, and a stdlib verification gate (`tools/verify_catalog.py`)
+- Site playground page that streams chat straight from your own local gateway — no relay, no account
 - Seamless and hassle-free downloads through Quantum Download Manager — no stuck transfers, no unnecessary restarts
 - Projects and persistent local memory
 - Local backup / import / restore
