@@ -715,14 +715,37 @@ select option { background-color: var(--bg-soft); color: var(--text); }
 .modal-error { margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--danger); }
 
 /* ============================================================ agent mode
-   three-column workspace (phase 3): sessions rail | transcript card with
-   a docked composer | progress + preview docks. Syntara theme tokens only. */
-.view.agent-shell { display: grid; grid-template-columns: 264px minmax(0, 1fr) 302px; gap: 14px; padding: 16px; overflow: hidden; align-items: stretch; }
-.view.agent-shell.rail-collapsed { grid-template-columns: 46px minmax(0, 1fr) 302px; }
-/* Redesign: both dock panes toggled off (and no pinned panel) — the
-   transcript expands across the freed column. */
-.view.agent-shell.docks-collapsed { grid-template-columns: 264px minmax(0, 1fr); }
-.view.agent-shell.rail-collapsed.docks-collapsed { grid-template-columns: 46px minmax(0, 1fr); }
+   split workspace (redesign Phase E): sessions rail | progress pane |
+   transcript card with a docked composer | preview pane. Pane widths come
+   from CSS vars set inline by App (set by the resizer drag), so media
+   queries can still override the column structure below. */
+.view.agent-shell { display: grid; grid-template-columns: 264px minmax(0, 1fr); gap: 14px; padding: 16px; overflow: hidden; align-items: stretch; }
+.view.agent-shell.rail-collapsed { grid-template-columns: 46px minmax(0, 1fr); }
+.view.agent-shell.has-progress { grid-template-columns: 264px var(--progress-w, 300px) 6px minmax(0, 1fr); }
+.view.agent-shell.has-progress.rail-collapsed { grid-template-columns: 46px var(--progress-w, 300px) 6px minmax(0, 1fr); }
+.view.agent-shell.has-preview { grid-template-columns: 264px minmax(0, 1fr) 6px var(--preview-w, 330px); }
+.view.agent-shell.has-preview.rail-collapsed { grid-template-columns: 46px minmax(0, 1fr) 6px var(--preview-w, 330px); }
+.view.agent-shell.has-progress.has-preview { grid-template-columns: 264px var(--progress-w, 300px) 6px minmax(0, 1fr) 6px var(--preview-w, 330px); }
+.view.agent-shell.has-progress.has-preview.rail-collapsed { grid-template-columns: 46px var(--progress-w, 300px) 6px minmax(0, 1fr) 6px var(--preview-w, 330px); }
+
+/* --- split panes + drag resizers --- */
+.ag-pane { display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: 0; overflow: auto; }
+.ag-pane .ag-panel { flex: 1; min-height: 180px; }
+.ag-pane .ag-panel-pinned { flex: 0 0 auto; min-height: 0; }
+.ag-resizer { position: relative; cursor: col-resize; touch-action: none; border-radius: 4px; transition: background .16s; }
+.ag-resizer::after { content: ""; position: absolute; inset: 8px 2px; border-left: 1px solid var(--line); }
+.ag-resizer:hover, .ag-resizer:focus-visible { background: rgba(99, 215, 255, .1); outline: none; }
+.ag-resizer:hover::after, .ag-resizer:focus-visible::after { border-left-color: var(--accent); }
+body.ag-resizing { user-select: none; cursor: col-resize; }
+
+/* --- sidebar overlays: floating copies above a backdrop while a pane
+       owns the grid (rail overlay + nav overlay) --- */
+.ag-overlay-backdrop { position: fixed; inset: 0; z-index: 55; background: rgba(4, 8, 14, .55); backdrop-filter: blur(2px); }
+.ag-overlay-rail { position: fixed; top: 16px; left: 16px; bottom: 16px; width: 300px; z-index: 56; display: flex; }
+.ag-overlay-rail .ag-sessions { flex: 1; min-height: 0; box-shadow: 0 24px 70px rgba(0, 0, 0, .5); }
+.nav-overlay-backdrop { position: fixed; inset: 0; z-index: 55; background: rgba(4, 8, 14, .55); backdrop-filter: blur(2px); }
+.nav-overlay-open .syntara-sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: 278px; z-index: 56; box-shadow: 0 24px 70px rgba(0, 0, 0, .5); }
+.nav-overlay-open.nav-collapsed .syntara-sidebar { width: 92px; }
 
 /* --- sessions rail --- */
 .ag-sessions { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); overflow: hidden; }
@@ -829,8 +852,7 @@ select option { background-color: var(--bg-soft); color: var(--text); }
 .ag-toolbar .icon-btn.active { color: var(--accent); border-color: rgba(99,215,255,.35); background: rgba(99,215,255,.08); }
 .doc-size { color: var(--muted-2); font-size: 10px; margin-left: 2px; }
 
-/* --- right docks --- */
-.ag-docks { display: flex; flex-direction: column; gap: 14px; min-height: 0; }
+/* --- split-pane panels --- */
 .ag-panel { display: flex; flex-direction: column; flex: 1; min-height: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); overflow: hidden; }
 .ag-panel.ag-preview { flex: 1.15; }
 .ag-panel-head { display: flex; align-items: center; gap: 8px; padding: 10px 13px; border-bottom: 1px solid var(--line); font-family: 'Orbitron', sans-serif; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
@@ -848,21 +870,45 @@ select option { background-color: var(--bg-soft); color: var(--text); }
 .ag-preview-empty code { font-family: 'Share Tech Mono', ui-monospace, monospace; color: var(--accent); font-size: 11px; }
 
 /* responsive — agent workspace tiers. Thresholds account for the expanded
-   278px suit rail (the sidebar only auto-collapses ≤1100px): at ≥1320px the
-   content area is ≥1042px, so the shrunken 3-col keeps the center card at
-   ≥490px (composer min ≈438px). ≤1319px folds the docks under the workspace
-   row; ≤899px stacks everything. */
-@media (max-width: 1559px) { .view.agent-shell { grid-template-columns: 240px minmax(0, 1fr) 268px; gap: 10px; padding: 12px; } .view.agent-shell.rail-collapsed { grid-template-columns: 46px minmax(0, 1fr) 268px; } .view.agent-shell.docks-collapsed { grid-template-columns: 240px minmax(0, 1fr); } .view.agent-shell.rail-collapsed.docks-collapsed { grid-template-columns: 46px minmax(0, 1fr); } .ag-hint { max-width: 170px; } }
-@media (max-width: 1319px) {
-  .view.agent-shell { grid-template-columns: 232px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+   278px suit rail (the sidebar only auto-collapses ≤1100px). ≤1319px folds
+   the panes under the workspace row (resizers disable); ≤899px stacks
+   everything. */
+@media (max-width: 1559px) {
+  .view.agent-shell { gap: 10px; padding: 12px; }
+  .view.agent-shell { grid-template-columns: 240px minmax(0, 1fr); }
   .view.agent-shell.rail-collapsed { grid-template-columns: 46px minmax(0, 1fr); }
-  .ag-docks { grid-column: 1 / -1; flex-direction: row; max-height: 240px; }
+  .view.agent-shell.has-progress { grid-template-columns: 240px var(--progress-w, 300px) 6px minmax(0, 1fr); }
+  .view.agent-shell.has-progress.rail-collapsed { grid-template-columns: 46px var(--progress-w, 300px) 6px minmax(0, 1fr); }
+  .view.agent-shell.has-preview { grid-template-columns: 240px minmax(0, 1fr) 6px var(--preview-w, 330px); }
+  .view.agent-shell.has-preview.rail-collapsed { grid-template-columns: 46px minmax(0, 1fr) 6px var(--preview-w, 330px); }
+  .view.agent-shell.has-progress.has-preview { grid-template-columns: 240px var(--progress-w, 300px) 6px minmax(0, 1fr) 6px var(--preview-w, 330px); }
+  .view.agent-shell.has-progress.has-preview.rail-collapsed { grid-template-columns: 46px var(--progress-w, 300px) 6px minmax(0, 1fr) 6px var(--preview-w, 330px); }
+  .ag-hint { max-width: 170px; }
+}
+@media (max-width: 1319px) {
+  .view.agent-shell,
+  .view.agent-shell.has-progress,
+  .view.agent-shell.has-preview,
+  .view.agent-shell.has-progress.has-preview,
+  .view.agent-shell.rail-collapsed,
+  .view.agent-shell.has-progress.rail-collapsed,
+  .view.agent-shell.has-preview.rail-collapsed,
+  .view.agent-shell.has-progress.has-preview.rail-collapsed {
+    grid-template-columns: 232px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+  .ag-pane-progress { grid-row: 2; grid-column: 1; max-height: 240px; }
+  .ag-pane-preview { grid-row: 2; grid-column: 2; max-height: 240px; }
+  /* A lone folded pane spans the full bottom row. */
+  .view.agent-shell:has(.ag-pane-progress):not(:has(.ag-pane-preview)) .ag-pane-progress { grid-column: 1 / -1; }
+  .view.agent-shell:has(.ag-pane-preview):not(:has(.ag-pane-progress)) .ag-pane-preview { grid-column: 1 / -1; }
+  .ag-resizer { display: none; }
 }
 @media (max-width: 899px) {
   .view.agent-shell { display: flex; flex-direction: column; overflow: auto; padding: 10px; }
   .ag-sessions { max-height: 210px; flex: none; }
   .ag-center { min-height: 62vh; }
-  .ag-docks { flex-direction: column; max-height: none; }
+  .ag-pane { max-height: 260px; }
   .ag-panel { min-height: 170px; }
   .ag-hint { display: none; }
 }
@@ -922,7 +968,7 @@ select option { background-color: var(--bg-soft); color: var(--text); }
 }
 /* Cap dock height only in the wide (side-by-side) layout — the stacked
    layout at ≤899px must keep scrolling instead of clipping. */
-@media (max-height: 620px) and (min-width: 900px) { .ag-docks { max-height: 170px; } }
+@media (max-height: 620px) and (min-width: 900px) { .ag-pane { max-height: 170px; } }
 
 /* ==================================================== phase 3 + 4 additions
    Pinned dock panels (permission / question / plan), run progress details,
@@ -1032,7 +1078,9 @@ select option { background-color: var(--bg-soft); color: var(--text); }
 
 /* Pinned panels inside the horizontal (≤1319px) dock row: bounded width,
    scroll instead of growing past the row. */
-@media (max-width: 1319px) { .ag-panel-pinned { flex: 0 1 270px; min-width: 220px; overflow: auto; } }
+/* Folded panes (≤1319px): pinned panels stay content-height; the pane
+   itself scrolls (see .ag-pane overflow above). */
+@media (max-width: 1319px) { .ag-panel-pinned { overflow: auto; } }
 @media (max-width: 899px) {
   .ag-folder-search { width: 100%; margin-left: 0; }
   .ag-folderbar { padding: 8px 10px; }

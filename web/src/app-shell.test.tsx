@@ -83,12 +83,16 @@ describe("phase 3 shell (server-rendered App)", () => {
     try {
       const html = renderToStaticMarkup(<App />)
       expect(html).toContain('id="panel-agents"')
-      expect(html).toContain('class="view agent-shell"')
+      // Default state: both split panes open, sidebar expanded.
+      expect(html).toContain('class="view agent-shell has-progress has-preview"')
       expect(html).toContain('aria-label="Agent sessions"')
       expect(html).toContain("Give the agent a task.")
       expect(html).toContain('aria-label="Agent task"')
       expect(html).toContain('aria-label="Progress"')
       expect(html).toContain('aria-label="Preview"')
+      // Phase E resizers sit between the panes and the transcript.
+      expect(html).toContain('aria-label="Resize progress pane"')
+      expect(html).toContain('aria-label="Resize preview pane"')
       // The marketing hero and dashboard cards of the old layout are gone;
       // first-run copy now lives inside the agent empty state.
       expect(html).not.toContain('class="hero-panel"')

@@ -1,80 +1,24 @@
-/* Right-hand docks for agent mode (phase 3 + 4): priority panels pinned
-   above the progress panel — permission request, plan review, question —
-   then live run progress (status, elapsed, commands, sub-agents, todo,
-   last-run summary) and the local preview. Pure presentation: App owns
-   every piece of state these panels read and mutate. */
+/* Agent workspace right-side panels (redesign Phase E). The old monolithic
+   AgentDocks column is split into standalone panels so App can place the
+   progress pane left of the transcript and the preview pane right of it
+   (drag-resizable), with pinned panels (permission / question / plan)
+   riding atop the progress pane and always visible. */
 
 import { useEffect, useMemo, useState } from "react"
-import {
-  Check,
-  ClipboardList,
-  Copy,
-  Eye,
-  HelpCircle,
-  ListChecks,
-  LoaderCircle,
-  Pencil,
-  RefreshCw,
-  ShieldAlert,
-  Terminal,
-  Timer,
-  Users,
-  X,
-} from "lucide-react"
+import { Check, ClipboardList, Copy, Eye, HelpCircle, ListChecks, LoaderCircle, Pencil, RefreshCw, ShieldAlert, Terminal, Timer, Users, X } from "lucide-react"
 
+import { cn } from "@/lib/utils"
 import type { AgentEvent } from "@/lib/agent/loop"
 import type { PermissionDecision } from "@/lib/agent/permissions"
-import { summarizeArgs } from "@/lib/agent/ui"
-import { cn } from "@/lib/utils"
+
+export interface PermissionPrompt { tool: string; args: Record<string, unknown> }
+export interface QuestionPrompt { text: string; options: string[] }
+export interface PlanDraft { text: string }
 
 export interface LastRunSummary {
-  status: "done" | "stopped" | "error"
+  status: "done" | "error" | "stopped"
   steps: number
-  text: string | null
-}
-
-export interface PermissionPrompt {
-  tool: string
-  args: Record<string, unknown>
-}
-
-export interface QuestionPrompt {
-  text: string
-  options: string[]
-}
-
-export interface PlanDraft {
-  text: string
-}
-
-interface AgentDocksProps {
-  todo: string[]
-  running: boolean
-  /* createdAt of the running turn — drives the elapsed counter. */
-  startedAt: number | null
-  /* Events of the newest turn: status, commands and sub-agents derive
-     from them live while the run streams. */
-  events: AgentEvent[]
-  lastRun: LastRunSummary | null
-  permission: PermissionPrompt | null
-  permissionNote: string
-  onSettlePermission: (decision: PermissionDecision) => void
-  question: QuestionPrompt | null
-  onAnswerQuestion: (answer: string) => void
-  plan: PlanDraft | null
-  onPlanText: (text: string) => void
-  onApprovePlan: () => void
-  onDismissPlan: () => void
-  previewUrl: string | null
-  previewNonce: number
-  onClosePreview: () => void
-  onReloadPreview: () => void
-  copiedKey: string | null
-  onCopy: (text: string, key: string) => void
-  /* Redesign: the agent header's Progress/Preview icons toggle each pane.
-     Pinned panels (permission/question/plan) ignore these and always show. */
-  showProgress?: boolean
-  showPreview?: boolean
+  text?: string | null
 }
 
 function formatElapsed(ms: number): string {
@@ -138,13 +82,22 @@ function subagentRows(events: AgentEvent[]): SubagentRow[] {
   return rows
 }
 
-export function AgentDocks(props: AgentDocksProps) {
-  const [now, setNow] = useState(() => Date.now())
-  const [planEditing, setPlanEditing] = useState(false)
-  const [answer, setAnswer] = useState("")
+export interface AgentProgressPanelProps {
+  running: boolean
+  startedAt: number | null
+  events: AgentEvent[]
+  todo: string[]
+  lastRun: LastRunSummary | null
+  copiedKey: string | null
+  onCopy: (text: string, key: string) => void
+}
 
-  /* One shared ticker while a run is active: drives elapsed + the pending
-     command durations without a timer per panel. */
+/* Progress pane: status line, live command rows, sub-agents, last-run
+   summary and the todo list. Owns the shared 1s ticker that drives the
+   elapsed counter. */
+export function AgentProgressPanel(props: AgentProgressPanelProps) {
+  const [now, setNow] = useState(() => Date.now())
+
   useEffect(() => {
     if (!props.running) return
     const id = window.setInterval(() => setNow(Date.now()), 1000)
@@ -165,10 +118,6 @@ export function AgentDocks(props: AgentDocksProps) {
   const elapsed = props.running && props.startedAt ? Math.max(0, now - props.startedAt) : null
   const lastRun = props.lastRun
   const lastRunCopyKey = lastRun ? `run_${lastRun.status}_${lastRun.steps}` : null
-  const planSteps = (props.plan?.text ?? "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
 
   const statusText = props.running
     ? runningTool
@@ -177,274 +126,321 @@ export function AgentDocks(props: AgentDocksProps) {
     : null
 
   return (
-    <div className="ag-docks">
-      {props.permission ? (
-        <section className="ag-panel ag-panel-pinned permission-dock" role="alertdialog" aria-label="Tool permission request">
-          <div className="ag-panel-head">
-            <ShieldAlert size={13} />
-            <span>Permission</span>
-            <LoaderCircle size={12} className="spin" />
+    <section className="ag-panel" aria-label="Progress">
+      <div className="ag-panel-head">
+        <ListChecks size={13} />
+        <span>Progress</span>
+        {props.running ? <LoaderCircle size={12} className="spin" /> : null}
+        {elapsed !== null ? (
+          <span className="ag-elapsed" title="Run elapsed time">
+            <Timer size={11} /> {formatElapsed(elapsed)}
+          </span>
+        ) : null}
+      </div>
+      <div className="ag-panel-body">
+        {statusText ? (
+          <div className="ag-status-line" role="status">
+            <span className="typing" aria-hidden="true">
+              <i />
+              <i />
+              <i />
+            </span>
+            {statusText}
           </div>
-          <div className="ag-panel-body">
-            <div className="ag-permission">
-              <strong>
-                Allow <code>{props.permission.tool}</code>?
-              </strong>
-              <p className="panel-note permission-args">{summarizeArgs(props.permission.tool, props.permission.args)}</p>
-              <p className="panel-note">{props.permissionNote}</p>
-              <div className="ag-dock-actions">
-                <button type="button" className="ghost-btn" onClick={() => props.onSettlePermission("deny")}>
-                  Deny
-                </button>
-                <button type="button" className="ghost-btn" onClick={() => props.onSettlePermission("once")}>
-                  Allow once
-                </button>
-                <button type="button" className="primary-btn" onClick={() => props.onSettlePermission("always")}>
-                  Always allow
-                </button>
-              </div>
-            </div>
-          </div>
-        </section>
-      ) : null}
+        ) : null}
 
-      {props.question ? (
-        <section className="ag-panel ag-panel-pinned question-dock" aria-label="Agent question">
-          <div className="ag-panel-head">
-            <HelpCircle size={13} />
-            <span>Question</span>
-            <LoaderCircle size={12} className="spin" />
-          </div>
-          <div className="ag-panel-body">
-            <p className="ag-question-text">{props.question.text}</p>
-            {props.question.options.length ? (
-              <div className="ag-question-options">
-                {props.question.options.map((option) => (
-                  <button key={option} type="button" className="ag-mini-btn" onClick={() => props.onAnswerQuestion(option)}>
-                    {option}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            <div className="ag-question-answer">
-              <textarea
-                value={answer}
-                onChange={(event) => setAnswer(event.target.value)}
-                placeholder="Type your answer…"
-                aria-label="Answer"
-                rows={2}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault()
-                    if (answer.trim()) {
-                      props.onAnswerQuestion(answer)
-                      setAnswer("")
-                    }
-                  }
-                }}
-              />
-              <button
-                type="button"
-                className="primary-btn"
-                disabled={!answer.trim()}
-                onClick={() => {
-                  props.onAnswerQuestion(answer)
-                  setAnswer("")
-                }}
-              >
-                Answer
-              </button>
+        {commands.length ? (
+          <div className="ag-commands" aria-label="Terminal commands">
+            <div className="ag-subhead">
+              <Terminal size={12} /> Commands
             </div>
-          </div>
-        </section>
-      ) : null}
-
-      {props.plan ? (
-        <section className="ag-panel ag-panel-pinned plan-dock" aria-label="Plan review">
-          <div className="ag-panel-head">
-            <ClipboardList size={13} />
-            <span>Plan</span>
-            <button
-              type="button"
-              className="icon-btn"
-              onClick={() => setPlanEditing((value) => !value)}
-              title={planEditing ? "Done editing" : "Edit plan"}
-              aria-label={planEditing ? "Done editing plan" : "Edit plan"}
-            >
-              {planEditing ? <Check size={12} /> : <Pencil size={12} />}
-            </button>
-          </div>
-          <div className="ag-panel-body">
-            {planEditing ? (
-              <textarea
-                className="ag-plan-edit"
-                value={props.plan.text}
-                onChange={(event) => props.onPlanText(event.target.value)}
-                aria-label="Plan text"
-                rows={Math.min(12, planSteps.length + 2)}
-              />
-            ) : (
-              <ol className="ag-plan-list">
-                {planSteps.map((step, index) => (
-                  <li key={`${index}-${step}`}>{step}</li>
-                ))}
-              </ol>
-            )}
-            <div className="ag-dock-actions">
-              <button type="button" className="ghost-btn" onClick={props.onDismissPlan}>
-                Dismiss
-              </button>
-              <button type="button" className="primary-btn" onClick={props.onApprovePlan}>
-                Approve &amp; run
-              </button>
-            </div>
-            <p className="panel-note">Review and edit the steps — approving switches to Build mode and runs the plan.</p>
-          </div>
-        </section>
-      ) : null}
-
-      {props.showProgress !== false ? (
-        <section className="ag-panel" aria-label="Progress">
-          <div className="ag-panel-head">
-            <ListChecks size={13} />
-            <span>Progress</span>
-            {props.running ? <LoaderCircle size={12} className="spin" /> : null}
-            {elapsed !== null ? (
-              <span className="ag-elapsed" title="Run elapsed time">
-                <Timer size={11} /> {formatElapsed(elapsed)}
-              </span>
-            ) : null}
-          </div>
-          <div className="ag-panel-body">
-            {statusText ? (
-              <div className="ag-status-line" role="status">
-                <span className="typing" aria-hidden="true">
-                  <i />
-                  <i />
-                  <i />
+            {commands.map((row, index) => (
+              <div key={`${index}-${row.label}`} className={cn("ag-command", row.ok === true && "ok", row.ok === false && "fail")}>
+                <span className="ag-command-prompt" aria-hidden="true">
+                  $
                 </span>
-                {statusText}
+                <code>{row.label}</code>
+                <span className="ag-command-state">
+                  {row.ok === null ? <LoaderCircle size={11} className="spin" /> : row.ok ? <Check size={11} /> : <X size={11} />}
+                  {row.ok !== null && row.durationMs ? <span>{row.durationMs} ms</span> : null}
+                </span>
               </div>
-            ) : null}
-
-            {commands.length ? (
-              <div className="ag-commands" aria-label="Terminal commands">
-                <div className="ag-subhead">
-                  <Terminal size={12} /> Commands
-                </div>
-                {commands.map((row, index) => (
-                  <div key={`${index}-${row.label}`} className={cn("ag-command", row.ok === true && "ok", row.ok === false && "fail")}>
-                    <span className="ag-command-prompt" aria-hidden="true">
-                      $
-                    </span>
-                    <code>{row.label}</code>
-                    <span className="ag-command-state">
-                      {row.ok === null ? <LoaderCircle size={11} className="spin" /> : row.ok ? <Check size={11} /> : <X size={11} />}
-                      {row.ok !== null && row.durationMs ? <span>{row.durationMs} ms</span> : null}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-
-            {subagents.length ? (
-              <div className="ag-subagents" aria-label="Sub-agents">
-                <div className="ag-subhead">
-                  <Users size={12} /> Sub-agents
-                </div>
-                {subagents.map((row, index) => (
-                  <div key={`${index}-${row.task}`} className={cn("ag-subagent", row.ok === true && "ok", row.ok === false && "fail")}>
-                    <span title={row.task}>{row.task}</span>
-                    {row.ok === null ? <LoaderCircle size={11} className="spin" /> : row.ok ? <Check size={11} /> : <X size={11} />}
-                  </div>
-                ))}
-              </div>
-            ) : null}
-
-            {lastRun ? (
-              <div className={cn("ag-last-run", lastRun.status)} role="status">
-                <div className="ag-last-run-head">
-                  <Check size={12} />
-                  <span>
-                    {lastRun.status === "done"
-                      ? `Completed in ${lastRun.steps} step${lastRun.steps === 1 ? "" : "s"}`
-                      : lastRun.status === "stopped"
-                        ? "Stopped before finishing"
-                        : "Run failed"}
-                  </span>
-                  {lastRun.text && lastRunCopyKey ? (
-                    <button
-                      type="button"
-                      className="icon-btn"
-                      onClick={() => props.onCopy(lastRun.text as string, lastRunCopyKey)}
-                      title="Copy final answer"
-                      aria-label="Copy final answer"
-                    >
-                      {props.copiedKey === lastRunCopyKey ? <Check size={12} /> : <Copy size={12} />}
-                    </button>
-                  ) : null}
-                </div>
-                {lastRun.text ? <p className="ag-last-run-text">{lastRun.text}</p> : null}
-              </div>
-            ) : null}
-
-            {props.todo.length ? (
-              <ol className="todo-list">
-                {props.todo.map((item, index) => (
-                  <li key={`${index}-${item}`}>{item}</li>
-                ))}
-              </ol>
-            ) : (
-              <div className="empty-mini">
-                {props.running
-                  ? "The agent can create a todo list with the todo tool."
-                  : "No todo list yet — it appears when the agent plans its work."}
-              </div>
-            )}
+            ))}
           </div>
-        </section>
-      ) : null}
+        ) : null}
 
-      {props.showPreview !== false ? (
-        <section className="ag-panel ag-preview" aria-label="Preview">
-          <div className="ag-panel-head">
-            <Eye size={13} />
-            <span>Preview</span>
-            {props.previewUrl ? (
-              <span className="ag-panel-actions">
+        {subagents.length ? (
+          <div className="ag-subagents" aria-label="Sub-agents">
+            <div className="ag-subhead">
+              <Users size={12} /> Sub-agents
+            </div>
+            {subagents.map((row, index) => (
+              <div key={`${index}-${row.task}`} className={cn("ag-subagent", row.ok === true && "ok", row.ok === false && "fail")}>
+                <span title={row.task}>{row.task}</span>
+                {row.ok === null ? <LoaderCircle size={11} className="spin" /> : row.ok ? <Check size={11} /> : <X size={11} />}
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {lastRun ? (
+          <div className={cn("ag-last-run", lastRun.status)} role="status">
+            <div className="ag-last-run-head">
+              <Check size={12} />
+              <span>
+                {lastRun.status === "done"
+                  ? `Completed in ${lastRun.steps} step${lastRun.steps === 1 ? "" : "s"}`
+                  : lastRun.status === "stopped"
+                    ? "Stopped before finishing"
+                    : "Run failed"}
+              </span>
+              {lastRun.text && lastRunCopyKey ? (
                 <button
                   type="button"
                   className="icon-btn"
-                  onClick={props.onReloadPreview}
-                  title="Reload preview"
-                  aria-label="Reload preview"
+                  onClick={() => props.onCopy(lastRun.text as string, lastRunCopyKey)}
+                  title="Copy final answer"
+                  aria-label="Copy final answer"
                 >
-                  <RefreshCw size={12} />
+                  {props.copiedKey === lastRunCopyKey ? <Check size={12} /> : <Copy size={12} />}
                 </button>
-                <button type="button" className="icon-btn" onClick={props.onClosePreview} aria-label="Close preview">
-                  <X size={12} />
-                </button>
-              </span>
-            ) : null}
+              ) : null}
+            </div>
+            {lastRun.text ? <p className="ag-last-run-text">{lastRun.text}</p> : null}
           </div>
-          <div className="ag-panel-body">
-            {props.previewUrl ? (
-              <iframe
-                key={props.previewNonce}
-                className="ag-preview-frame"
-                src={props.previewUrl}
-                title="Local dev preview"
-                sandbox="allow-scripts allow-forms allow-same-origin"
-              />
-            ) : (
-              <div className="empty-mini ag-preview-empty">
-                When a run starts a local dev server (for example <code>npm run dev</code>), its page
-                opens here. Everything stays on this machine.
-              </div>
-            )}
+        ) : null}
+
+        {props.todo.length ? (
+          <ol className="todo-list">
+            {props.todo.map((item, index) => (
+              <li key={`${index}-${item}`}>{item}</li>
+            ))}
+          </ol>
+        ) : (
+          <div className="empty-mini">
+            {props.running
+              ? "The agent can create a todo list with the todo tool."
+              : "No todo list yet — it appears when the agent plans its work."}
           </div>
-        </section>
-      ) : null}
-    </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+export interface AgentPreviewPanelProps {
+  previewUrl: string | null
+  previewNonce: number
+  onClosePreview: () => void
+  onReloadPreview: () => void
+}
+
+/* Preview pane: sandboxed iframe once a run starts a local dev server. */
+export function AgentPreviewPanel(props: AgentPreviewPanelProps) {
+  return (
+    <section className="ag-panel ag-preview" aria-label="Preview">
+      <div className="ag-panel-head">
+        <Eye size={13} />
+        <span>Preview</span>
+        {props.previewUrl ? (
+          <span className="ag-panel-actions">
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={props.onReloadPreview}
+              title="Reload preview"
+              aria-label="Reload preview"
+            >
+              <RefreshCw size={12} />
+            </button>
+            <button type="button" className="icon-btn" onClick={props.onClosePreview} aria-label="Close preview">
+              <X size={12} />
+            </button>
+          </span>
+        ) : null}
+      </div>
+      <div className="ag-panel-body">
+        {props.previewUrl ? (
+          <iframe
+            key={props.previewNonce}
+            className="ag-preview-frame"
+            src={props.previewUrl}
+            title="Local dev preview"
+            sandbox="allow-scripts allow-forms allow-same-origin"
+          />
+        ) : (
+          <div className="empty-mini ag-preview-empty">
+            When a run starts a local dev server (for example <code>npm run dev</code>), its page
+            opens here. Everything stays on this machine.
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
+export function summarizeArgs(tool: string, args: Record<string, unknown>): string {
+  const parts: string[] = []
+  for (const [key, value] of Object.entries(args)) {
+    if (typeof value === "string") parts.push(`${key}: ${value}`)
+    else if (Array.isArray(value)) parts.push(`${key}: ${value.join(" ")}`)
+    else if (value != null && typeof value === "object") parts.push(`${key}: [object]`)
+    else parts.push(`${key}: ${String(value)}`)
+  }
+  return parts.length ? `${tool} — ${parts.join(" · ")}` : tool
+}
+
+export interface AgentPermissionPanelProps {
+  permission: PermissionPrompt
+  permissionNote: string
+  onSettlePermission: (decision: PermissionDecision) => void
+}
+
+export function AgentPermissionPanel(props: AgentPermissionPanelProps) {
+  return (
+    <section className="ag-panel ag-panel-pinned permission-dock" role="alertdialog" aria-label="Tool permission request">
+      <div className="ag-panel-head">
+        <ShieldAlert size={13} />
+        <span>Permission</span>
+        <LoaderCircle size={12} className="spin" />
+      </div>
+      <div className="ag-panel-body">
+        <div className="ag-permission">
+          <strong>
+            Allow <code>{props.permission.tool}</code>?
+          </strong>
+          <p className="panel-note permission-args">{summarizeArgs(props.permission.tool, props.permission.args)}</p>
+          <p className="panel-note">{props.permissionNote}</p>
+          <div className="ag-dock-actions">
+            <button type="button" className="ghost-btn" onClick={() => props.onSettlePermission("deny")}>
+              Deny
+            </button>
+            <button type="button" className="ghost-btn" onClick={() => props.onSettlePermission("once")}>
+              Allow once
+            </button>
+            <button type="button" className="primary-btn" onClick={() => props.onSettlePermission("always")}>
+              Always allow
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+export interface AgentQuestionPanelProps {
+  question: QuestionPrompt
+  onAnswerQuestion: (answer: string) => void
+}
+
+export function AgentQuestionPanel(props: AgentQuestionPanelProps) {
+  const [answer, setAnswer] = useState("")
+  return (
+    <section className="ag-panel ag-panel-pinned question-dock" aria-label="Agent question">
+      <div className="ag-panel-head">
+        <HelpCircle size={13} />
+        <span>Question</span>
+        <LoaderCircle size={12} className="spin" />
+      </div>
+      <div className="ag-panel-body">
+        <p className="ag-question-text">{props.question.text}</p>
+        {props.question.options.length ? (
+          <div className="ag-question-options">
+            {props.question.options.map((option) => (
+              <button key={option} type="button" className="ag-mini-btn" onClick={() => props.onAnswerQuestion(option)}>
+                {option}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        <div className="ag-question-answer">
+          <textarea
+            value={answer}
+            onChange={(event) => setAnswer(event.target.value)}
+            placeholder="Type your answer…"
+            aria-label="Answer"
+            rows={2}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault()
+                if (answer.trim()) {
+                  props.onAnswerQuestion(answer)
+                  setAnswer("")
+                }
+              }
+            }}
+          />
+          <button
+            type="button"
+            className="primary-btn"
+            disabled={!answer.trim()}
+            onClick={() => {
+              props.onAnswerQuestion(answer)
+              setAnswer("")
+            }}
+          >
+            Answer
+          </button>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+export interface AgentPlanPanelProps {
+  plan: PlanDraft
+  onPlanText: (text: string) => void
+  onApprovePlan: () => void
+  onDismissPlan: () => void
+}
+
+export function AgentPlanPanel(props: AgentPlanPanelProps) {
+  const [planEditing, setPlanEditing] = useState(false)
+  const planSteps = (props.plan.text ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+  return (
+    <section className="ag-panel ag-panel-pinned plan-dock" aria-label="Plan review">
+      <div className="ag-panel-head">
+        <ClipboardList size={13} />
+        <span>Plan</span>
+        <button
+          type="button"
+          className="icon-btn"
+          onClick={() => setPlanEditing((value) => !value)}
+          title={planEditing ? "Done editing" : "Edit plan"}
+          aria-label={planEditing ? "Done editing plan" : "Edit plan"}
+        >
+          {planEditing ? <Check size={12} /> : <Pencil size={12} />}
+        </button>
+      </div>
+      <div className="ag-panel-body">
+        {planEditing ? (
+          <textarea
+            className="ag-plan-edit"
+            value={props.plan.text}
+            onChange={(event) => props.onPlanText(event.target.value)}
+            aria-label="Plan text"
+            rows={Math.min(12, planSteps.length + 2)}
+          />
+        ) : (
+          <ol className="ag-plan-list">
+            {planSteps.map((step, index) => (
+              <li key={`${index}-${step}`}>{step}</li>
+            ))}
+          </ol>
+        )}
+        <div className="ag-dock-actions">
+          <button type="button" className="ghost-btn" onClick={props.onDismissPlan}>
+            Dismiss
+          </button>
+          <button type="button" className="primary-btn" onClick={props.onApprovePlan}>
+            Approve &amp; run
+          </button>
+        </div>
+        <p className="panel-note">Review and edit the steps — approving switches to Build mode and runs the plan.</p>
+      </div>
+    </section>
   )
 }

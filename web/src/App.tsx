@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react"
 import type { LucideIcon } from "lucide-react"
 import {
   Activity,
@@ -147,7 +147,14 @@ import { getConsoleLines, installConsoleRing } from "@/lib/console-ring"
 import { AgentSessions } from "@/components/agent/AgentSessions"
 import { AgentStage } from "@/components/agent/AgentStage"
 import { AgentComposer } from "@/components/agent/AgentComposer"
-import { AgentDocks, type LastRunSummary } from "@/components/agent/AgentDocks"
+import {
+  AgentPermissionPanel,
+  AgentPlanPanel,
+  AgentPreviewPanel,
+  AgentProgressPanel,
+  AgentQuestionPanel,
+  type LastRunSummary,
+} from "@/components/agent/AgentDocks"
 import { AgentFolderBar } from "@/components/agent/AgentFolderBar"
 import { cn } from "@/lib/utils"
 
@@ -361,11 +368,17 @@ export default function App() {
      loads it in a sandboxed iframe. Cleared when the user closes the dock
      or switches sessions. */
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  /* Redesign: the agent header's Progress/Preview icons toggle each dock
-     pane. Phase E upgrades this to split panes with drag-resize and the
-     sidebar overlay choreography; the state shape stays the same. */
+  /* Redesign Phase E: split panes. progressOpen/previewOpen toggle each
+     pane; paneWidths feeds the CSS vars the grid + resizers use. Opening a
+     pane closes the nav sidebar and sessions rail (remembered in
+     sidebarRecall so closing all panes restores them); re-opening either
+     sidebar while a pane is open renders it as an overlay with a backdrop. */
   const [progressOpen, setProgressOpen] = useState(true)
   const [previewOpen, setPreviewOpen] = useState(true)
+  const [paneWidths, setPaneWidths] = useState({ progress: 300, preview: 330 })
+  const [navOverlayOpen, setNavOverlayOpen] = useState(false)
+  const [railOverlayOpen, setRailOverlayOpen] = useState(false)
+  const sidebarRecall = useRef<{ navCollapsed: boolean; agentRailCollapsed: boolean } | null>(null)
   const [permissionAsk, setPermissionAsk] = useState<{ tool: string; args: Record<string, unknown> } | null>(null)
   const permissionResolver = useRef<((decision: PermissionDecision) => void) | null>(null)
   /* Phase 3 docks: plan review, pending question, preview reload nonce and
@@ -895,6 +908,94 @@ export default function App() {
   const composerHint = agentBusy
     ? `${modeLabelNow} · ${effortLabelNow} · running…`
     : `${modeLabelNow} · ${effortLabelNow} · max ${agentMaxSteps} steps${agentSpeed}`
+
+  /* Pane choreography (Phase E): opening a pane steals the screen — the
+     nav sidebar and sessions rail collapse and their state is remembered
+     so closing every pane restores exactly what was open. Re-opening either
+     sidebar while a pane is open shows it as an overlay with a backdrop
+     (see the overlay JSX below). */
+  const openProgressPane = () => {
+    if (!progressOpen) {
+      if (!sidebarRecall.current) {
+        sidebarRecall.current = { navCollapsed: state.settings.navCollapsed, agentRailCollapsed: state.settings.agentRailCollapsed ?? false }
+      }
+      if (!state.settings.navCollapsed || !state.settings.agentRailCollapsed) {
+        updateSettings({ navCollapsed: true, agentRailCollapsed: true })
+      }
+    }
+    setProgressOpen(true)
+  }
+  const openPreviewPane = () => {
+    if (!previewOpen) {
+      if (!sidebarRecall.current) {
+        sidebarRecall.current = { navCollapsed: state.settings.navCollapsed, agentRailCollapsed: state.settings.agentRailCollapsed ?? false }
+      }
+      if (!state.settings.navCollapsed || !state.settings.agentRailCollapsed) {
+        updateSettings({ navCollapsed: true, agentRailCollapsed: true })
+      }
+    }
+    setPreviewOpen(true)
+  }
+  const restoreSidebarsFromPanes = () => {
+    const recall = sidebarRecall.current
+    setNavOverlayOpen(false)
+    setRailOverlayOpen(false)
+    if (recall) {
+      updateSettings(recall)
+      sidebarRecall.current = null
+    }
+  }
+  const toggleProgressPane = () => {
+    if (progressOpen) {
+      setProgressOpen(false)
+      if (!previewOpen) restoreSidebarsFromPanes()
+    } else {
+      openProgressPane()
+    }
+  }
+  const togglePreviewPane = () => {
+    if (previewOpen) {
+      setPreviewOpen(false)
+      if (!progressOpen) restoreSidebarsFromPanes()
+    } else {
+      openPreviewPane()
+    }
+  }
+  /* The nav sidebar's collapse button doubles as the overlay opener while
+     a pane owns the grid (agent view only — other views have no panes). */
+  const toggleNavSidebar = () => {
+    if (navOverlayOpen) { setNavOverlayOpen(false); return }
+    const panesVisible = view === "agents" && (progressOpen || previewOpen)
+    if (panesVisible && state.settings.navCollapsed) setNavOverlayOpen(true)
+    else updateSettings({ navCollapsed: !state.settings.navCollapsed })
+  }
+  /* Pointer-drag resizer between the pane and the transcript. Widths live
+     in state and reach the grid through CSS custom properties, so the
+     responsive media queries can still override the column structure. */
+  const startPaneDrag = (which: "progress" | "preview", event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = paneWidths[which]
+    const move = (ev: globalThis.PointerEvent) => {
+      const delta = which === "progress" ? ev.clientX - startX : startX - ev.clientX
+      const next = Math.min(520, Math.max(240, Math.round(startWidth + delta)))
+      setPaneWidths((widths) => (widths[which] === next ? widths : { ...widths, [which]: next }))
+    }
+    const up = () => {
+      window.removeEventListener("pointermove", move)
+      window.removeEventListener("pointerup", up)
+      document.body.classList.remove("ag-resizing")
+    }
+    window.addEventListener("pointermove", move)
+    window.addEventListener("pointerup", up)
+    document.body.classList.add("ag-resizing")
+  }
+  /* Auto-open triggers: a run start shows Progress; a discovered dev-server
+     URL shows Preview; pinned panels (permission/question/plan) bring the
+     progress pane forward so the user always sees what needs attention. */
+  useEffect(() => { if (agentBusy) openProgressPane() }, [agentBusy])
+  useEffect(() => { if (previewUrl) openPreviewPane() }, [previewUrl])
+  useEffect(() => { if (permissionAsk || agentQuestion || agentPlan) openProgressPane() }, [permissionAsk, agentQuestion, agentPlan])
 
   useEffect(() => {
     if (!connected) return
@@ -2425,12 +2526,15 @@ export default function App() {
   const runtimeStatus = loadingModel ? loadingModel.phase : connected ? "Running locally" : "Not connected"
 
   return (
-    <div className={cn("syntara-shell", state.settings.navCollapsed && "nav-collapsed")}>
+    <div className={cn("syntara-shell", state.settings.navCollapsed && "nav-collapsed", navOverlayOpen && "nav-overlay-open")}>
+      {/* Nav overlay backdrop: clicking outside the floating sidebar closes
+          it (only reachable from agent mode while a pane owns the grid). */}
+      {navOverlayOpen ? <div className="nav-overlay-backdrop" onMouseDown={() => setNavOverlayOpen(false)} /> : null}
       <aside className="syntara-sidebar">
         <div className="brand-lockup">
           <img src="/syntara-logo.png" alt="Syntara" className="brand-mark" />
           <div className="brand-text"><div className="brand-name">Syntara</div><div className="brand-by">By NDe</div></div>
-          <button className="icon-btn nav-collapse-btn" onClick={() => updateSettings({ navCollapsed: !state.settings.navCollapsed })} title={state.settings.navCollapsed ? "Expand sidebar" : "Collapse sidebar"} aria-label={state.settings.navCollapsed ? "Expand sidebar" : "Collapse sidebar"} aria-expanded={!state.settings.navCollapsed}>
+          <button className="icon-btn nav-collapse-btn" onClick={toggleNavSidebar} title={state.settings.navCollapsed ? "Expand sidebar" : "Collapse sidebar"} aria-label={state.settings.navCollapsed ? "Expand sidebar" : "Collapse sidebar"} aria-expanded={!state.settings.navCollapsed}>
             <PanelLeft size={15} />
           </button>
         </div>
@@ -2672,19 +2776,33 @@ export default function App() {
             sessions rail, transcript card with the composer docked at the
             bottom, and progress/preview docks on the right. The header,
             sidebar and theme stay Syntara's own. */}
+        {/* Phase E: agent workspace is a drag-resizable split —
+            [sessions rail | progress pane | transcript+composer | preview
+            pane]. Pinned panels ride atop the progress pane; opening a pane
+            collapses the sidebars (overlay if the user re-opens them). */}
         {view === "agents" && (() => {
-          /* Pinned panels (permission/question/plan) always need the docks
-             column; otherwise hide it entirely when both panes are toggled
-             off so the transcript expands. */
           const pinnedDock = !!permissionAsk || !!agentQuestion || !!agentPlan
-          const docksVisible = pinnedDock || progressOpen || previewOpen
+          const showProgressCol = progressOpen || pinnedDock
+          const showPreviewCol = previewOpen
           return (
-          <section className={cn("view agent-shell", state.settings.agentRailCollapsed && "rail-collapsed", !docksVisible && "docks-collapsed")} id="panel-agents" role="tabpanel" aria-labelledby="mode-tab-agents">
+          <>
+          <section
+            className={cn("view agent-shell", state.settings.agentRailCollapsed && "rail-collapsed", showProgressCol && "has-progress", showPreviewCol && "has-preview")}
+            style={{ "--progress-w": `${paneWidths.progress}px`, "--preview-w": `${paneWidths.preview}px` } as CSSProperties}
+            id="panel-agents"
+            role="tabpanel"
+            aria-labelledby="mode-tab-agents"
+          >
             {state.settings.agentRailCollapsed ? (
               <div className="ag-rail">
                 <button
                   className="icon-btn"
-                  onClick={() => updateSettings({ agentRailCollapsed: false })}
+                  onClick={() => {
+                    /* While a pane is open the rail returns as an overlay
+                       (remembered state stays intact for restore). */
+                    if (showProgressCol || showPreviewCol) setRailOverlayOpen(true)
+                    else updateSettings({ agentRailCollapsed: false })
+                  }}
                   title="Show sessions"
                   aria-label="Show sessions"
                   aria-expanded={false}
@@ -2711,6 +2829,56 @@ export default function App() {
               smart={!!selectedModel}
             />
             )}
+            {showProgressCol ? (
+              <div className="ag-pane ag-pane-progress" aria-label="Progress pane">
+                {permissionAsk ? (
+                  <AgentPermissionPanel
+                    permission={permissionAsk}
+                    permissionNote={
+                      activeProject
+                        ? `Project: ${activeProject.name} — "Always allow" is stored on this project.`
+                        : `No project folder — "Always allow" applies to this session only.`
+                    }
+                    onSettlePermission={settlePermission}
+                  />
+                ) : null}
+                {agentQuestion ? (
+                  <AgentQuestionPanel question={agentQuestion} onAnswerQuestion={answerQuestion} />
+                ) : null}
+                {agentPlan ? (
+                  <AgentPlanPanel
+                    plan={agentPlan}
+                    onPlanText={editPlanText}
+                    onApprovePlan={approvePlan}
+                    onDismissPlan={dismissPlan}
+                  />
+                ) : null}
+                {progressOpen ? (
+                  <AgentProgressPanel
+                    todo={agentTodo}
+                    running={agentBusy}
+                    startedAt={agentBusy && activeAgentSession?.turns.length
+                      ? activeAgentSession.turns[activeAgentSession.turns.length - 1].at
+                      : null}
+                    events={activeAgentSession?.turns.length
+                      ? activeAgentSession.turns[activeAgentSession.turns.length - 1].events
+                      : []}
+                    lastRun={lastAgentRun}
+                    copiedKey={copied}
+                    onCopy={copy}
+                  />
+                ) : null}
+              </div>
+            ) : null}
+            {showProgressCol ? (
+              <div
+                className="ag-resizer"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize progress pane"
+                onPointerDown={(event) => startPaneDrag("progress", event)}
+              />
+            ) : null}
             <div className="ag-center">
               {/* Redesign header row: Progress/Preview pane toggles on the
                   left, Export (whole session) on the right. The stage keeps
@@ -2719,7 +2887,7 @@ export default function App() {
                 <div className="ag-toolbar-left">
                   <button
                     className={cn("icon-btn", progressOpen && "active")}
-                    onClick={() => setProgressOpen((value) => !value)}
+                    onClick={toggleProgressPane}
                     title={progressOpen ? "Hide progress panel" : "Show progress panel"}
                     aria-label={progressOpen ? "Hide progress panel" : "Show progress panel"}
                     aria-pressed={progressOpen}
@@ -2728,7 +2896,7 @@ export default function App() {
                   </button>
                   <button
                     className={cn("icon-btn", previewOpen && "active")}
-                    onClick={() => setPreviewOpen((value) => !value)}
+                    onClick={togglePreviewPane}
                     title={previewOpen ? "Hide preview panel" : "Show preview panel"}
                     aria-label={previewOpen ? "Hide preview panel" : "Show preview panel"}
                     aria-pressed={previewOpen}
@@ -2791,38 +2959,25 @@ export default function App() {
                 }
               />
             </div>
-            <AgentDocks
-              todo={agentTodo}
-              running={agentBusy}
-              startedAt={agentBusy && activeAgentSession?.turns.length
-                ? activeAgentSession.turns[activeAgentSession.turns.length - 1].at
-                : null}
-              events={activeAgentSession?.turns.length
-                ? activeAgentSession.turns[activeAgentSession.turns.length - 1].events
-                : []}
-              lastRun={lastAgentRun}
-              permission={permissionAsk}
-              permissionNote={
-                activeProject
-                  ? `Project: ${activeProject.name} — "Always allow" is stored on this project.`
-                  : `No project folder — "Always allow" applies to this session only.`
-              }
-              onSettlePermission={settlePermission}
-              question={agentQuestion}
-              onAnswerQuestion={answerQuestion}
-              plan={agentPlan}
-              onPlanText={editPlanText}
-              onApprovePlan={approvePlan}
-              onDismissPlan={dismissPlan}
-              previewUrl={previewUrl}
-              previewNonce={previewNonce}
-              onClosePreview={() => setPreviewUrl(null)}
-              onReloadPreview={() => setPreviewNonce((value) => value + 1)}
-              copiedKey={copied}
-              onCopy={copy}
-              showProgress={progressOpen}
-              showPreview={previewOpen}
-            />
+            {showPreviewCol ? (
+              <div
+                className="ag-resizer"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize preview pane"
+                onPointerDown={(event) => startPaneDrag("preview", event)}
+              />
+            ) : null}
+            {showPreviewCol ? (
+              <div className="ag-pane ag-pane-preview" aria-label="Preview pane">
+                <AgentPreviewPanel
+                  previewUrl={previewUrl}
+                  previewNonce={previewNonce}
+                  onClosePreview={() => setPreviewUrl(null)}
+                  onReloadPreview={() => setPreviewNonce((value) => value + 1)}
+                />
+              </div>
+            ) : null}
             {approvalNudgeOpen ? (
               <div className="approval-nudge" role="status">
                 <p>Feeling stuck? Approve for me for faster performance. We respect your privacy.</p>
@@ -2851,6 +3006,34 @@ export default function App() {
               </div>
             ) : null}
           </section>
+          {/* Sidebar overlays (Phase E): while a pane is open, re-opening the
+              sessions rail or the nav sidebar floats it above a backdrop;
+              clicking the backdrop closes it again (remembered state stays
+              untouched so closing all panes restores the original layout). */}
+          {railOverlayOpen ? (
+            <div className="ag-overlay-backdrop" onMouseDown={() => setRailOverlayOpen(false)}>
+              <div className="ag-overlay-rail" onMouseDown={(event) => event.stopPropagation()} role="dialog" aria-label="Sessions">
+                <AgentSessions
+                  entries={sessionEntries}
+                  activeId={activeSessionId}
+                  running={agentBusy}
+                  projectName={activeProject?.name ?? null}
+                  projectPath={activeProject?.rootPath ?? null}
+                  toolsActive={agentToolsAvailable() && !!activeProject?.rootPath}
+                  canPickFolder={qdmAvailable()}
+                  grants={GRANT_LABELS.map(({ tool, label }) => ({ tool, label, granted: !!activeProject?.permissions?.includes(tool) }))}
+                  onNew={newAgentSession}
+                  onSelect={(id) => { selectAgentSession(id); setRailOverlayOpen(false) }}
+                  onDelete={deleteAgentSession}
+                  onPickFolder={() => void pickAgentFolder()}
+                  onRevoke={revokeGrant}
+                  onCollapse={() => setRailOverlayOpen(false)}
+                  smart={!!selectedModel}
+                />
+              </div>
+            </div>
+          ) : null}
+          </>
           )
         })()}
 

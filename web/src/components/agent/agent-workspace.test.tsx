@@ -3,7 +3,13 @@ import type { ComponentProps } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 
 import { AgentComposer } from "./AgentComposer"
-import { AgentDocks } from "./AgentDocks"
+import {
+  AgentPermissionPanel,
+  AgentPlanPanel,
+  AgentPreviewPanel,
+  AgentProgressPanel,
+  AgentQuestionPanel,
+} from "./AgentDocks"
 import { AgentFolderBar } from "./AgentFolderBar"
 import { AgentSessions } from "./AgentSessions"
 import { AgentStage } from "./AgentStage"
@@ -243,99 +249,50 @@ describe("AgentFolderBar", () => {
   })
 })
 
-function docksProps(overrides: Partial<ComponentProps<typeof AgentDocks>> = {}) {
+function progressProps(overrides: Partial<ComponentProps<typeof AgentProgressPanel>> = {}) {
   return {
     todo: [] as string[],
     running: false,
     startedAt: null,
-    events: [] as ComponentProps<typeof AgentDocks>["events"],
+    events: [] as ComponentProps<typeof AgentProgressPanel>["events"],
     lastRun: null,
-    permission: null,
-    permissionNote: "No project folder — \"Always allow\" applies to this session only.",
-    onSettlePermission: noop,
-    question: null,
-    onAnswerQuestion: noop,
-    plan: null,
-    onPlanText: noop,
-    onApprovePlan: noop,
-    onDismissPlan: noop,
-    previewUrl: null,
-    previewNonce: 0,
-    onClosePreview: noop,
-    onReloadPreview: noop,
     copiedKey: null,
     onCopy: noop,
     ...overrides,
   }
 }
 
-describe("AgentDocks", () => {
-  it("shows the todo list and an honest preview empty state", () => {
-    const html = renderToStaticMarkup(<AgentDocks {...docksProps({ todo: ["Reproduce the failure"] })} />)
+function previewProps(overrides: Partial<ComponentProps<typeof AgentPreviewPanel>> = {}) {
+  return {
+    previewUrl: null as string | null,
+    previewNonce: 0,
+    onClosePreview: noop,
+    onReloadPreview: noop,
+    ...overrides,
+  }
+}
+
+describe("AgentProgressPanel", () => {
+  it("shows the todo list and the honest empty state", () => {
+    const html = renderToStaticMarkup(<AgentProgressPanel {...progressProps({ todo: ["Reproduce the failure"] })} />)
     expect(html).toContain("Progress")
     expect(html).toContain("Reproduce the failure")
-    expect(html).toContain("Preview")
-    expect(html).toContain("npm run dev")
-    expect(html).not.toContain("<iframe")
+    expect(html).not.toContain("No todo list yet")
   })
 
   it("summarises the last run with a copy action", () => {
     const html = renderToStaticMarkup(
-      <AgentDocks {...docksProps({ lastRun: { status: "done", steps: 3, text: "All checks pass." } })} />,
+      <AgentProgressPanel {...progressProps({ lastRun: { status: "done", steps: 3, text: "All checks pass." } })} />,
     )
     expect(html).toContain("Completed in 3 steps")
     expect(html).toContain("All checks pass.")
     expect(html).toContain('aria-label="Copy final answer"')
   })
 
-  it("renders a sandboxed iframe when a preview URL exists", () => {
-    const html = renderToStaticMarkup(
-      <AgentDocks {...docksProps({ running: true, previewUrl: "http://127.0.0.1:5173" })} />,
-    )
-    expect(html).toContain('src="http://127.0.0.1:5173"')
-    expect(html).toContain('aria-label="Close preview"')
-    expect(html).toContain('aria-label="Reload preview"')
-  })
-
-  it("pins the permission dock with all three decisions", () => {
-    const html = renderToStaticMarkup(
-      <AgentDocks {...docksProps({ permission: { tool: "fs_write", args: { path: "src/app.ts" } } })} />,
-    )
-    expect(html).toContain('role="alertdialog"')
-    expect(html).toContain("Allow <code>fs_write</code>")
-    expect(html).toContain("src/app.ts")
-    expect(html).toContain(">Deny<")
-    expect(html).toContain(">Allow once<")
-    expect(html).toContain(">Always allow<")
-  })
-
-  it("pins a question dock with option chips and an answer box", () => {
-    const html = renderToStaticMarkup(
-      <AgentDocks {...docksProps({ question: { text: "Which database?", options: ["sqlite", "postgres"] } })} />,
-    )
-    expect(html).toContain("Which database?")
-    expect(html).toContain(">sqlite<")
-    expect(html).toContain(">postgres<")
-    expect(html).toContain('aria-label="Answer"')
-    expect(html).toContain(">Answer<")
-  })
-
-  it("shows an editable plan dock with approve and dismiss actions", () => {
-    const html = renderToStaticMarkup(
-      <AgentDocks {...docksProps({ plan: { text: "1. Reproduce\n2. Fix the guard" } })} />,
-    )
-    expect(html).toContain('aria-label="Plan review"')
-    expect(html).toContain("Reproduce")
-    expect(html).toContain("Fix the guard")
-    expect(html).toContain("Approve &amp; run")
-    expect(html).toContain("Dismiss")
-    expect(html).toContain('aria-label="Edit plan"')
-  })
-
   it("turns proc_run tool events into live command rows", () => {
     const html = renderToStaticMarkup(
-      <AgentDocks
-        {...docksProps({
+      <AgentProgressPanel
+        {...progressProps({
           running: true,
           startedAt: Date.now(),
           events: [
@@ -353,5 +310,66 @@ describe("AgentDocks", () => {
     expect(html).toContain("Audit the parser")
     expect(html).toContain("Sub-agents")
     expect(html).toContain("Executing tools")
+  })
+})
+
+describe("AgentPreviewPanel", () => {
+  it("shows an honest empty state without an iframe", () => {
+    const html = renderToStaticMarkup(<AgentPreviewPanel {...previewProps()} />)
+    expect(html).toContain("Preview")
+    expect(html).toContain("npm run dev")
+    expect(html).not.toContain("<iframe")
+  })
+
+  it("renders a sandboxed iframe when a preview URL exists", () => {
+    const html = renderToStaticMarkup(<AgentPreviewPanel {...previewProps({ previewUrl: "http://127.0.0.1:5173" })} />)
+    expect(html).toContain('src="http://127.0.0.1:5173"')
+    expect(html).toContain('aria-label="Close preview"')
+    expect(html).toContain('aria-label="Reload preview"')
+  })
+})
+
+describe("AgentPermissionPanel", () => {
+  it("pins the permission dock with all three decisions", () => {
+    const html = renderToStaticMarkup(
+      <AgentPermissionPanel
+        permission={{ tool: "fs_write", args: { path: "src/app.ts" } }}
+        permissionNote={'No project folder — "Always allow" applies to this session only.'}
+        onSettlePermission={noop}
+      />,
+    )
+    expect(html).toContain('role="alertdialog"')
+    expect(html).toContain("Allow <code>fs_write</code>")
+    expect(html).toContain("src/app.ts")
+    expect(html).toContain(">Deny<")
+    expect(html).toContain(">Allow once<")
+    expect(html).toContain(">Always allow<")
+  })
+})
+
+describe("AgentQuestionPanel", () => {
+  it("pins a question dock with option chips and an answer box", () => {
+    const html = renderToStaticMarkup(
+      <AgentQuestionPanel question={{ text: "Which database?", options: ["sqlite", "postgres"] }} onAnswerQuestion={noop} />,
+    )
+    expect(html).toContain("Which database?")
+    expect(html).toContain(">sqlite<")
+    expect(html).toContain(">postgres<")
+    expect(html).toContain('aria-label="Answer"')
+    expect(html).toContain(">Answer<")
+  })
+})
+
+describe("AgentPlanPanel", () => {
+  it("shows an editable plan dock with approve and dismiss actions", () => {
+    const html = renderToStaticMarkup(
+      <AgentPlanPanel plan={{ text: "1. Reproduce\n2. Fix the guard" }} onPlanText={noop} onApprovePlan={noop} onDismissPlan={noop} />,
+    )
+    expect(html).toContain('aria-label="Plan review"')
+    expect(html).toContain("Reproduce")
+    expect(html).toContain("Fix the guard")
+    expect(html).toContain("Approve &amp; run")
+    expect(html).toContain("Dismiss")
+    expect(html).toContain('aria-label="Edit plan"')
   })
 })
