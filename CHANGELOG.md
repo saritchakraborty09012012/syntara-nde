@@ -5,7 +5,46 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.0.8] - 2026-10-12
+
 ### Added
+- **Effort levels for agent runs.** A `Low / Medium / High / Extreme` select
+  sits beside the mode select in the agent composer. Each level contributes
+  its own guidance prompt, step budget (4 / 8 / 14 / 22) and sampling
+  temperature (0.3 / 0.2 / 0.15 / 0.1) — Extreme weighs alternatives and
+  self-critiques before replying, Low takes the first sound approach —
+  composed on top of the mode's base prompt, so one dropdown gives the same
+  task proportionate scrutiny without a settings round-trip.
+- **Folder-grouped agent sessions with search.** Sessions can live in named
+  folders in the sessions rail, grouped into collapsible accordions with
+  per-folder counts; the folder travels with the session record. A
+  typo-tolerant session search sits above the list: every query term must
+  match, with re-ranking when the strict pass finds nothing.
+- **Universal attachments in both composers.** The paperclip accepts any file
+  type. Text up to 256 KB is read into the conversation; larger or binary
+  files attach as name-and-size chips that say plainly their content was not
+  read — no silent truncation. Chat images still reach vision models as
+  images; the agent loop stays text-only and presents the rest as metadata.
+- **PDF export.** Export in chat and in the agent workspace downloads a PDF
+  instead of a text file, written by a small in-repo writer (Helvetica,
+  automatic pagination, Latin-1 sanitisation with a `?` fallback for
+  characters the base font cannot draw — no heavyweight PDF dependency).
+  Chat exports carry the transcript; agent exports carry every task with its
+  mode, status, tool steps and final answer.
+- **A split-pane agent workspace.** Progress and preview are real panes
+  flanking the transcript (`sessions | progress | transcript | preview`) with
+  pointer-drag resizers (240–520 px each). A run start opens Progress, a
+  discovered preview URL opens Preview, and a pending permission, question or
+  plan prompt brings the pane those pins ride on top of. Opening a pane
+  collapses the nav sidebar and the sessions rail — reopening either floats
+  it over a backdrop — and closing every pane restores the exact previous
+  layout. Below 1320 px the panes fold beneath the transcript instead.
+- **Plan, question and permission prompts as first-class UI, plus `web_fetch`
+  and sub-agents.** An editable plan review (approve or dismiss),
+  structured questions with option chips, and a permission dock with Deny /
+  Allow once / Always allow pin above the progress pane while a run waits on
+  you; runs can fetch URLs and delegate to sub-agents, and the workspace
+  header carries the Progress/Preview toggles and Export.
 
 - **A playground page on the site** (`playground.html`, linked from the nav and
   the sitemap): a minimal OpenAI-compatible chat client that connects the
@@ -44,11 +83,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   runtime status dot while it is collapsed — and clicking the badge reopens the
   same dialog. The check runs only in the Tauri build: a browser deployment has
   nothing to update itself with, so it never makes the request. The installed
-  version comes from `tauri.conf.json`, which this release syncs to `1.0.7`
-  together with `Cargo.toml`/`Cargo.lock`; versions that disagree (the old
-  `0.1.0`) would have made every build look permanently out of date.
+  version comes from `tauri.conf.json`, kept in step with the release version
+  (`1.0.8`) together with `Cargo.toml`/`Cargo.lock`; versions that disagree
+  (the old `0.1.0`) would have made every build look permanently out of date.
 
 ### Changed
+- **Chat header and composer rebuilt for parity with agent mode.** The chat
+  header keeps only Reasoning and Export, right-aligned; the Setup panel and
+  its raw temperature and max-tokens sliders are gone (generation settings
+  belong in Settings). The composer footer carries attach and the model
+  selector bottom-left in the same chip style the agent composer uses, fed
+  from the same shared model list.
+- **The large "New chat" button is gone.** A "+" now sits beside the history
+  toggle in the conversation-list head and at the top of the collapsed
+  history rail, where the list itself lives.
+- **Agent workspace chrome.** Rail toggles moved into each view's header,
+  voice language became per-mode (Chat and Agent each keep their own, beside
+  the global fallback), and Settings is organised into cards (About,
+  Advanced, Help, Chat).
 
 - **Model-catalog curation pass.** `openai/gpt-oss-20b` and `openai/gpt-oss-120b`
   listed both the canonical sharded weights *and* the repo's `original/`
