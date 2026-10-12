@@ -870,9 +870,12 @@ body.ag-resizing { user-select: none; cursor: col-resize; }
 .ag-preview-empty code { font-family: 'Share Tech Mono', ui-monospace, monospace; color: var(--accent); font-size: 11px; }
 
 /* responsive — agent workspace tiers. Thresholds account for the expanded
-   278px suit rail (the sidebar only auto-collapses ≤1100px). ≤1319px folds
-   the panes under the workspace row (resizers disable); ≤899px stacks
-   everything. */
+   278px suit rail (the sidebar only auto-collapses ≤1100px). The panes are
+   full-height columns at every desktop width — like VS Code's sidebars they
+   flank the transcript and never fold into rows beneath it; narrower tiers
+   only shrink the pane widths (the choreography collapses the nav sidebar +
+   sessions rail while a pane is open, which is what frees the space).
+   ≤899px stacks everything. */
 @media (max-width: 1559px) {
   .view.agent-shell { gap: 10px; padding: 12px; }
   .view.agent-shell { grid-template-columns: 240px minmax(0, 1fr); }
@@ -885,24 +888,11 @@ body.ag-resizing { user-select: none; cursor: col-resize; }
   .view.agent-shell.has-progress.has-preview.rail-collapsed { grid-template-columns: 46px var(--progress-w, 300px) 6px minmax(0, 1fr) 6px var(--preview-w, 330px); }
   .ag-hint { max-width: 170px; }
 }
-@media (max-width: 1319px) {
-  .view.agent-shell,
-  .view.agent-shell.has-progress,
-  .view.agent-shell.has-preview,
-  .view.agent-shell.has-progress.has-preview,
-  .view.agent-shell.rail-collapsed,
-  .view.agent-shell.has-progress.rail-collapsed,
-  .view.agent-shell.has-preview.rail-collapsed,
-  .view.agent-shell.has-progress.has-preview.rail-collapsed {
-    grid-template-columns: 232px minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) auto;
-  }
-  .ag-pane-progress { grid-row: 2; grid-column: 1; max-height: 240px; }
-  .ag-pane-preview { grid-row: 2; grid-column: 2; max-height: 240px; }
-  /* A lone folded pane spans the full bottom row. */
-  .view.agent-shell:has(.ag-pane-progress):not(:has(.ag-pane-preview)) .ag-pane-progress { grid-column: 1 / -1; }
-  .view.agent-shell:has(.ag-pane-preview):not(:has(.ag-pane-progress)) .ag-pane-preview { grid-column: 1 / -1; }
-  .ag-resizer { display: none; }
+@media (max-width: 1199px) {
+  /* The drag state reaches the grid as inline custom properties, which beat
+     normal rules; !important lets this tier clamp the widths anyway so two
+     panes plus both sidebars never squeeze the transcript out. */
+  .view.agent-shell { --progress-w: 250px !important; --preview-w: 270px !important; }
 }
 @media (max-width: 899px) {
   .view.agent-shell { display: flex; flex-direction: column; overflow: auto; padding: 10px; }
@@ -966,9 +956,9 @@ body.ag-resizing { user-select: none; cursor: col-resize; }
   .ag-preview-frame { min-height: 140px; }
   .ag-timeline { padding-top: 14px; padding-bottom: 14px; }
 }
-/* Cap dock height only in the wide (side-by-side) layout — the stacked
-   layout at ≤899px must keep scrolling instead of clipping. */
-@media (max-height: 620px) and (min-width: 900px) { .ag-pane { max-height: 170px; } }
+/* Panes stay full-height columns on short desktop viewports too — the
+   grid stretches them and their bodies scroll (the old dock-height cap
+   would leave dead space beneath a capped pane). */
 
 /* ==================================================== phase 3 + 4 additions
    Pinned dock panels (permission / question / plan), run progress details,

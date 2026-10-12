@@ -970,8 +970,9 @@ export default function App() {
     else updateSettings({ navCollapsed: !state.settings.navCollapsed })
   }
   /* Pointer-drag resizer between the pane and the transcript. Widths live
-     in state and reach the grid through CSS custom properties, so the
-     responsive media queries can still override the column structure. */
+     in state and reach the grid through CSS custom properties; narrow-tier
+     media queries clamp those widths (with !important) so two panes plus
+     both sidebars never squeeze the transcript out. */
   const startPaneDrag = (which: "progress" | "preview", event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault()
     const startX = event.clientX
@@ -996,6 +997,20 @@ export default function App() {
   useEffect(() => { if (agentBusy) openProgressPane() }, [agentBusy])
   useEffect(() => { if (previewUrl) openPreviewPane() }, [previewUrl])
   useEffect(() => { if (permissionAsk || agentQuestion || agentPlan) openProgressPane() }, [permissionAsk, agentQuestion, agentPlan])
+  /* The split panes are full-height columns that flank the transcript (VS
+     Code sidebar behaviour) — the grid never folds them into rows. Apply
+     the same choreography to the state we load with: panes open on first
+     paint or on entering agent mode means the nav sidebar and sessions rail
+     yield first, exactly as when a pane is toggled open, so the transcript
+     keeps a usable width on narrow screens. */
+  useEffect(() => {
+    if (view !== "agents" || (!progressOpen && !previewOpen)) return
+    const navCollapsed = state.settings.navCollapsed
+    const railCollapsed = state.settings.agentRailCollapsed ?? false
+    if (navCollapsed && railCollapsed) return
+    if (!sidebarRecall.current) sidebarRecall.current = { navCollapsed, agentRailCollapsed: railCollapsed }
+    updateSettings({ navCollapsed: true, agentRailCollapsed: true })
+  }, [view, progressOpen, previewOpen])
 
   useEffect(() => {
     if (!connected) return
