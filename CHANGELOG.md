@@ -5,6 +5,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.0.9] - 2026-10-12
+
+### Fixed
+
+- **Progress and preview opened under the transcript instead of beside
+  it.** A responsive rule meant for narrow screens folded both panes
+  into a bottom row — and hid their resizers — at ≤1319 CSS px, which
+  includes a 1920 px monitor at 150 % display scaling. The panes now
+  behave like VS Code's sidebars at every desktop width: full-height
+  columns flanking the transcript, with narrower screens only clamping
+  pane widths instead of reflowing them into rows. The same rule forced
+  a collapsed sessions rail to 232 px wide; it is 46 px again — just
+  its toggle button. Entering agent mode with panes open now also
+  applies the usual choreography (nav sidebar and sessions rail
+  collapse, restored when the last pane closes), which keeps the
+  transcript usable at 1280 px.
+
 ## [1.0.8] - 2026-10-12
 
 ### Added
