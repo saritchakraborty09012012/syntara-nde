@@ -16,6 +16,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **The logo and the menu button sit stacked on the closed rail** — side by
   side left no breathing room in a 92 px column. The floating menu restores
   the horizontal lockup with the brand text.
+- **Agent suggestion chips sit in one sideways-scrolling row.** The four
+  starter prompts used to stack above the textarea, growing the composer to
+  half the workspace before anything was typed; they now share a single
+  row that scrolls horizontally (chips keep their full text), so the box
+  is one line shorter and the control row stays in view.
 - **`CONTRIBUTING.md` rewritten** to describe this repository (layout,
   dev setup, the exact checks CI runs, PR expectations) instead of another
   project's guide.
