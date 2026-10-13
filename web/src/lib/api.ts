@@ -288,6 +288,64 @@ export interface ChatOnceResult {
   usage: TokenUsage | null
 }
 
+/* Local runtimes drift from the OpenAI reference in ways that crash an
+   otherwise healthy run: `function.arguments` returned as a real object,
+   a missing `id`, `content` returned as an array of parts. Normalising at
+   the transport keeps the loop's strict `WireToolCall`/string contracts
+   honest instead of failing on `.length` of an object. */
+function normalizeToolCalls(raw: unknown): WireToolCall[] {
+  if (!Array.isArray(raw)) return []
+  const calls: WireToolCall[] = []
+  for (let index = 0; index < raw.length; index += 1) {
+    const entry: unknown = raw[index]
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue
+    const record = entry as Record<string, unknown>
+    const fn = record.function && typeof record.function === "object" && !Array.isArray(record.function)
+      ? (record.function as Record<string, unknown>)
+      : null
+    const name = (fn && typeof fn.name === "string" ? fn.name : null)
+      ?? (typeof record.name === "string" ? record.name : "")
+    if (!name) continue
+    const args = fn?.arguments ?? record.arguments
+    const id = (typeof record.id === "string" && record.id ? record.id : null)
+      ?? (typeof record.call_id === "string" ? record.call_id : "")
+    calls.push({
+      id: id || `call_${index + 1}`,
+      type: "function",
+      function: {
+        name,
+        arguments: typeof args === "string" ? args : args === null || args === undefined ? "{}" : JSON.stringify(args),
+      },
+    })
+  }
+  return calls
+}
+
+function normalizeContent(raw: unknown): string | null {
+  if (raw === null || raw === undefined) return null
+  if (typeof raw === "string") return raw
+  if (Array.isArray(raw)) {
+    const text = raw
+      .map((part) => {
+        if (typeof part === "string") return part
+        if (part && typeof part === "object") {
+          const record = part as Record<string, unknown>
+          if (typeof record.text === "string") return record.text
+          if (typeof record.content === "string") return record.content
+        }
+        return ""
+      })
+      .join("")
+    return text
+  }
+  if (typeof raw === "object") {
+    const record = raw as Record<string, unknown>
+    if (typeof record.text === "string") return record.text
+    return JSON.stringify(raw)
+  }
+  return String(raw)
+}
+
 export async function chatOnce(options: ChatOnceOptions): Promise<ChatOnceResult> {
   const response = await fetch(endpoint(options.baseUrl, "chat/completions"), {
     method: "POST",
@@ -304,13 +362,13 @@ export async function chatOnce(options: ChatOnceOptions): Promise<ChatOnceResult
   })
   if (!response.ok) await fail(response)
   const body = (await response.json()) as {
-    choices?: Array<{ message?: { content?: string | null; tool_calls?: WireToolCall[] }; finish_reason?: string | null }>
+    choices?: Array<{ message?: { content?: unknown; tool_calls?: unknown }; finish_reason?: string | null }>
     usage?: TokenUsage | null
   }
   const choice = body.choices?.[0]
   return {
-    content: choice?.message?.content ?? null,
-    toolCalls: choice?.message?.tool_calls ?? [],
+    content: normalizeContent(choice?.message?.content),
+    toolCalls: normalizeToolCalls(choice?.message?.tool_calls),
     finishReason: choice?.finish_reason ?? null,
     usage: body.usage ?? null,
   }

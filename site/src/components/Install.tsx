@@ -8,7 +8,7 @@ const STEPS: Array<{ n: string; title: string; body: React.ReactNode }> = [
       <>
         Click your operating system above and the installer downloads straight to your machine
         — Windows <code className="text-terminal">.exe</code>, macOS{" "}
-        <code className="text-terminal">.dmg</code>, Linux{" "}
+        <code className="text-terminal">.dmg</code>, Linux and ChromeOS{" "}
         <code className="text-terminal">.AppImage</code>. No source code, no account.
       </>
     ),
@@ -19,7 +19,8 @@ const STEPS: Array<{ n: string; title: string; body: React.ReactNode }> = [
     body: (
       <>
         Run it. The installer offers the install folder, a Start Menu and desktop shortcut, and
-        launches Syntara when it finishes. Prefer the portable build? Every release also keeps a{" "}
+        launches Syntara when it finishes. On ChromeOS the same AppImage runs in the built-in
+        Linux container (Crostini). Prefer the portable build? Every release also keeps a{" "}
         <code className="text-terminal">.zip</code> /{" "}
         <code className="text-terminal">.tar.gz</code> on GitHub — unzip it and run{" "}
         <code className="text-terminal">./syntara</code>.

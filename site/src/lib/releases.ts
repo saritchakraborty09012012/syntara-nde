@@ -1,4 +1,4 @@
-export type Platform = "windows" | "macos" | "linux"
+export type Platform = "windows" | "macos" | "linux" | "chromeos"
 
 const REPO = "saritchakraborty09012012/syntara-nde"
 
@@ -20,6 +20,10 @@ export const INSTALLER_ASSET: Record<Platform, string> = {
   windows: "Syntara-Windows-x64-Setup.exe",
   macos: "Syntara-macOS-arm64.dmg",
   linux: "Syntara-Linux-x86_64.AppImage",
+  /* ChromeOS runs Linux binaries through Crostini (the built-in Linux
+     container), so it downloads the same AppImage as Linux — no separate
+     artifact exists and none is needed. */
+  chromeos: "Syntara-Linux-x86_64.AppImage",
 }
 
 /** Direct installer download for a platform: no page, no archive, no source. */
@@ -33,21 +37,24 @@ export const PORTABLE_ASSET: Record<Platform, string> = {
   windows: "windows-x86_64.zip",
   macos: "macos-arm64.tar.gz",
   linux: "linux-x86_64.tar.gz",
+  chromeos: "linux-x86_64.tar.gz",
 }
 
 export const ARCH_LABEL: Record<Platform, string> = {
   windows: "Windows installer · x64",
   macos: "macOS disk image · Apple Silicon",
   linux: "Linux AppImage · x86_64",
+  chromeos: "Linux AppImage · x86_64 (Crostini)",
 }
 
 export const PLATFORM_LABEL: Record<Platform, string> = {
   windows: "Windows",
   macos: "macOS",
   linux: "Linux",
+  chromeos: "ChromeOS",
 }
 
-export const PLATFORMS: Platform[] = ["windows", "macos", "linux"]
+export const PLATFORMS: Platform[] = ["windows", "macos", "linux", "chromeos"]
 
 /** Same floor as tools/verify_installer.py — catches v1.0.1’s 302 KB Windows impostor. */
 export const MIN_INSTALLER_BYTES = 5 * 1024 * 1024
@@ -59,6 +66,11 @@ export function detectPlatform(): Platform | "" {
   const p = raw.toLowerCase()
   if (p.includes("win")) return "windows"
   if (p.includes("mac")) return "macos"
+  /* ChromeOS reports itself as "Linux x86_64", so the CrOS marker in the
+     user agent has to win over the Linux fallback below - otherwise a
+     Chromebook is handed the generic Linux button and never sees that the
+     AppImage is exactly what its Linux container runs. */
+  if (p.includes("cros") || (navigator.userAgent || "").includes("CrOS")) return "chromeos"
   if (p.includes("linux") || p.includes("x11")) return "linux"
   return ""
 }
@@ -83,6 +95,7 @@ export const initialRelease = (): ReleaseState => ({
     windows: installerUrl("windows"),
     macos: installerUrl("macos"),
     linux: installerUrl("linux"),
+    chromeos: installerUrl("chromeos"),
   },
   sizes: {},
   kinds: {},

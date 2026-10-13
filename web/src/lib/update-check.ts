@@ -21,7 +21,7 @@ export type UpdateResult =
   | { status: "unavailable" }
 
 /* The desktop build is the only one with an installed version to update. */
-const isDesktop = (): boolean =>
+export const isDesktop = (): boolean =>
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
 
 /** Compare release tags as dotted numbers, not as strings.

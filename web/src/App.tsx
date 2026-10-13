@@ -107,6 +107,7 @@ import { mergePickerOptions, type PickerRow } from "@/lib/picker"
 import { canContinue, CONTINUE_NUDGE, createDeltaBuffer, retryAfterOf, retryDecision, statusOf } from "@/lib/send"
 import { FirstRunSetup } from "@/components/FirstRunSetup"
 import { ContextMeter } from "@/components/ContextMeter"
+import { StartupSplash, shouldShowSplash } from "@/components/StartupSplash"
 import {
   AUTO_COMPACT_PERCENT,
   compactChatHistory,
@@ -117,6 +118,7 @@ import {
 import { readGitBranch } from "@/lib/git-branch"
 import { dictationLanguage, speechRecognitionSupported, startDictation, type DictationHandle } from "@/lib/voice"
 import { runAgentLoop, type AgentEvent } from "@/lib/agent/loop"
+import { compactSessionHistory, sessionHistoryTurns, sessionMessages } from "@/lib/agent/history"
 import { agentToolsForMode, AGENT_TOOL_SPECS, SUBAGENT_TOOL_NAMES } from "@/lib/agent/tools"
 import { createAgentExecutor } from "@/lib/agent/execute"
 import { agentToolsAvailable } from "@/lib/agent-tools"
@@ -403,6 +405,9 @@ export default function App() {
      null elsewhere) and when chat auto-summary last folded the transcript. */
   const [gitBranch, setGitBranch] = useState<string | null>(null)
   const [lastCompactedAt, setLastCompactedAt] = useState<number | null>(null)
+  /* Desktop-only startup splash, once per launch; the in-app reduced-motion
+     setting suppresses it too (rendered as a condition below). */
+  const [splashDone, setSplashDone] = useState(() => !shouldShowSplash())
   /* Voice typing (Web Speech API): `listening` drives the mic's pulse and
      the draft is rebuilt live from final + interim transcript chunks. */
   const [listening, setListening] = useState(false)
@@ -614,8 +619,11 @@ export default function App() {
 
   /* Topbar context meter: the active model's catalog context string parsed
      to a token budget, and the estimated usage of what will be sent next.
-     Agent runs derive usage from the streamed event text (assistant output
-     plus tool payloads) because the loop owns its own message list. */
+     Chat counts the stored transcript; the agent counts the WHOLE session
+     (every prior turn's task + answer, live turns included) because that is
+     exactly what runAgent seeds into the next loop — the meter previously
+     showed only the last turn's text, so it read ~0% until a run blew the
+     window. */
   const activeModelMeta = useMemo(
     () => state.models.find((model) => model.id === effectiveModel) ?? null,
     [state.models, effectiveModel],
@@ -623,14 +631,9 @@ export default function App() {
   const modelContextLimit = useMemo(() => parseContextLimit(activeModelMeta?.context), [activeModelMeta])
   const topbarUsage = useMemo<ContextUsage | null>(() => {
     if (view === "agents") {
-      const lastTurn = activeAgentSession?.turns[activeAgentSession.turns.length - 1]
-      if (!lastTurn?.events.length) return null
-      const text = lastTurn.events.map((event) => {
-        if (event.type === "assistant_text") return event.text
-        if (event.type === "tool_end") return typeof event.output === "string" ? event.output : ""
-        return ""
-      }).join("\n")
-      return contextUsage([{ role: "assistant", content: text }], modelContextLimit)
+      const turns = activeAgentSession?.turns
+      if (!turns || turns.length === 0) return null
+      return contextUsage(sessionMessages(sessionHistoryTurns(turns)), modelContextLimit)
     }
     if (!activeConversation) return null
     return contextUsage(activeConversation.messages, modelContextLimit)
@@ -871,8 +874,11 @@ export default function App() {
      finished run. */
   const agentModelOptions = useMemo(() => pickerRows.map((row) => ({ value: row.id, label: row.label })), [pickerRows])
   /* Chat composer model chip label (redesign: the picker lives in the
-     textbox now, not the toolbar). */
-  const chatModelLabel = pickerRows.find((row) => row.id === effectiveModel)?.label ?? effectiveModel ?? "No model"
+     textbox now, not the toolbar). `||` not `??`: an empty effective model
+     (the normal pre-selection state) must fall back to "No model" instead
+     of rendering an empty chip. */
+  const chatModelLabel =
+    pickerRows.find((row) => row.id === effectiveModel)?.label || effectiveModel || "No model"
   const sessionEntries = useMemo(
     () => agentSessions.map((item) => ({
       id: item.id,
@@ -961,13 +967,20 @@ export default function App() {
       openPreviewPane()
     }
   }
-  /* The nav sidebar's collapse button doubles as the overlay opener while
-     a pane owns the grid (agent view only — other views have no panes). */
+  /* The menu button never re-flows the grid: the rail is the resting state
+     and the full menu floats over the window above a backdrop, exactly like
+     the sessions sidebar. Expanding in-grid would steal 186px from the
+     transcript and clip the agent workspace out of view on ~1280px screens.
+     Only one of the two overlays owns the screen at a time. */
   const toggleNavSidebar = () => {
-    if (navOverlayOpen) { setNavOverlayOpen(false); return }
-    const panesVisible = view === "agents" && (progressOpen || previewOpen)
-    if (panesVisible && state.settings.navCollapsed) setNavOverlayOpen(true)
-    else updateSettings({ navCollapsed: !state.settings.navCollapsed })
+    if (!navOverlayOpen) setRailOverlayOpen(false)
+    setNavOverlayOpen(!navOverlayOpen)
+  }
+  /* Leaving the menu through a destination closes it — the rail already
+     carries the same entries, so a lingering backdrop would only hide the
+     workspace the user just navigated to. */
+  const closeNavOverlay = () => {
+    if (navOverlayOpen) setNavOverlayOpen(false)
   }
   /* Pointer-drag resizer between the pane and the transcript. Widths live
      in state and reach the grid through CSS custom properties; narrow-tier
@@ -1958,6 +1971,13 @@ export default function App() {
     const existing = activeSessionId ? agentSessions.find((session) => session.id === activeSessionId) : undefined
     const firstTurn = !existing || existing.turns.length === 0
     const session = existing ?? createSession(model, now, activeProject ? { id: activeProject.id, name: activeProject.name } : null)
+    /* Follow-up memory: every earlier turn of this session becomes the
+       seeded history of the next run (task + final answer only — tool
+       rounds are per-turn working memory). It is folded to the same
+       auto-compact budget chat uses BEFORE the run starts, so a long
+       session opens under the limit instead of failing the first call. */
+    const priorTurns = compactSessionHistory(sessionHistoryTurns(session.turns), modelContextLimit)
+    if (priorTurns.droppedTurns > 0) setLastCompactedAt(Date.now())
     const patched: AgentSession = {
       ...session,
       title: session.turns.length ? session.title : titleFromTask(task),
@@ -1999,6 +2019,7 @@ export default function App() {
         model,
         systemPrompt: composedPrompt,
         task,
+        history: priorTurns.messages,
         tools,
         executor: createAgentExecutor(root, {
           baseUrl: state.settings.baseUrl,
@@ -2095,7 +2116,10 @@ export default function App() {
         sessionGrants,
         grantStore,
         signal: controller.signal,
-        onEvent: (event) => pushTurnEvent(patched.id, turn.id, event),
+        onEvent: (event) => {
+          if (event.type === "compacted") setLastCompactedAt(Date.now())
+          pushTurnEvent(patched.id, turn.id, event)
+        },
         maxSteps: agentMaxSteps,
         temperature: effort.temperature,
         maxTokens,
@@ -2541,15 +2565,20 @@ export default function App() {
   const runtimeStatus = loadingModel ? loadingModel.phase : connected ? "Running locally" : "Not connected"
 
   return (
-    <div className={cn("syntara-shell", state.settings.navCollapsed && "nav-collapsed", navOverlayOpen && "nav-overlay-open")}>
-      {/* Nav overlay backdrop: clicking outside the floating sidebar closes
-          it (only reachable from agent mode while a pane owns the grid). */}
+    <div className={cn("syntara-shell", "nav-collapsed", navOverlayOpen && "nav-overlay-open")}>
+      {/* Startup splash (desktop only, decorative, dismisses itself). */}
+      {!splashDone && !state.settings.reducedMotion ? (
+        <StartupSplash onDone={() => setSplashDone(true)} />
+      ) : null}
+      {/* Nav overlay backdrop: clicking outside the floating menu closes it.
+          The in-grid sidebar stays the 92px rail — only the floating copy is
+          expanded (see the .nav-overlay-open rules in index.css). */}
       {navOverlayOpen ? <div className="nav-overlay-backdrop" onMouseDown={() => setNavOverlayOpen(false)} /> : null}
       <aside className="syntara-sidebar">
         <div className="brand-lockup">
           <img src="/syntara-logo.png" alt="Syntara" className="brand-mark" />
           <div className="brand-text"><div className="brand-name">Syntara</div><div className="brand-by">By NDe</div></div>
-          <button className="icon-btn nav-collapse-btn" onClick={toggleNavSidebar} title={state.settings.navCollapsed ? "Expand sidebar" : "Collapse sidebar"} aria-label={state.settings.navCollapsed ? "Expand sidebar" : "Collapse sidebar"} aria-expanded={!state.settings.navCollapsed}>
+          <button className="icon-btn nav-collapse-btn" onClick={toggleNavSidebar} title={navOverlayOpen ? "Close menu" : "Open menu"} aria-label={navOverlayOpen ? "Close menu" : "Open menu"} aria-expanded={navOverlayOpen}>
             <PanelLeft size={15} />
           </button>
         </div>
@@ -2565,12 +2594,13 @@ export default function App() {
           const current = MODE_VIEWS.findIndex((id) => id === view)
           const next = MODE_VIEWS[(current + dir + MODE_VIEWS.length) % MODE_VIEWS.length]
           setView(next)
+          closeNavOverlay()
           document.getElementById(`mode-tab-${next}`)?.focus()
         }}>
           {MODE_VIEWS.map((id) => (
             <button key={id} id={`mode-tab-${id}`} type="button" role="tab"
               aria-selected={view === id} tabIndex={view === id ? 0 : -1}
-              className={cn("mode-btn", view === id && "active")} onClick={() => setView(id)}>
+              className={cn("mode-btn", view === id && "active")} onClick={() => { setView(id); closeNavOverlay() }}>
               {VIEW_LABELS[id]}
             </button>
           ))}
@@ -2581,7 +2611,7 @@ export default function App() {
         <div className="nav-section">
           <div className="nav-label">Menu</div>
           {NAV.map(({ id, icon: Icon }) => (
-            <button key={id} className={cn("nav-item", view === id && "active")} onClick={() => setView(id)}>
+            <button key={id} className={cn("nav-item", view === id && "active")} onClick={() => { setView(id); closeNavOverlay() }}>
               <Icon size={16} /> <span>{VIEW_LABELS[id]}</span>
               {id === "downloads" && state.downloads.some((item) => item.state === "downloading") ? <span className="nav-dot" /> : null}
             </button>
@@ -2814,9 +2844,12 @@ export default function App() {
                   className="icon-btn"
                   onClick={() => {
                     /* While a pane is open the rail returns as an overlay
-                       (remembered state stays intact for restore). */
-                    if (showProgressCol || showPreviewCol) setRailOverlayOpen(true)
-                    else updateSettings({ agentRailCollapsed: false })
+                       (remembered state stays intact for restore); the menu
+                       overlay yields so only one backdrop owns the screen. */
+                    if (showProgressCol || showPreviewCol) {
+                      setNavOverlayOpen(false)
+                      setRailOverlayOpen(true)
+                    } else updateSettings({ agentRailCollapsed: false })
                   }}
                   title="Show sessions"
                   aria-label="Show sessions"

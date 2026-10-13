@@ -85,6 +85,16 @@ describe("parseNativeArguments", () => {
     expect(parseNativeArguments("{oops")).toMatchObject({ ok: false })
     expect(parseNativeArguments("[1,2]")).toMatchObject({ ok: false })
   })
+
+  it("accepts an already-parsed object from runtimes that skip the string", () => {
+    expect(parseNativeArguments({ path: "b.txt" })).toEqual({ ok: true, args: { path: "b.txt" } })
+    expect(parseNativeArguments(undefined)).toEqual({ ok: true, args: {} })
+    expect(parseNativeArguments(null)).toEqual({ ok: true, args: {} })
+  })
+
+  it("rejects a list handed in directly", () => {
+    expect(parseNativeArguments([1, 2])).toMatchObject({ ok: false })
+  })
 })
 
 describe("buildRepairMessage", () => {

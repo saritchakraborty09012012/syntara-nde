@@ -66,7 +66,7 @@ CPU · GPU · RAM · VRAM · SSD
 - Python SDK
 - Developer CLI
 - n8n / VS Code / IDE integration surface
-- Windows, macOS and Linux desktop shell
+- Windows, macOS, Linux and ChromeOS (via the Linux container) desktop shell
 - Light / Dark / System UI modes
 - Open-source development model
 

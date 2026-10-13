@@ -72,7 +72,7 @@ const CAPABILITIES: Array<{ group: string; items: string[] }> = [
       "OpenAI-compatible local API bound to localhost",
       "Python SDK and developer CLI",
       "n8n and IDE integration surfaces",
-      "Windows, macOS and Linux desktop shells",
+      "Windows, macOS, Linux and ChromeOS desktop shells",
       "Light and dark interface themes",
     ],
   },
@@ -97,7 +97,7 @@ export function AboutPage() {
         kicker="About Syntara"
         title="The universal local AI layer."
         intro="Syntara is an open-source local-AI platform by NDe (NoirDemons). It takes the models you already have — or the ones you want to download — and makes them usable from a desktop app, a local API, an SDK and your own automation, without sending your prompts to someone else's server."
-        meta="Built by NDe · Released under the MIT License · Windows · macOS · Linux"
+        meta="Built by NDe · Released under the MIT License · Windows · macOS · Linux · ChromeOS"
       />
 
       <PageSection>

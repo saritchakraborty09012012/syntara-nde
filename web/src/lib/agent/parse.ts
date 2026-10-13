@@ -151,13 +151,19 @@ export function buildRepairMessage(reason: string): string {
   ].join("\n")
 }
 
-/* Native `function.arguments` is a string; a model that emits invalid JSON
-   there must not silently become `{}` (that would run a tool with default
-   arguments the user never approved). The caller feeds this error back as
-   the tool result instead. */
-export function parseNativeArguments(raw: string): { ok: true; args: Record<string, unknown> } | { ok: false; reason: string } {
+/* Native `function.arguments` is a string by spec, but local runtimes emit
+   the parsed object directly, and some omit it. Both are accepted. What must
+   NOT happen is silently becoming `{}` from malformed JSON — that would run
+   a tool with default arguments the user never approved — so an
+   unparsable value is fed back to the model as the tool result instead. */
+export function parseNativeArguments(raw: unknown): { ok: true; args: Record<string, unknown> } | { ok: false; reason: string } {
+  if (raw === null || raw === undefined || raw === "") return { ok: true, args: {} }
+  if (typeof raw === "object" && !Array.isArray(raw)) return { ok: true, args: raw as Record<string, unknown> }
+  if (typeof raw !== "string") {
+    return { ok: false, reason: `arguments were ${Array.isArray(raw) ? "a list" : `a ${typeof raw}`}, not a JSON object` }
+  }
   try {
-    const value: unknown = JSON.parse(raw || "{}")
+    const value: unknown = JSON.parse(raw)
     const obj = asObject(value)
     if (!obj) return { ok: false, reason: "arguments were not a JSON object" }
     return { ok: true, args: obj }

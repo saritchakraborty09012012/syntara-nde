@@ -19,7 +19,7 @@ export function DownloadBox({
         </span>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {PLATFORMS.map((os) => {
           const primary = os === "windows" || os === detected
           const size = release.sizes[os]

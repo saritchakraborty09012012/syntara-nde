@@ -5,6 +5,49 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The menu sidebar opens as an overlay instead of re-flowing the grid.**
+  The 92 px rail is now always the resting state; the menu button floats the
+  full sidebar over a backdrop (the same treatment as the sessions sidebar),
+  so opening it never steals 186 px from the transcript or clips the agent
+  workspace on a 1280 px screen. Picking a destination closes the overlay,
+  and the menu and sessions overlays no longer stack on top of each other.
+- **The logo and the menu button sit stacked on the closed rail** — side by
+  side left no breathing room in a 92 px column. The floating menu restores
+  the horizontal lockup with the brand text.
+- **`CONTRIBUTING.md` rewritten** to describe this repository (layout,
+  dev setup, the exact checks CI runs, PR expectations) instead of another
+  project's guide.
+
+### Added
+
+- **A desktop-only startup splash.** The mark rises with a soft glow, the
+  wordmark types itself, the tagline settles, and a synthesised wind-chime
+  plays (no audio file ships). It dismisses itself in ~3 s, skips on any
+  click or key press, and is skipped entirely under reduced motion; the web
+  build never shows it.
+- **ChromeOS as a download target.** Chromebooks are detected from the user
+  agent and offered the Linux AppImage that runs in the built-in Linux
+  container (Crostini) — the same artifact Linux gets, no separate build.
+- **Follow-up memory and auto-compact for agent sessions.** Each new run is
+  seeded with the session's earlier turns (task + final answer only), folded
+  to the same auto-compact budget chat uses before the request is built, and
+  the topbar context meter now counts the whole session instead of only the
+  last turn's text — it previously read ~0 % until a run overflowed the
+  window.
+
+### Fixed
+
+- **The chat model chip rendered empty** before a model was selected: an
+  empty model id fell through the `??` chain instead of the "No model"
+  label. The chip also has a stable width and accent styling now, so it
+  never collapses to a blank square.
+- **Tool calls from local runtimes are normalised at the transport.** A
+  response whose `function.arguments` is already an object, whose call `id`
+  is missing, or whose `content` is an array of parts no longer breaks the
+  agent loop; unparsable arguments are still refused rather than guessed.
+
 ## [1.0.9] - 2026-10-12
 
 ### Fixed

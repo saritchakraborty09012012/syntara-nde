@@ -18,6 +18,11 @@ export interface CompactOptions {
   maxChars: number
   /* Always keep this many trailing messages verbatim. */
   keepRecent: number
+  /* Messages pinned at the front that compaction must never touch. Defaults
+     to 2 (system + task); a seeded session history passes 1, because the
+     system prompt is still first but the task is the LAST user message —
+     pinning 2 would protect the newest turn and drop the older ones. */
+  headCount?: number
 }
 
 export const DEFAULT_COMPACT: CompactOptions = { maxChars: 24000, keepRecent: 8 }
@@ -74,8 +79,10 @@ export function compactMessages(messages: WireMessage[], options: CompactOptions
     return { messages, dropped: 0 }
   }
 
-  /* Index 0 is the system prompt, index 1 the task; both stay. */
-  const headCount = Math.min(2, messages.length)
+  /* Without a seeded history: index 0 is the system prompt, index 1 the
+     task. With one: index 0 system, then history, then the task — only the
+     system prompt is pinned. */
+  const headCount = Math.min(options.headCount ?? 2, messages.length)
   const windowStart = earliestSafeStart(messages, Math.max(headCount, messages.length - options.keepRecent))
   if (windowStart <= headCount) return { messages, dropped: 0 }
 

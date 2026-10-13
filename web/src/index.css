@@ -585,7 +585,10 @@ select option { background-color: var(--bg-soft); color: var(--text); }
 @media (min-width: 761px) {
   .syntara-shell.nav-collapsed { grid-template-columns: 92px minmax(0, 1fr); }
   .nav-collapsed .syntara-sidebar:after { display: none; }
-  .nav-collapsed .brand-lockup { justify-content: center; padding-left: 0; padding-right: 0; }
+  /* Closed rail: the logo sits above the menu button instead of beside it —
+     side by side left no breathing room in a 92px column. The floating menu
+     restores the horizontal lockup (.nav-overlay-open rules below). */
+  .nav-collapsed .brand-lockup { flex-direction: column; justify-content: center; align-items: center; gap: 12px; padding-left: 0; padding-right: 0; }
   .nav-collapsed .brand-lockup > div { display: none; }
   .nav-collapsed .nav-item span,
   .nav-collapsed .runtime-chip div,
@@ -601,7 +604,7 @@ select option { background-color: var(--bg-soft); color: var(--text); }
      expand toggle so the control never disappears. */
   .chat-view.history-collapsed { grid-template-columns: 48px minmax(0, 1fr); }
   .history-collapsed .composer-area { grid-column: 2; }
-  .nav-collapsed .nav-collapse-btn { margin-left: 8px; }
+  .nav-collapsed .nav-collapse-btn { margin-left: 0; }
 }
 
 /* Models hub tabs (#models, #models/installing, #models/installed). Each tab
@@ -745,7 +748,32 @@ body.ag-resizing { user-select: none; cursor: col-resize; }
 .ag-overlay-rail .ag-sessions { flex: 1; min-height: 0; box-shadow: 0 24px 70px rgba(0, 0, 0, .5); }
 .nav-overlay-backdrop { position: fixed; inset: 0; z-index: 55; background: rgba(4, 8, 14, .55); backdrop-filter: blur(2px); }
 .nav-overlay-open .syntara-sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: 278px; z-index: 56; box-shadow: 0 24px 70px rgba(0, 0, 0, .5); }
-.nav-overlay-open.nav-collapsed .syntara-sidebar { width: 92px; }
+/* The floating copy is the SAME element the rail renders, so every
+   .nav-collapsed rule above still applies to it. These overrides hand the
+   open menu its expanded dressing (labels, horizontal lockup, full mode
+   switch) while leaving the grid column untouched — no reflow, no clipped
+   workspace. Ordered after the .nav-collapsed block so equal-specificity
+   pairs (brand text, mode switch, mini actions) resolve in favour of the
+   open menu. */
+.nav-overlay-open .syntara-sidebar:after { display: block; }
+.nav-overlay-open .brand-lockup { flex-direction: row; justify-content: flex-start; align-items: center; gap: 11px; padding-left: 10px; padding-right: 10px; }
+.nav-overlay-open .brand-lockup > div { display: block; }
+.nav-overlay-open .nav-collapse-btn { margin-left: auto; }
+.nav-overlay-open .nav-item { justify-content: flex-start; }
+.nav-overlay-open .nav-item span { display: inline; }
+.nav-overlay-open .nav-label { display: block; }
+.nav-overlay-open .runtime-chip { justify-content: flex-start; }
+.nav-overlay-open .runtime-chip div { display: block; }
+.nav-overlay-open .sidebar-mini-actions { display: flex; }
+.nav-overlay-open .update-badge-collapsed { display: none; }
+.nav-overlay-open .mode-toggle { flex-direction: row; padding: 4px; margin-bottom: 12px; }
+.nav-overlay-open .mode-toggle .mode-btn { padding: 9px 8px; font-size: 13px; letter-spacing: .08em; }
+/* Phones keep the sidebar as a horizontal strip (it is not a rail there and
+   the menu button is hidden), so the floating treatment must not apply. */
+@media (max-width: 760px) {
+  .nav-overlay-open .syntara-sidebar { position: sticky; top: 0; left: auto; bottom: auto; width: auto; z-index: 30; box-shadow: none; }
+  .nav-overlay-backdrop { display: none; }
+}
 
 /* --- sessions rail --- */
 .ag-sessions { display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); overflow: hidden; }
@@ -843,6 +871,12 @@ body.ag-resizing { user-select: none; cursor: col-resize; }
 .ag-chip:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
 .ag-chip-label { max-width: 130px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ag-chip.model-chip .ag-chip-label { max-width: 150px; }
+/* Model chip reads as the primary selector in both composers (chat and
+   agent): wider than the mode/effort chips, accent-tinted, mono label —
+   and it can never collapse to an empty square before a model is picked. */
+.ag-chip.model-chip { min-width: 136px; height: 32px; border-color: var(--line-strong); background: linear-gradient(135deg, rgba(69, 224, 255, .10), rgba(47, 123, 255, .05)); color: var(--text); font-family: 'Share Tech Mono', ui-monospace, monospace; letter-spacing: .05em; }
+.ag-chip.model-chip:hover { border-color: var(--accent); box-shadow: 0 0 16px rgba(69, 224, 255, .16); }
+:root[data-theme="light"] .ag-chip.model-chip { background: linear-gradient(135deg, rgba(0, 140, 190, .10), rgba(28, 95, 214, .05)); }
 .ag-chip-caret { flex: none; opacity: .7; }
 .ag-chip select { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; border: 0; background: transparent; font: inherit; color: inherit; }
 .ag-composer .pending-strip { margin: 10px 14px 0; max-width: none; }
@@ -1081,3 +1115,69 @@ body.ag-resizing { user-select: none; cursor: col-resize; }
 @media (prefers-reduced-motion: reduce) {
   .ag-orb, .ag-rotator { animation: none; }
 }
+
+/* -- Desktop startup splash (components/StartupSplash.tsx) ------------- */
+.startup-splash {
+  position: fixed; inset: 0; z-index: 300;
+  display: flex; align-items: center; justify-content: center;
+  background: radial-gradient(120% 90% at 50% 58%, #0b1626 0%, #060a12 55%, #030509 100%);
+  cursor: pointer;
+  animation: splash-in 420ms ease both;
+  transition: opacity 320ms ease, transform 320ms ease;
+}
+.startup-splash.leaving { opacity: 0; transform: scale(1.04); pointer-events: none; }
+@keyframes splash-in { from { opacity: 0 } to { opacity: 1 } }
+
+/* "Soul" - a soft column of light lifting from below the mark. */
+.splash-soul {
+  position: absolute; left: 50%; bottom: -12%; width: 52vmin; height: 78vmin;
+  transform: translate(-50%, 55%);
+  background: radial-gradient(50% 62% at 50% 100%, rgba(69, 224, 255, .34), rgba(47, 123, 255, .14) 46%, transparent 72%);
+  filter: blur(7px); opacity: 0; pointer-events: none;
+  animation: splash-soul 1700ms cubic-bezier(.22, .61, .36, 1) 160ms both;
+}
+@keyframes splash-soul {
+  0% { opacity: 0; transform: translate(-50%, 58%) scaleY(.72) }
+  55% { opacity: 1 }
+  100% { opacity: .8; transform: translate(-50%, 6%) scaleY(1) }
+}
+
+.splash-core { position: relative; display: flex; flex-direction: column; align-items: center; gap: 20px; }
+.splash-logo {
+  width: 94px; height: 94px; object-fit: contain;
+  filter: drop-shadow(0 0 26px rgba(69, 224, 255, .35));
+  animation: splash-logo 800ms cubic-bezier(.22, .61, .36, 1) 220ms both;
+}
+@keyframes splash-logo {
+  from { opacity: 0; transform: translateY(16px) scale(.9) }
+  to { opacity: 1; transform: none }
+}
+
+.splash-word {
+  display: flex; align-items: center;
+  font-family: 'Orbitron', sans-serif; font-weight: 600;
+  font-size: clamp(28px, 5.4vw, 52px); letter-spacing: .3em; text-indent: .3em;
+  color: var(--text);
+}
+.splash-letter { opacity: 0; transition: opacity 90ms linear; }
+.splash-letter.on { opacity: 1; text-shadow: 0 0 20px rgba(69, 224, 255, .45); }
+.splash-caret { width: 3px; height: .92em; margin-left: -0.14em; background: var(--accent); opacity: 0; }
+.splash-caret.on { animation: splash-caret 760ms steps(1, end) infinite; }
+@keyframes splash-caret { 0%, 49% { opacity: 1 } 50%, 100% { opacity: 0 } }
+
+.splash-tagline {
+  font-family: 'Share Tech Mono', monospace; font-size: 13px;
+  letter-spacing: .26em; text-transform: uppercase; text-align: center;
+  color: var(--muted); max-width: 80vw;
+  opacity: 0; transform: translateY(8px);
+  transition: opacity 520ms ease, transform 520ms ease;
+}
+.splash-tagline.on { opacity: .9; transform: none; }
+
+.splash-hint {
+  position: absolute; bottom: 30px; left: 0; right: 0; text-align: center;
+  font-family: 'Share Tech Mono', monospace; font-size: 11px;
+  letter-spacing: .2em; text-transform: uppercase; color: var(--muted-2);
+  opacity: 0; animation: splash-hint 600ms ease 2000ms both;
+}
+@keyframes splash-hint { from { opacity: 0 } to { opacity: .75 } }

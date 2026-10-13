@@ -97,6 +97,10 @@ export interface LoopOptions {
   maxTokens?: number
   repairLimit?: number
   temperature?: number
+  /* Prior session turns seeded between the system prompt and the task, so a
+     follow-up run remembers earlier turns. Compaction pins only the system
+     prompt when history is present (see CompactOptions.headCount). */
+  history?: WireMessage[]
   /* `null` disables compaction (tests). */
   compact?: CompactOptions | null
   /* Injected in tests; defaults to `chatOnce` against the real endpoint. */
@@ -167,8 +171,10 @@ export async function runAgentLoop(options: LoopOptions): Promise<LoopResult> {
         signal: options.signal,
       }))
 
+  const history = options.history && options.history.length > 0 ? options.history : []
   let messages: WireMessage[] = [
     { role: "system", content: agentSystemPrompt(options.systemPrompt, options.tools) },
+    ...history,
     { role: "user", content: options.task },
   ]
   let steps = 0
@@ -238,7 +244,12 @@ export async function runAgentLoop(options: LoopOptions): Promise<LoopResult> {
 
   const maybeCompact = () => {
     if (options.compact === null) return
-    const outcome = compactMessages(messages, options.compact ?? DEFAULT_COMPACT)
+    const base = options.compact ?? DEFAULT_COMPACT
+    /* With seeded history the pinned set is the system prompt alone: the
+       task is the newest user message, so protecting 2 would compact the
+       wrong end of the list. */
+    const compact = history.length > 0 ? { ...base, headCount: base.headCount ?? 1 } : base
+    const outcome = compactMessages(messages, compact)
     if (outcome.dropped > 0) {
       messages = outcome.messages
       options.onEvent({ type: "compacted", dropped: outcome.dropped })
