@@ -32,7 +32,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   browser — they open a callout saying folder access lives in the desktop
   app, with a Download CTA (↗) straight to the download page.
 - **Every model dropdown carries an always-visible "Download models ↗"
-  entry** that opens the site's model catalogue in a new tab.
+  entry** that opens the app's Models view in a new tab.
 - **`CONTRIBUTING.md` rewritten** to describe this repository (layout,
   dev setup, the exact checks CI runs, PR expectations) instead of another
   project's guide.

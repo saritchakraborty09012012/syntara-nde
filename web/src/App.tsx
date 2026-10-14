@@ -104,7 +104,7 @@ import { CONSENT_VERSION, setupRequired, writeSetupRecord } from "@/lib/setup"
 import { volumeRows, type VolumeRow } from "@/lib/storage-plan"
 import { badgeLabel, groupComplete, metaFromInspect, pickInspectTarget } from "@/lib/inspect"
 import { mergePickerOptions, type PickerRow } from "@/lib/picker"
-import { MODEL_DOWNLOAD_VALUE, openSitePage, SITE_MODELS_URL } from "@/lib/site"
+import { APP_MODELS_URL, MODEL_DOWNLOAD_VALUE, openSitePage } from "@/lib/site"
 import { canContinue, CONTINUE_NUDGE, createDeltaBuffer, retryAfterOf, retryDecision, statusOf } from "@/lib/send"
 import { FirstRunSetup } from "@/components/FirstRunSetup"
 import { ContextMeter } from "@/components/ContextMeter"
@@ -2804,7 +2804,7 @@ export default function App() {
                         value={effectiveModel}
                         onChange={(event) => {
                           if (event.target.value === MODEL_DOWNLOAD_VALUE) {
-                            openSitePage(SITE_MODELS_URL)
+                            openSitePage(APP_MODELS_URL)
                             return
                           }
                           const row = pickerRows.find((item) => item.id === event.target.value)

@@ -8,7 +8,7 @@ import { ArrowUp, ChevronDown, FileUp, Mic, Paperclip, Square, X } from "lucide-
 
 import { AGENT_EFFORTS, AGENT_MODES, type AgentEffort, type AgentMode } from "@/lib/agent/sessions"
 import { formatBytes } from "@/lib/format"
-import { MODEL_DOWNLOAD_VALUE, openSitePage, SITE_MODELS_URL } from "@/lib/site"
+import { APP_MODELS_URL, MODEL_DOWNLOAD_VALUE, openSitePage } from "@/lib/site"
 import { cn } from "@/lib/utils"
 
 export interface ComposerModelOption {
@@ -179,7 +179,7 @@ export function AgentComposer(props: AgentComposerProps) {
               value={props.model}
               onChange={(event) => {
                 if (event.target.value === MODEL_DOWNLOAD_VALUE) {
-                  openSitePage(SITE_MODELS_URL)
+                  openSitePage(APP_MODELS_URL)
                   return
                 }
                 setModelNudge(false)

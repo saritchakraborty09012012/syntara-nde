@@ -6,14 +6,16 @@
 
 export const SITE_BASE = "https://syntara-nde.vercel.app"
 export const SITE_DOWNLOAD_URL = `${SITE_BASE}/#download`
-export const SITE_MODELS_URL = `${SITE_BASE}/#models`
+/** The app's own Models view as hosted on the site — what "Download models"
+    in a model dropdown opens. */
+export const APP_MODELS_URL = `${SITE_BASE}/app/#models`
 
 /** Sentinel value for the "Download models" entry in model dropdowns. */
 export const MODEL_DOWNLOAD_VALUE = "__download_models__"
 
-/** Open a site page in a new tab; a failed popup (blocked) falls back to
-    the current tab so the link is never a no-op. */
+/** Open a page in a new tab. `noopener` makes window.open return null even
+    on success, so there is no reliable "was it blocked?" signal — never fall
+    back to navigating the current tab (that double-opened the page). */
 export function openSitePage(url: string): void {
-  const opened = window.open(url, "_blank", "noopener,noreferrer")
-  if (!opened) window.location.assign(url)
+  window.open(url, "_blank", "noopener,noreferrer")
 }
