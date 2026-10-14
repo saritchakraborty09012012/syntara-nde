@@ -16,11 +16,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **The logo and the menu button sit stacked on the closed rail** — side by
   side left no breathing room in a 92 px column. The floating menu restores
   the horizontal lockup with the brand text.
-- **Agent suggestion chips sit in a compact two-per-row grid.** The four
-  starter prompts used to stack above the textarea, growing the composer to
-  half the workspace before anything was typed; they now form a tidy grid
-  that always fits the composer width — no scrollbar, no lost prompt — so
-  the box stays short and the control row stays in view.
+- **Agent suggestion chips sit in one horizontal row, scrollbar hidden.**
+  The four starter prompts used to stack above the textarea, growing the
+  composer to half the workspace before anything was typed; they now share
+  a single sideways-scrolling row with each bubble sized to its own text.
+  Wheel/trackpad/touch still pan the row — only the scrollbar chrome is
+  hidden, so the box stays one line tall.
 - **The chat composer is always typable.** The textarea used to be
   disabled until a model was picked (no caret, no typing, no selection);
   it now accepts text in any state and the send button stays live — pressing
