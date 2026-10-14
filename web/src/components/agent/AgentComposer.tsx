@@ -3,11 +3,12 @@
    on the right, under the task textarea. Attachments become part of the
    task text; the mic uses the same voice-typing path as chat. */
 
-import { useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import { ArrowUp, ChevronDown, FileUp, Mic, Paperclip, Square, X } from "lucide-react"
 
 import { AGENT_EFFORTS, AGENT_MODES, type AgentEffort, type AgentMode } from "@/lib/agent/sessions"
 import { formatBytes } from "@/lib/format"
+import { MODEL_DOWNLOAD_VALUE, openSitePage, SITE_MODELS_URL } from "@/lib/site"
 import { cn } from "@/lib/utils"
 
 export interface ComposerModelOption {
@@ -21,7 +22,8 @@ interface AgentComposerProps {
   onSend: () => void
   onStop: () => void
   busy: boolean
-  /* No model selected yet — the send button stays disabled. */
+  /* No model selected yet — send stays clickable and a callout points at
+     the model chip instead of the button sitting dead. */
   disabled: boolean
   mode: AgentMode
   onModeChange: (mode: AgentMode) => void
@@ -45,12 +47,20 @@ interface AgentComposerProps {
 
 export function AgentComposer(props: AgentComposerProps) {
   const fileRef = useRef<HTMLInputElement | null>(null)
+  /* Send with no model → callout points at the model chip; retires itself
+     so it cannot linger (App also clears it the moment a model is picked). */
+  const [modelNudge, setModelNudge] = useState(false)
+  useEffect(() => {
+    if (!modelNudge || props.model) return
+    const timer = window.setTimeout(() => setModelNudge(false), 4500)
+    return () => window.clearTimeout(timer)
+  }, [modelNudge, props.model])
   const modeInfo = AGENT_MODES.find((item) => item.id === props.mode) ?? AGENT_MODES[0]
   const effortInfo = AGENT_EFFORTS.find((item) => item.id === props.effort) ?? AGENT_EFFORTS[1]
   const modelLabel = props.modelOptions.find((option) => option.value === props.model)?.label
     || props.model
     || "No model"
-  const canSend = !props.disabled && (props.value.trim().length > 0 || props.attachments.length > 0)
+  const canSend = props.value.trim().length > 0 || props.attachments.length > 0
 
   return (
     /* Redesign: the agent composer reuses the chat composer's visual frame
@@ -60,6 +70,7 @@ export function AgentComposer(props: AgentComposerProps) {
       onSubmit={(event) => {
         event.preventDefault()
         if (props.busy) props.onStop()
+        else if (!props.model) setModelNudge(true)
         else if (canSend) props.onSend()
       }}
     >
@@ -98,6 +109,7 @@ export function AgentComposer(props: AgentComposerProps) {
           if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault()
             if (props.busy) props.onStop()
+            else if (!props.model) setModelNudge(true)
             else if (canSend) props.onSend()
           }
         }}
@@ -156,11 +168,23 @@ export function AgentComposer(props: AgentComposerProps) {
           </span>
 
           <span className="ag-chip select-chip model-chip" title={`Model: ${modelLabel}`}>
+            {modelNudge && !props.model ? (
+              <span className="model-nudge" role="status">
+                Please select a model to use Syntara
+              </span>
+            ) : null}
             <span className="ag-chip-label">{modelLabel}</span>
             <ChevronDown size={12} className="ag-chip-caret" aria-hidden="true" />
             <select
               value={props.model}
-              onChange={(event) => props.onModelChange(event.target.value)}
+              onChange={(event) => {
+                if (event.target.value === MODEL_DOWNLOAD_VALUE) {
+                  openSitePage(SITE_MODELS_URL)
+                  return
+                }
+                setModelNudge(false)
+                props.onModelChange(event.target.value)
+              }}
               aria-label="Model"
             >
               {!props.model ? <option value="">No model</option> : null}
@@ -170,6 +194,7 @@ export function AgentComposer(props: AgentComposerProps) {
               {props.model && !props.modelOptions.some((option) => option.value === props.model) ? (
                 <option value={props.model}>{props.model}</option>
               ) : null}
+              <option value={MODEL_DOWNLOAD_VALUE}>Download models ↗</option>
             </select>
           </span>
         </div>

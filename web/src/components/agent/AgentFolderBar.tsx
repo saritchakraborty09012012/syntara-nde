@@ -3,8 +3,9 @@
    new-project folder picker. Pure presentation; App owns projects state. */
 
 import { useEffect, useRef, useState } from "react"
-import { FolderOpen, FolderPlus, Search, X } from "lucide-react"
+import { ArrowUpRight, FolderOpen, FolderPlus, Search, X } from "lucide-react"
 
+import { openSitePage, SITE_DOWNLOAD_URL } from "@/lib/site"
 import { cn } from "@/lib/utils"
 
 export interface FolderBarProject {
@@ -28,7 +29,16 @@ export function AgentFolderBar(props: AgentFolderBarProps) {
   const [query, setQuery] = useState("")
   const [results, setResults] = useState<string[]>([])
   const [searching, setSearching] = useState(false)
+  /* Web build: folder picking is desktop-only — the button explains that
+     and links to the download page instead of sitting dead. */
+  const [pickNudge, setPickNudge] = useState(false)
   const abortRef = useRef(0)
+
+  useEffect(() => {
+    if (!pickNudge || props.canPickFolder) return
+    const timer = window.setTimeout(() => setPickNudge(false), 6000)
+    return () => window.clearTimeout(timer)
+  }, [pickNudge, props.canPickFolder])
 
   /* Debounced search: every keystroke bumps a token; only the last
      request may commit its results. */
@@ -74,16 +84,25 @@ export function AgentFolderBar(props: AgentFolderBarProps) {
           </button>
         ))}
         {!props.projects.length ? <span className="ag-folder-empty">No folders yet</span> : null}
-        <button
-          type="button"
-          className="ag-folder-chip new"
-          onClick={props.onNewProject}
-          disabled={!props.canPickFolder}
-          title={props.canPickFolder ? "Add a project folder" : "Folder picking is available inside the Syntara desktop app"}
-        >
-          <FolderPlus size={12} />
-          <span>New project</span>
-        </button>
+        <div className="pick-folder-wrap">
+          <button
+            type="button"
+            className="ag-folder-chip new"
+            onClick={() => (props.canPickFolder ? props.onNewProject() : setPickNudge((shown) => !shown))}
+            title={props.canPickFolder ? "Add a project folder" : "Folder picking is available inside the Syntara desktop app"}
+          >
+            <FolderPlus size={12} />
+            <span>New project</span>
+          </button>
+          {pickNudge && !props.canPickFolder ? (
+            <div className="desktop-nudge" role="status">
+              <p>Folder access lives in the Syntara desktop app.</p>
+              <button type="button" className="nudge-cta" onClick={() => openSitePage(SITE_DOWNLOAD_URL)}>
+                Download <ArrowUpRight size={12} aria-hidden="true" />
+              </button>
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {props.onSearch ? (

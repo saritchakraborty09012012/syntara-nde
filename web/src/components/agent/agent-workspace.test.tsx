@@ -226,7 +226,7 @@ describe("AgentFolderBar", () => {
     expect(html).toContain("Projects")
     expect(html).toContain('class="ag-folder-chip active"')
     expect(html).toContain("syntara")
-    expect(html).toContain("disabled")
+    expect(html).not.toContain("disabled")
     expect(html).toContain("desktop app")
     expect(html).not.toContain('aria-label="Search project files"')
   })

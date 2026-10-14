@@ -104,6 +104,7 @@ import { CONSENT_VERSION, setupRequired, writeSetupRecord } from "@/lib/setup"
 import { volumeRows, type VolumeRow } from "@/lib/storage-plan"
 import { badgeLabel, groupComplete, metaFromInspect, pickInspectTarget } from "@/lib/inspect"
 import { mergePickerOptions, type PickerRow } from "@/lib/picker"
+import { MODEL_DOWNLOAD_VALUE, openSitePage, SITE_MODELS_URL } from "@/lib/site"
 import { canContinue, CONTINUE_NUDGE, createDeltaBuffer, retryAfterOf, retryDecision, statusOf } from "@/lib/send"
 import { FirstRunSetup } from "@/components/FirstRunSetup"
 import { ContextMeter } from "@/components/ContextMeter"
@@ -204,12 +205,13 @@ const GRANT_LABELS = [
   { tool: "web_fetch", label: "Fetch web" },
 ] as const
 
-/* First-run task suggestions in the agent stage's empty state. */
+/* First-run task suggestions in the agent stage's empty state. Kept short so
+   two chips always fit side by side in the composer without scrolling. */
 const AGENT_SUGGESTIONS = [
-  "Audit this repository and list the riskiest spots",
-  "Explain what this project does, end to end",
-  "Find why a test fails and propose the fix",
-  "Plan a refactor of the largest module",
+  "Audit this repo for risky spots",
+  "Explain what this project does",
+  "Why does a test fail? Fix it",
+  "Plan refactoring the biggest module",
 ]
 
 type RunMetrics = { kind: "chat" | "agent"; tokensPerSec: number; firstTokenMs: number; totalMs: number; tokens: number }
@@ -330,6 +332,9 @@ export default function App() {
   const [models, setModels] = useState<string[]>([])
   const [draft, setDraft] = useState("")
   const [loading, setLoading] = useState(false)
+  /* Send with no model → a callout points at the model chip instead of the
+     button sitting dead; cleared on pick or after a few seconds. */
+  const [chatModelNudge, setChatModelNudge] = useState(false)
   /* Track 2b - queue while busy: the ref is the synchronous source of
      truth for the flush paths, the state mirrors it for the chips. */
   type QueuedSend = { id: string; text: string; images: string[]; docs: Array<{ name: string; content: string; size?: number }>; conversationId: string | null }
@@ -863,6 +868,7 @@ export default function App() {
     [models, state.models, loadingModel],
   )
   const pickModel = (row: PickerRow) => {
+    setChatModelNudge(false)
     updateSettings({ model: row.id })
     if (activeConversation) saveConversation({ ...activeConversation, model: row.id })
     if (!row.loaded && row.loadable && row.meta) void loadModel(row.meta)
@@ -1464,9 +1470,21 @@ export default function App() {
     }
   }
 
+  /* The no-model callout retires itself so it cannot linger over the
+     composer; picking a model clears it immediately. */
+  useEffect(() => {
+    if (!chatModelNudge) return
+    const timer = window.setTimeout(() => setChatModelNudge(false), 4500)
+    return () => window.clearTimeout(timer)
+  }, [chatModelNudge])
+
   /* Track 2b: Enter during a generation or a model load queues the
      message instead of dropping it (the composer stays typable). */
   const send = () => {
+    if (!selectedModel) {
+      setChatModelNudge(true)
+      return
+    }
     const text = draft.trim()
     if (!text && !pendingImages.length && !pendingDocs.length) return
     if (loading || loadingModel) {
@@ -2752,7 +2770,7 @@ export default function App() {
               {pendingDocs.length ? <div className="pending-strip">{pendingDocs.map((doc) => <div key={doc.name} className="pending-doc"><FileUp size={12} /><span>{doc.name}</span>{doc.size ? <small className="doc-size">{formatBytes(doc.size)}</small> : null}<button onClick={() => setPendingDocs((items) => items.filter((item) => item.name !== doc.name))}><X size={12} /></button></div>)}</div> : null}
               {queued.length ? <div className="pending-strip queue-strip">{queued.map((item) => <div key={item.id} className="pending-doc queue-chip" title="Sent automatically when the current reply finishes"><Clock size={12} /><span>{item.text.slice(0, 48)}{item.text.length > 48 ? "…" : ""}{!item.text ? `${item.images.length} image(s)` : ""}</span><button onClick={() => removeFromQueue(item.id)} aria-label="Remove from queue"><X size={12} /></button></div>)}</div> : null}
               <div className="composer">
-                <textarea ref={messageRef} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={selectedModel ? (loading || loadingModel ? "Message Syntara… (queued until this finishes)" : "Message Syntara…") : "Choose a model to start"} aria-label="Message" disabled={!selectedModel} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send() } }} />
+                <textarea ref={messageRef} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={selectedModel ? (loading || loadingModel ? "Message Syntara… (queued until this finishes)" : "Message Syntara…") : "Choose a model to start"} aria-label="Message" onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send() } }} />
                 {/* Redesign: attach + model select live at the bottom-left of
                     the textbox in both modes. Universal file input — every
                     type is accepted; text inlines, binaries become chips. */}
@@ -2775,11 +2793,20 @@ export default function App() {
                       onChange={(event) => { handleAttach(event.target.files); event.target.value = "" }}
                     />
                     <span className="ag-chip select-chip model-chip" title={`Model: ${chatModelLabel}`}>
+                      {chatModelNudge ? (
+                        <span className="model-nudge" role="status">
+                          Please select a model to use Syntara
+                        </span>
+                      ) : null}
                       <span className="ag-chip-label">{chatModelLabel}</span>
                       <ChevronDown size={12} className="ag-chip-caret" aria-hidden="true" />
                       <select
                         value={effectiveModel}
                         onChange={(event) => {
+                          if (event.target.value === MODEL_DOWNLOAD_VALUE) {
+                            openSitePage(SITE_MODELS_URL)
+                            return
+                          }
                           const row = pickerRows.find((item) => item.id === event.target.value)
                           if (row) pickModel(row)
                         }}
@@ -2794,6 +2821,7 @@ export default function App() {
                         {effectiveModel && !pickerRows.some((row) => row.id === effectiveModel) ? (
                           <option value={effectiveModel}>{effectiveModel}</option>
                         ) : null}
+                        <option value={MODEL_DOWNLOAD_VALUE}>Download models ↗</option>
                       </select>
                     </span>
                   </div>
@@ -2809,7 +2837,7 @@ export default function App() {
                     >
                       <Mic size={16} />
                     </button>
-                    <button className={cn("send-btn", loading && "stop")} onClick={() => { if (loading) abortGeneration(); else void send() }} disabled={!selectedModel || (!loading && !draft.trim() && !pendingImages.length && !pendingDocs.length)} aria-label={loading ? "Stop generating" : "Send message"}>{loading ? <X size={17} /> : <ArrowUp size={17} />}</button>
+                    <button className={cn("send-btn", loading && "stop")} onClick={() => { if (loading) abortGeneration(); else void send() }} disabled={!loading && !draft.trim() && !pendingImages.length && !pendingDocs.length} aria-label={loading ? "Stop generating" : "Send message"}>{loading ? <X size={17} /> : <ArrowUp size={17} />}</button>
                   </div>
                 </div>
               </div>

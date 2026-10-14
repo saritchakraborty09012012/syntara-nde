@@ -3,10 +3,11 @@
    collapsible project-folder accordions (open/close per folder). Pure
    presentation — App owns session state, persistence and deletion. */
 
-import { useState } from "react"
-import { ChevronRight, FolderOpen, PanelLeft, Plus, Search, ShieldCheck, Trash2 } from "lucide-react"
+import { useEffect, useState } from "react"
+import { ArrowUpRight, ChevronRight, FolderOpen, PanelLeft, Plus, Search, ShieldCheck, Trash2 } from "lucide-react"
 
 import { filterSessions, groupSessionsByFolder, rankSessions, relativeLabel, type SessionManifestEntry } from "@/lib/agent/sessions"
+import { openSitePage, SITE_DOWNLOAD_URL } from "@/lib/site"
 import { cn } from "@/lib/utils"
 
 export interface SessionGrant {
@@ -36,6 +37,14 @@ interface AgentSessionsProps {
 
 export function AgentSessions(props: AgentSessionsProps) {
   const [query, setQuery] = useState("")
+  /* Web build: folder picking is desktop-only, so the button explains that
+     and links to the download page instead of sitting dead. */
+  const [pickNudge, setPickNudge] = useState(false)
+  useEffect(() => {
+    if (!pickNudge || props.canPickFolder) return
+    const timer = window.setTimeout(() => setPickNudge(false), 6000)
+    return () => window.clearTimeout(timer)
+  }, [pickNudge, props.canPickFolder])
   /* Open/close state per folder key ("" = No folder). The active session's
      folder starts open; others start closed until toggled. */
   const [openFolders, setOpenFolders] = useState<Set<string>>(() => new Set<string>())
@@ -86,10 +95,24 @@ export function AgentSessions(props: AgentSessionsProps) {
           </span>
         </div>
         {props.projectPath ? <div className="ag-project-path" title={props.projectPath}>{props.projectPath}</div> : null}
-        <button type="button" className="ag-mini-btn wide" onClick={props.onPickFolder} disabled={!props.canPickFolder}
-          title={props.canPickFolder ? undefined : "Folder picking is available inside the Syntara desktop app"}>
-          <FolderOpen size={12} /> {props.projectPath ? "Change folder…" : "Choose folder…"}
-        </button>
+        <div className="pick-folder-wrap">
+          <button
+            type="button"
+            className="ag-mini-btn wide"
+            onClick={() => (props.canPickFolder ? props.onPickFolder() : setPickNudge((shown) => !shown))}
+            title={props.canPickFolder ? undefined : "Folder picking is available inside the Syntara desktop app"}
+          >
+            <FolderOpen size={12} /> {props.projectPath ? "Change folder…" : "Choose folder…"}
+          </button>
+          {pickNudge && !props.canPickFolder ? (
+            <div className="desktop-nudge" role="status">
+              <p>Folder access lives in the Syntara desktop app.</p>
+              <button type="button" className="nudge-cta" onClick={() => openSitePage(SITE_DOWNLOAD_URL)}>
+                Download <ArrowUpRight size={12} aria-hidden="true" />
+              </button>
+            </div>
+          ) : null}
+        </div>
         <div className="grant-row" aria-label="Tool permissions">
           {props.grants.map(({ tool, label, granted }) => (
             <span key={tool} className={cn("grant-chip", granted && "granted")}>

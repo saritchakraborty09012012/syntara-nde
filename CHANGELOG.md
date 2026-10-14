@@ -16,11 +16,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 - **The logo and the menu button sit stacked on the closed rail** — side by
   side left no breathing room in a 92 px column. The floating menu restores
   the horizontal lockup with the brand text.
-- **Agent suggestion chips sit in one sideways-scrolling row.** The four
+- **Agent suggestion chips sit in a compact two-per-row grid.** The four
   starter prompts used to stack above the textarea, growing the composer to
-  half the workspace before anything was typed; they now share a single
-  row that scrolls horizontally (chips keep their full text), so the box
-  is one line shorter and the control row stays in view.
+  half the workspace before anything was typed; they now form a tidy grid
+  that always fits the composer width — no scrollbar, no lost prompt — so
+  the box stays short and the control row stays in view.
+- **The chat composer is always typable.** The textarea used to be
+  disabled until a model was picked (no caret, no typing, no selection);
+  it now accepts text in any state and the send button stays live — pressing
+  it with no model pops a callout pointing at the model chip asking you to
+  select a model instead of leaving a dead button.
+- **Folder buttons in agent mode explain themselves on the web build.**
+  "Choose folder…" and "New project" no longer sit greyed out in the
+  browser — they open a callout saying folder access lives in the desktop
+  app, with a Download CTA (↗) straight to the download page.
+- **Every model dropdown carries an always-visible "Download models ↗"
+  entry** that opens the site's model catalogue in a new tab.
 - **`CONTRIBUTING.md` rewritten** to describe this repository (layout,
   dev setup, the exact checks CI runs, PR expectations) instead of another
   project's guide.

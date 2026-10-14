@@ -1059,18 +1059,14 @@ body.ag-resizing { user-select: none; cursor: col-resize; }
 .ag-illustration .ag-artifacts text { font-family: 'Share Tech Mono', ui-monospace, monospace; font-size: 15px; fill: var(--muted); }
 .ag-illustration .ag-artifacts rect, .ag-illustration .ag-artifacts path { fill: none; stroke: var(--muted); stroke-width: 2; }
 
-/* Composer suggestion chips (shown while the draft is empty): ONE
-   horizontal, sideways-scrolling row. Stacking them put four rows of pills
-   above the textarea — the composer grew to half the workspace before a
-   single character was typed, and the control row drifted out of view on
-   short windows. Chips never truncate (they keep their natural width and
-   the row scrolls), so no suggestion is lost, just panned to. */
-.ag-chips-row { display: flex; flex-wrap: nowrap; gap: 6px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, .14) transparent; }
+/* Composer suggestion chips (shown while the draft is empty): a compact
+   two-per-row grid that always fits the composer width — no scrollbar, no
+   four-row stack. auto-fit drops to one column on narrow windows so text
+   stays fully readable; the prompts themselves are short enough that no
+   chip ever ellipsizes in practice. */
+.ag-chips-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 6px; }
 .ag-composer .ag-chips-row { margin: 10px 14px 0; }
-.ag-chips-row::-webkit-scrollbar { height: 6px; }
-.ag-chips-row::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .14); border-radius: 8px; }
-.ag-chips-row::-webkit-scrollbar-track { background: transparent; }
-.ag-suggest-chip { flex: 0 0 auto; white-space: nowrap; border: 1px dashed var(--line-strong); background: transparent; color: var(--muted); font-size: 11px; line-height: 1.4; border-radius: 999px; padding: 5px 11px; cursor: pointer; text-align: left; transition: color .16s, border-color .16s, background .16s; }
+.ag-suggest-chip { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: 1px dashed var(--line-strong); background: transparent; color: var(--muted); font-size: 11px; line-height: 1.4; border-radius: 999px; padding: 5px 12px; cursor: pointer; text-align: center; transition: color .16s, border-color .16s, background .16s; }
 .ag-suggest-chip:hover { color: var(--text); border-color: var(--accent); background: rgba(69, 224, 255, .07); }
 
 /* Folder bar: project chips, new-project picker, file search + results. */
@@ -1124,6 +1120,35 @@ body.ag-resizing { user-select: none; cursor: col-resize; }
 @media (prefers-reduced-motion: reduce) {
   .ag-orb, .ag-rotator { animation: none; }
 }
+
+/* --- small callouts that point at a control (model nudge, desktop-only
+       folder hint with a download CTA) --- */
+.pick-folder-wrap { position: relative; }
+.model-nudge, .desktop-nudge {
+  position: absolute; z-index: 40; width: max-content; max-width: min(260px, 72vw);
+  padding: 9px 11px; border: 1px solid var(--accent); border-radius: 10px;
+  background: var(--panel); color: var(--text); font-size: 11.5px; line-height: 1.5;
+  box-shadow: 0 12px 34px rgba(0, 0, 0, .45), 0 0 18px rgba(69, 224, 255, .12);
+}
+.model-nudge { bottom: calc(100% + 12px); left: 50%; transform: translateX(-50%); white-space: nowrap; }
+.model-nudge::after {
+  content: ""; position: absolute; top: 100%; left: 50%; transform: translateX(-50%);
+  border: 6px solid transparent; border-top-color: var(--accent);
+}
+.desktop-nudge { top: calc(100% + 8px); left: 0; display: grid; gap: 8px; justify-items: start; }
+.desktop-nudge::before {
+  content: ""; position: absolute; bottom: 100%; left: 22px;
+  border: 6px solid transparent; border-bottom-color: var(--accent);
+}
+.desktop-nudge p { margin: 0; color: var(--muted); }
+.nudge-cta {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid transparent; border-radius: 8px; cursor: pointer;
+  background: linear-gradient(135deg, var(--accent), #2f7bff); color: #03131f;
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  padding: 6px 11px; transition: box-shadow .16s, transform .16s;
+}
+.nudge-cta:hover { transform: translateY(-1px); box-shadow: 0 0 16px rgba(69, 224, 255, .35); }
 
 /* -- Desktop startup splash (components/StartupSplash.tsx) ------------- */
 .startup-splash {
