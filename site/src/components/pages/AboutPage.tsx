@@ -88,6 +88,7 @@ const FAMILIES: Array<{ name: string; detail: string }> = [
   { name: "Qwen3.8-Flash-Next", detail: "125B + 51B n-gram" },
   { name: "Qwen3.6", detail: "35B-A3B" },
   { name: "OLMoE", detail: "7B" },
+  { name: "Llama", detail: "Dense GQA" },
 ]
 
 export function AboutPage() {

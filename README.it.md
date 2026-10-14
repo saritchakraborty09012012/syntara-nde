@@ -12,10 +12,10 @@ miliardi a 2,8 mila miliardi di parametri** — su hardware consumer ed eterogen
 in C puro e senza dipendenze del motore, trattando storage, RAM e VRAM come
 un'unica gerarchia di inferenza.
 
-Oggi girano nove famiglie: **GLM-5.2/5.3** (744B), **GLM-5.3-Flash** (321B, con
+Oggi girano dieci famiglie: **GLM-5.2/5.3** (744B), **GLM-5.3-Flash** (321B, con
 vision), **Inkling** (975B), **Kimi K3** (2,8T), **DeepSeek V4 Flash** (284B), **DeepSeek V4.1 Flash** (552B, con visione),
-**Qwen3.8-Flash-Next** (125B + 51B n-gram), **Qwen3.6** (35B-A3B) e
-**OLMoE** (7B) — un
+**Qwen3.8-Flash-Next** (125B + 51B n-gram), **Qwen3.6** (35B-A3B), **OLMoE** (7B) e
+**Llama** (denso GQA) — un
 file C ciascuna, la stessa interfaccia `syntara chat` / `syntara serve` / `syntara web`. [Elenco completo](README.md#other-supported-models)
 
 > **Syntara è un motore di inferenza che puoi usare oggi, e una piattaforma di
@@ -343,7 +343,7 @@ quale coda, quale verdetto, quale dei quattro valori può prendere un campo. La
 modalità Brio passa al motore le opzioni e legge la probabilità di ciascuna
 invece di generare: `completion_tokens` è 0, nessuna risposta può uscire dalla
 tua lista, e ogni risposta arriva con un'entropia, così "il modello non è
-sicuro" è un numero su cui mettere una soglia. Funziona su tutte e nove le
+  sicuro" è un numero su cui mettere una soglia. Funziona su tutte e dieci le
 famiglie, sullo stesso server, ed è opzionale per richiesta: la chat resta
 identica byte per byte per chi non la chiede.
 
@@ -397,10 +397,10 @@ e per il gateway API opzionale.
   end-to-end, revisionati e sviluppati apertamente.
 - **Più modelli aperti.** L'algoritmo di tiering è indipendente dal modello:
   qualsiasi MoE con expert instradati può essere organizzato allo stesso modo.
-  Nove famiglie funzionano già (GLM-5.2, GLM-5.3-Flash con la vision,
-  Inkling, Kimi K3, DeepSeek V4 Flash, DeepSeek V4.1 Flash, Qwen3.8-Flash-Next, Qwen3.6, OLMoE);
+  Dieci famiglie funzionano già (GLM-5.2, GLM-5.3-Flash con la vision,
+  Inkling, Kimi K3, DeepSeek V4 Flash, DeepSeek V4.1 Flash, Qwen3.8-Flash-Next, Qwen3.6, OLMoE, Llama);
   altre famiglie open-weight, **MiniMax** tra le candidate, si guadagnano un
-  engine come le prime otto: quando qualcuno le misura end-to-end.
+  engine come le prime dieci: quando qualcuno le misura end-to-end.
 
 ## Sostenere il progetto
 

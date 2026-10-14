@@ -408,6 +408,56 @@ def _cmd_profile(client: Syntara, args: argparse.Namespace) -> int:
 
 
 def _cmd_inspect(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    target = Path(args.path).expanduser()
+    is_gguf = target.suffix.lower() == ".gguf"
+    if target.is_file() and not is_gguf:
+        # Magic check: a GGUF without the suffix still gets the GGUF report.
+        try:
+            with open(target, "rb") as fh:
+                is_gguf = fh.read(4) == b"GGUF"
+        except OSError:
+            is_gguf = False
+    if is_gguf:
+        return _cmd_inspect_gguf(args)
+    if not target.exists():
+        print(f"syntara: path not found: {target}", file=sys.stderr)
+        return 1
+    from .model_inspect import inspect_path  # deferred: keep `--help` light
+
+    report = inspect_path(target)
+    if args.json:
+        print(json.dumps(report, indent=2, default=str, ensure_ascii=False))
+        return 0
+    print(f"{report['kind']}  {report['path']}")
+    print(f"  format       : {report['format']}")
+    print(f"  architecture : {report.get('architecture') or '-'}  "
+          f"(model_type={report.get('model_type') or '-'})")
+    print(f"  modalities   : {', '.join(report.get('modalities') or []) or '-'}")
+    print(f"  quantization : {report.get('quantization') or '-'}")
+    est = report.get("estimates") or {}
+    bits = []
+    if est.get("weight_mb") is not None:
+        bits.append(f"weights {est['weight_mb']} MB")
+    if est.get("params_billion") is not None:
+        bits.append(f"~{est['params_billion']}B params")
+    if est.get("ram_gb_min"):
+        bits.append(f"est. RAM >= {est['ram_gb_min']} GB")
+    print(f"  estimates    : {', '.join(bits) or '-'}")
+    if report.get("data_complete") is False:
+        print("  DATA INCOMPLETE: shards are missing or still downloading")
+    expert = report.get("expert_inventory")
+    if expert and expert.get("selective_access"):
+        print(f"  experts      : {expert['experts_per_layer']} per layer "
+              f"across {len(expert['moe_layers'])} MoE layers "
+              "(selective streaming possible)")
+    for warning in report.get("warnings") or []:
+        print(f"  warning: {warning}")
+    return 0
+
+
+def _cmd_inspect_gguf(args: argparse.Namespace) -> int:
     from .gguf_inspect import inspect_file  # deferred: keeps `syntara --help` light
 
     report = inspect_file(args.path)
@@ -434,6 +484,153 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
     for w in report["warnings"]:
         print(f"  warning: {w}")
     return 0
+
+
+def _cmd_plan(args: argparse.Namespace) -> int:
+    """Rank execution plans (diagnostic): inspect + hardware + routing."""
+    from pathlib import Path
+
+    target = Path(args.path).expanduser()
+    if not target.exists():
+        print(f"syntara: path not found: {target}", file=sys.stderr)
+        return 1
+    from . import hardware as hardware_mod  # deferred: keep `--help` light
+    from . import planner as planner_mod
+    from .model_inspect import inspect_path
+
+    report = inspect_path(target)
+    hw = hardware_mod.probe(path=target)
+    result = planner_mod.plan(report, hw, context=args.context)
+    if args.json:
+        print(json.dumps(result, indent=2, default=str, ensure_ascii=False))
+        return 0 if result.get("recommended") else 1
+    model = result["model"]
+    print(f"{model['kind']}  {model['path']}")
+    print(f"  architecture : {model.get('architecture') or '-'} "
+          f"(model_type={model.get('model_type') or '-'})")
+    print(f"  modalities   : {', '.join(model.get('modalities') or []) or '-'}")
+    hwinfo = result["hardware"]
+    print(f"  hardware     : {hwinfo.get('cores') or '?'} cores, "
+          f"RAM free {hwinfo.get('ram_free_gb') if hwinfo.get('ram_free_gb') is not None else '?'} GB"
+          f" of {hwinfo.get('ram_total_gb') or '?'} GB, "
+          f"{len(hwinfo.get('gpus') or [])} GPU(s)")
+    for unknown in hwinfo.get("unknowns") or []:
+        print(f"  unknown     : {unknown}")
+    print("  plans (best first):")
+    for entry in result.get("plans") or []:
+        flag = "ok " if entry["available"] else "n/a"
+        fit = {"yes": "fits", "no": "TOO BIG", "unknown": "fit unknown"}
+        rec = "  <-- recommended" if (
+            result.get("recommended")
+            and entry["rank"] == result["recommended"]["rank"]) else ""
+        print(f"    #{entry['rank']} [{flag}] {entry['runtime']:<18} "
+              f"{fit[entry['fits_free_ram']]:<12} "
+              f"est RAM {entry.get('est_ram_gb') or '?'} GB "
+              f"ctx {entry['context']}{rec}")
+        if entry.get("unavailable_reason"):
+            print(f"         unavailable: {entry['unavailable_reason']}")
+    for risk in result.get("risks") or []:
+        print(f"  [{risk['level']}] {risk['message']}")
+    for suggestion in result.get("suggestions") or []:
+        print(f"  suggestion: {suggestion}")
+    for assumption in result.get("assumptions") or []:
+        print(f"  assumption: {assumption}")
+    if not result.get("recommended"):
+        if result.get("decision", {}).get("error"):
+            print(f"  error: {result['decision']['error']}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _cmd_prepare(args: argparse.Namespace) -> int:
+    """Run (or resume) the preparation pipeline; --verify checks integrity."""
+    from pathlib import Path
+
+    from .prepare import PrepareError, load, manifest_path, prepare, verify
+
+    source = Path(args.source).expanduser()
+    if args.verify:
+        manifest = load(source, args.data_dir)
+        if manifest is None:
+            print(f"syntara: no preparation manifest for {source}; run "
+                  f"`syntara prepare {source}` first", file=sys.stderr)
+            return 1
+        result = verify(manifest)
+        if args.json:
+            print(json.dumps(result, indent=2, default=str,
+                             ensure_ascii=False))
+        else:
+            state = manifest.get("state")
+            print(f"manifest state: {state}")
+            if result["ok"]:
+                print("integrity: OK (unchanged since preparation)")
+            else:
+                if result["missing"]:
+                    print("missing: " + ", ".join(result["missing"]))
+                if result["drift"]:
+                    print("changed: " + ", ".join(result["drift"]))
+        return 0 if result["ok"] else 1
+
+    def show(event: dict) -> None:
+        if args.json:
+            print(json.dumps(event, default=str, ensure_ascii=False),
+                  flush=True)
+        elif event.get("type") == "stage":
+            state = event.get("state")
+            stage = event.get("stage")
+            if state == "done":
+                detail = {k: v for k, v in event.items()
+                          if k not in ("type", "stage", "state")
+                          and isinstance(v, (str, int, float))}
+                suffix = (f"  ({', '.join(f'{k}={v}' for k, v in detail.items())})"
+                          if detail else "")
+                print(f"  {stage}: done{suffix}", flush=True)
+            elif state == "failed":
+                print(f"  {stage}: FAILED - {event.get('error')}",
+                      file=sys.stderr, flush=True)
+            else:
+                print(f"  {stage}: {state}", flush=True)
+        elif event.get("type") in ("log", "progress"):
+            message = event.get("message") or event.get("label") or ""
+            if message and event.get("type") == "log":
+                print(f"    {message}", flush=True)
+
+    if not args.json:
+        print(f"preparing {source}", flush=True)
+    try:
+        manifest = prepare(source, outdir=args.outdir, data_dir=args.data_dir,
+                           force=args.force, convert=args.convert,
+                           on_event=show)
+    except PrepareError as exc:
+        print(f"syntara: {exc}", file=sys.stderr)
+        return 2
+    state = manifest.get("state")
+    if args.json:
+        print(json.dumps({"state": state,
+                          "manifest": str(manifest_path(source,
+                                                        args.data_dir)),
+                          "routing": manifest.get("routing"),
+                          "plan": manifest.get("plan"),
+                          "stages": manifest.get("stages")},
+                         indent=2, default=str, ensure_ascii=False))
+    else:
+        print(f"state: {state}")
+        if state == "unsupported":
+            print(f"  reason: {(manifest.get('routing') or {}).get('error')}")
+            print("  install the missing runtime or use a supported format, "
+                  "then rerun `syntara prepare`")
+        elif state == "failed":
+            print("  rerun the same command to resume from the failed stage")
+        elif state in ("ready_standard", "ready_optimized"):
+            selected = (manifest.get("routing") or {}).get("selected")
+            if selected:
+                print(f"  runtime: {selected}   "
+                      f"serve with: syntara serve --model {source}")
+    if state in ("ready_standard", "ready_optimized"):
+        return 0
+    if state == "unsupported":
+        return 1
+    return 1  # failed or cancelled (resumable)
 
 
 def _cmd_convert(args: argparse.Namespace) -> int:
@@ -623,8 +820,36 @@ def build_parser() -> argparse.ArgumentParser:
                          help="(remove --delete-file) confirm deletion")
 
     inspect = sub.add_parser("inspect", parents=[common],
-                             help="Inspect a local GGUF file (metadata, quants, compatibility)")
-    inspect.add_argument("path", help="path to a .gguf model file")
+                             help="Inspect a local model (GGUF file or "
+                                  "checkpoint directory; metadata only)")
+    inspect.add_argument("path", help="path to a .gguf file or checkpoint "
+                                      "directory")
+
+    plan = sub.add_parser("plan", parents=[common],
+                          help="Rank execution plans for this machine "
+                               "(diagnostic; loads nothing)")
+    plan.add_argument("path", help="path to a .gguf file or checkpoint "
+                                   "directory")
+    plan.add_argument("--context", type=int, default=None,
+                      help="context window to plan for (default: "
+                           "min(4096, model context))")
+
+    prepare = sub.add_parser(
+        "prepare", parents=[common],
+        help="Prepare a model: inspect, analyze, validate, optionally "
+             "convert (resumable manifest; source never modified)")
+    prepare.add_argument("source", help="GGUF file or checkpoint directory")
+    prepare.add_argument("--outdir", default=None,
+                         help="fresh output directory for --convert (must "
+                              "differ from the source)")
+    prepare.add_argument("--convert", action="store_true",
+                         help="delegate conversion to the family converter "
+                              "via SYNTARA_ENGINE (writes only to --outdir)")
+    prepare.add_argument("--force", action="store_true",
+                         help="redo stages even if already recorded")
+    prepare.add_argument("--verify", action="store_true",
+                         help="only re-check stored integrity facts against "
+                              "what is on disk now")
 
     convert = sub.add_parser(
         "convert", parents=[common],
@@ -695,6 +920,10 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_library(args)
         if args.command == "inspect":
             return _cmd_inspect(args)
+        if args.command == "plan":
+            return _cmd_plan(args)
+        if args.command == "prepare":
+            return _cmd_prepare(args)
         if args.command == "convert":
             return _cmd_convert(args)
         if args.command == "health":

@@ -1080,6 +1080,12 @@ fp8-bench: fp8_bench$(EXE)
 olmoe$(EXE): olmoe.c cli_args.h st.h json.h compat.h sample.h tok.h tok_unicode.h tok_unicode_o200k.h omp_tune.h kv_prefix.h pin_pool.h route_trace.h serve_codec.h edge_adapters.h edge_runtime.h edge_tok_internal.h fused_simd.h segment_adapter_internal.h segment_adapters.h segment_runtime.h
 	$(CC) $(NOCUDA_CFLAGS) olmoe.c -o olmoe$(EXE) $(NOCUDA_LDFLAGS)
 
+# Llama dense (GQA, no experts, no SYNTARA_CUDA code): same NOCUDA_* guard as
+# olmoe above -- the registry marks the family supports_accelerator=False and
+# test_registry_engine_agreement derives CPU-only from this link line.
+llama_dense$(EXE): llama_dense.c cli_args.h st.h json.h compat.h sample.h tok.h tok_unicode.h tok_unicode_o200k.h omp_tune.h serve_codec.h
+	$(CC) $(NOCUDA_CFLAGS) llama_dense.c -o llama_dense$(EXE) $(NOCUDA_LDFLAGS)
+
 # Qwen3.6-35B-A3B engine (hybrid Gated Attention + Gated DeltaNet + streaming
 # MoE). With CUDA=1 the optional VRAM expert tier (qwen36_tier.c) is compiled
 # in and reuses the shared CUDA backend; without it the engine is CPU-only
@@ -2048,7 +2054,7 @@ check:
 check-launcher:
 	$(PYTHON) tools/check_launcher_contract.py
 
-install: $(ENGINE_REAL) glm53$(EXE) inkling$(EXE) kimi_k3$(EXE) olmoe$(EXE) qwen36$(EXE) qwen38$(EXE) deepseek_v41$(EXE) \
+install: $(ENGINE_REAL) glm53$(EXE) inkling$(EXE) kimi_k3$(EXE) olmoe$(EXE) qwen36$(EXE) qwen38$(EXE) deepseek_v41$(EXE) llama_dense$(EXE) \
 	$(if $(filter 1,$(SYNTARA_V4_SUPPORTED)),deepseek-v4,)
 	$(INSTALL) -d $(DESTDIR)$(BINDIR)
 	$(INSTALL) -d $(DESTDIR)$(LIBEXECDIR)
@@ -2062,6 +2068,7 @@ install: $(ENGINE_REAL) glm53$(EXE) inkling$(EXE) kimi_k3$(EXE) olmoe$(EXE) qwen
 	$(INSTALL) -m 755 qwen36$(EXE) $(DESTDIR)$(LIBEXECDIR)/qwen36$(EXE)
 	$(INSTALL) -m 755 qwen38$(EXE) $(DESTDIR)$(LIBEXECDIR)/qwen38$(EXE)
 	$(INSTALL) -m 755 deepseek_v41$(EXE) $(DESTDIR)$(LIBEXECDIR)/deepseek_v41$(EXE)
+	$(INSTALL) -m 755 llama_dense$(EXE) $(DESTDIR)$(LIBEXECDIR)/llama_dense$(EXE)
 	@if [ -f deepseek_v4$(EXE) ]; then \
 	  $(INSTALL) -m 755 deepseek_v4$(EXE) $(DESTDIR)$(LIBEXECDIR)/deepseek_v4$(EXE); \
 	fi

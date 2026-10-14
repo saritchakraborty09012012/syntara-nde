@@ -1032,6 +1032,9 @@ class FamilyRegistryTest(unittest.TestCase):
             # V4.1 ships its chat encoding as a Python module (encoding/encoding.py),
             # not a jinja template, so the replay prompt stays the bare text like V4.
             "deepseek_v41": "hello {world}",
+            # Llama's chat template is rendered by the gateway (render_chat_llama),
+            # so the tuning replay stays the bare prompt, like DeepSeek.
+            "llama": "hello {world}",
         }
         self.assertEqual(
             {family.id: tuning_replay_prompt(family, prompt) for family in FAMILIES},

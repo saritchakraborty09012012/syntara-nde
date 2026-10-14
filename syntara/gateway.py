@@ -178,11 +178,23 @@ def _default_ram_gb() -> float | None:
 
 
 def _hwinfo() -> dict[str, Any]:
-    return {
-        "cpu": platform.processor() or platform.machine() or "unknown",
-        "gpu": "not probed by this host yet",
-        "ram_avail_gb": _default_ram_gb(),
-    }
+    """Honest hardware facts for /health (capability-based, cached probe)."""
+    try:
+        from .hardware import gpu_summary, probe
+        profile = probe()
+        return {
+            "cpu": (profile.get("cpu") or {}).get("name")
+            or (profile.get("cpu") or {}).get("arch") or "unknown",
+            "gpu": gpu_summary(profile),
+            "ram_avail_gb": (profile.get("ram") or {}).get("available_gb"),
+            "ram_total_gb": (profile.get("ram") or {}).get("total_gb"),
+        }
+    except Exception:  # noqa: BLE001 - health must not fail on a probe error
+        return {
+            "cpu": platform.processor() or platform.machine() or "unknown",
+            "gpu": "not probed by this host yet",
+            "ram_avail_gb": _default_ram_gb(),
+        }
 
 
 def default_idle_unload_s() -> float:
@@ -292,8 +304,11 @@ class HostGateway:
         if self._runtime_factory is not None:
             return self._runtime_factory(
                 self.entry, context=self.context, threads=self._threads)
-        from .runtime.llama_cpp import LlamaCppRuntime
-        return LlamaCppRuntime(
+        # Metadata-based routing (AGENTS §8/§12): GGUF -> llama.cpp,
+        # engine-family checkpoints -> the C engine suite, everything else
+        # -> the documented fallbacks. One source of truth in routing.py.
+        from .routing import build_runtime
+        return build_runtime(
             self.entry["path"], context=self.context, threads=self._threads,
             startup_timeout=self._startup_timeout)
 
@@ -571,6 +586,12 @@ class HostGateway:
         }
         if self.runtime is not None:
             body["runtime"] = self.runtime.health()
+            capabilities = getattr(self.runtime, "capabilities", None)
+            if callable(capabilities):
+                try:
+                    body["capabilities"] = capabilities()
+                except Exception:  # noqa: BLE001 - caps are diagnostics only
+                    pass
         if self.idle_unload_s > 0 or self._idle_unloaded:
             with self._state_lock:
                 idle_for = round(time.monotonic() - self._last_used, 1)
@@ -871,6 +892,71 @@ class HostGateway:
                               else None)
             respond.json(200, result)
 
+    # ---------------------------------------------------------------- images
+
+    def handle_images(self, body: dict[str, Any], respond: "_Responder") -> None:
+        """POST /v1/images/generations - the image-generation path (Obj 6).
+
+        Served only by runtimes that actually implement it; a text model
+        answers with an honest 501 naming the served model and the fix,
+        never with a fabricated image or a silent no-op (AGENTS §17/§99).
+        """
+        if not isinstance(body, dict):
+            respond.error(400, "request body must be a JSON object",
+                          "invalid_request_error", "invalid_body")
+            return
+        with self._state_lock:
+            self._last_used = time.monotonic()
+        if self._idle_unloaded:
+            try:
+                self.ensure_loaded()
+            except Exception as exc:  # noqa: BLE001 - actionable 503
+                respond.error(503, str(exc), "server_error",
+                              "runtime_not_ready",
+                              extra_headers={"Retry-After": "5"})
+                return
+        if self.runtime is None or not self.runtime.loaded:
+            respond.error(503, "no model is loaded in the runtime",
+                          "server_error", "runtime_not_ready")
+            return
+        generate = getattr(self.runtime, "generate_image", None)
+        if not callable(generate):
+            respond.error(
+                501,
+                f"`{self.served_model_id}` is a text model and does not "
+                "generate images; serve an image pipeline with "
+                "`syntara serve --model <diffusion-dir>` to use this "
+                "endpoint (see GET /health -> capabilities)",
+                "invalid_request_error", "not_implemented")
+            return
+        queued_at = time.monotonic()
+        try:
+            with self.scheduler.admit():
+                wait_ms = int((time.monotonic() - queued_at) * 1000)
+                respond.extra_headers["x-syntara-queue-wait-ms"] = str(wait_ms)
+                started = time.monotonic()
+                result = generate(body)
+                self._record_turn(time.monotonic() - started, None)
+                respond.json(200, result)
+        except QueueFull as exc:
+            respond.error(429, str(exc), "rate_limit_error", "queue_full",
+                          extra_headers={"Retry-After": "1"})
+        except QueueTimeout as exc:
+            respond.error(504, str(exc), "server_error", "queue_timeout")
+        except GenerationCancelled:
+            try:
+                respond.error(499, "the image generation was cancelled",
+                              "server_error", "cancelled")
+            except OSError:
+                pass
+        except Exception as exc:  # noqa: BLE001 - honest backend error
+            self.last_error = str(exc)
+            try:
+                respond.error(502, str(exc), "server_error", "backend_error",
+                              detail=getattr(exc, "detail", ""))
+            except OSError:
+                pass
+
     def models_list(self) -> dict[str, Any]:
         return {
             "object": "list",
@@ -1093,6 +1179,13 @@ def _make_handler(gateway: HostGateway):
                                     "invalid_request_error", "invalid_body")
                     return
                 gateway.handle_chat(body, responder)
+            elif path == "/v1/images/generations":
+                body = self._read_json()
+                if body is None:
+                    responder.error(400, "request body must be a JSON object",
+                                    "invalid_request_error", "invalid_body")
+                    return
+                gateway.handle_images(body, responder)
             elif path == "/stop":
                 self._read_json()  # drain any body; /stop takes no arguments yet
                 responder.json(200, gateway.stop_generation())

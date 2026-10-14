@@ -430,6 +430,42 @@ def _olmoe_geometry(config, context, _model_dir):
     return PlannerGeometry(state, 0, 0, experts)
 
 
+def _llama_geometry(config, context, _model_dir):
+    """Dense Llama: conventional GQA attention, no experts, no recurrent state.
+
+    llama_dense.c sizes its KV cache as n_layers * max_t * n_kv_heads *
+    head_dim floats for K and the same for V (`kv_alloc`, llama_dense.c:360),
+    so only the key/value heads grow with context -- num_key_value_heads when
+    the config declares it, every head otherwise (a Llama-2 checkpoint omits
+    the key and full MHA is what HF defaults to). head_dim comes from the
+    config when present; HF's rule hidden_size // num_attention_heads
+    otherwise. The bounded per-forward scratch (one attention-score row per
+    query head, logits) is already covered by the base runtime reserve, the
+    same call OLMoE's geometry makes. configured_experts is 1, not 0: the
+    dense SwiGLU MLP is one always-resident expert, and the registry requires
+    a positive count (planner_geometry rejects zero)."""
+    layers = _required_int(config, "num_hidden_layers", "llama")
+    hidden = _required_int(config, "hidden_size", "llama")
+    heads = _required_int(config, "num_attention_heads", "llama")
+    kv_heads = _optional_int(config, "num_key_value_heads", heads, 1)
+    if kv_heads > heads or heads % kv_heads != 0:
+        raise ValueError("llama: num_key_value_heads must divide num_attention_heads")
+    head_dim = _optional_int(config, "head_dim", 0, 0)
+    if head_dim < 1:
+        head_dim = hidden // heads
+    if head_dim < 1:
+        raise ValueError("llama: hidden_size is smaller than num_attention_heads")
+    state = layers * context * kv_heads * head_dim * 2 * 4
+    return PlannerGeometry(state, 0, 0, 1)
+
+
+def _dense_no_experts(_name, _size, _config, _dtype=None):
+    """A dense checkpoint has no expert tensors: every weight is resident.
+    Returning the empty inventory routes all sizes into the dense resident
+    pile instead of the per-expert cache the planner prices separately."""
+    return ()
+
+
 
 def _kimi_geometry(config, context, _model_dir):
     """Kimi K3: hybrid -- 69 KDA (recurrent) + 24 gated MLA layers.
@@ -1434,6 +1470,40 @@ FAMILIES = (
         # else, so a one-shot has nowhere to go but the gateway -- which is what
         # syntara chat, syntara serve and syntara web already use.
         has_cli_adapter=False,
+    ),
+    FamilyDescriptor(
+        id="llama",
+        model_types=("llama",),
+        display_name="Llama",
+        display_scale="Dense",
+        engine_artifact="llama_dense",
+        engine_aliases=(),
+        engine_group="llama_dense",
+        internal_arch="llama_dense",
+        build_target="llama_dense",
+        process_names=("llama_dense",),
+        default_model_id="llama-dense-syntara",
+        cli_adapter="llama",
+        gateway_adapter="llama",
+        planner_id="llama_gqa",
+        planner_geometry=_llama_geometry,
+        planner_unsupported_reason="",
+        # CPU-only: the NOCUDA build rule links no backend object, so the
+        # planner must not offer a VRAM tier (test_registry_engine_agreement
+        # derives CPU-only from the link line and fails on a mismatch).
+        supports_accelerator=False,
+        # A dense checkpoint has no expert tensors: every weight is resident,
+        # and the empty inventory routes all sizes into the dense pile.
+        expert_inventory=_dense_no_experts,
+        config_section="root",
+        limits=FamilyLimits(4096, 131072, 1024, 8192, 1, 8, "CTX"),
+        capabilities=FamilyCapabilities(False, False, False, False),
+        has_gateway_adapter=True,
+        # Direct `syntara run` stays unwired until a llama CLI prompt path
+        # exists; chat/serve/web all go through the gateway, which renders
+        # Llama-3's chat template in render_chat_llama.
+        has_cli_adapter=False,
+        tune_prompt_template="{prompt}",
     ),
 )
 

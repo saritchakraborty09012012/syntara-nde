@@ -72,7 +72,7 @@ CPU · GPU · RAM · VRAM · SSD
 
 ## Supported model families
 
-Nine model families are registered with the engine, each with its own planner, memory model and quantization path:
+Ten model families are registered with the engine, each with its own planner, memory model and quantization path:
 
 - **GLM-5.2/5.3** (744B MoE) and **GLM-5.3-Flash** (321B, vision)
 - **Inkling** (975B)
@@ -81,8 +81,9 @@ Nine model families are registered with the engine, each with its own planner, m
 - **Qwen3.8-Flash-Next** (125B + 51B n-gram)
 - **Qwen3.6** (35B-A3B)
 - **OLMoE** (7B)
+- **Llama** (dense GQA)
 
-The registry lives in `c/family_registry.py`; the translated READMEs in this repository describe the same nine families in their own language.
+The registry lives in `c/family_registry.py`; the translated READMEs in this repository describe the same ten families in their own language.
 
 ## No account philosophy
 

@@ -138,6 +138,18 @@
         "path": "tools/make_dsv41_tiny.py"
       },
       "real_adapter_required": true
+    },
+    {
+      "family_id": "llama",
+      "state_schema": "fixture/llama-kv-v1",
+      "state_components": [
+        "kv"
+      ],
+      "oracle": {
+        "kind": "generated_tiny",
+        "path": "tools/make_llama_dense_tiny.py"
+      },
+      "real_adapter_required": true
     }
   ]
 }

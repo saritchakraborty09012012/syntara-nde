@@ -127,6 +127,13 @@ static const SyntaraSegmentConformanceFixture g_fixtures[] = {
             SYNTARA_SEGMENT_FIXTURE_VISION_TOWER,
         6, 8, 4, 64, UINT32_C(0x44533431),
     },
+    {
+        "llama", "Llama", "fixture/llama-kv-v1",
+        "conventional key/value attention cache (dense GQA, no experts)",
+        "tools/make_llama_dense_tiny.py",
+        SYNTARA_SEGMENT_FIXTURE_KV,
+        2, 8, 4, 32, UINT32_C(0x4c4c4d41),
+    },
 };
 
 static int fail(char *error, size_t error_size, const char *message) {
@@ -378,6 +385,7 @@ DECLARE_OPEN_WRAPPER(qwen36, 5)
 DECLARE_OPEN_WRAPPER(qwen38, 6)
 DECLARE_OPEN_WRAPPER(deepseek_v4, 7)
 DECLARE_OPEN_WRAPPER(deepseek_v41, 8)
+DECLARE_OPEN_WRAPPER(llama, 9)
 
 #define FIXTURE_ADAPTER(name)                                                  \
     {                                                                          \
@@ -404,6 +412,7 @@ static const SyntaraSegmentAdapter g_adapters[] = {
     FIXTURE_ADAPTER(qwen38),
     FIXTURE_ADAPTER(deepseek_v4),
     FIXTURE_ADAPTER(deepseek_v41),
+    FIXTURE_ADAPTER(llama),
 };
 
 int syntara_segment_conformance_register_fixtures(void) {

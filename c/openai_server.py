@@ -615,8 +615,9 @@ def _tool_hold():
     return max(len(m) for m in _tool_stream_markers()) - 1
 
 
-ARCH = "glm"   # set in main(): a family id from family_registry (glm | inkling |
-               # kimi | olmoe | qwen36 | qwen38 | deepseek_v4)
+ARCH = "glm"   # set in main(): a family id from family_registry (glm | glm53 |
+               # inkling | kimi | olmoe | qwen36 | qwen38 | deepseek_v4 |
+               # deepseek_v41 | llama)
 
 INK_THINK, INK_TEXT = "<|content_thinking|>", "<|content_text|>"
 
@@ -1225,6 +1226,38 @@ def render_chat_olmoe(messages, enable_thinking=False, reasoning_effort=None, to
             if index != last:
                 parts.append("\n")
     parts.append("<|assistant|>\n")
+    return "".join(parts)
+
+
+def render_chat_llama(messages, enable_thinking=False, reasoning_effort=None, tools=None,
+                      tool_choice=None):
+    """Llama-3's chat template (Meta's official tokenizer_config): one bos,
+    then per-message <|start_header_id|>role<|end_header_id|>\\n\\n ...<|eot_id|>
+    frames, and a trailing <|start_header_id|>assistant<|end_header_id|>\\n\\n
+    generation prompt. `developer` folds into `system` the same way the OpenAI
+    spec aliases it. No thinking block and no tool-call syntax exist in this
+    template, so both parameters are accepted but unused -- the engine's
+    token ids (256 BOS / 257 EOS / 258 EOT / 259-260 header markers) are what
+    llama_dense.c looks for when stopping, so the renderer must emit exactly
+    these strings and nothing invented."""
+    if not isinstance(messages, list) or not messages:
+        raise APIError(400, "`messages` must be a non-empty array.", "messages")
+    if tools or tool_choice not in (None, "none"):
+        raise APIError(400, "Tool use is not wired up for the Llama engine yet.",
+                       "tools", "unsupported_parameter")
+    parts = ["<|begin_of_text|>"]
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict):
+            raise APIError(400, "Each message must be an object.", f"messages.{index}")
+        role = message.get("role")
+        if role == "developer":
+            role = "system"
+        if role not in ("system", "user", "assistant"):
+            raise APIError(400, f"Unsupported role {role!r}.", f"messages.{index}.role")
+        raw = message.get("content")
+        text = content_text(raw, f"messages.{index}.content") if raw is not None else ""
+        parts.append(f"<|start_header_id|>{role}<|end_header_id|>\n\n{text}<|eot_id|>")
+    parts.append("<|start_header_id|>assistant<|end_header_id|>\n\n")
     return "".join(parts)
 
 
@@ -2224,6 +2257,7 @@ def render_chat_for_arch(messages, enable_thinking=False, reasoning_effort=None,
                 render_chat_qwen38 if ARCH == "qwen38" else
                 render_chat_v4 if ARCH == "deepseek_v4" else
                 render_chat_dsv41 if ARCH == "deepseek_v41" else
+                render_chat_llama if ARCH == "llama" else
                 render_chat_olmoe if ARCH == "olmoe" else render_chat)
     return renderer(messages, enable_thinking, reasoning_effort, tools, tool_choice)
 

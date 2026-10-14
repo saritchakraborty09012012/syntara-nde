@@ -37,6 +37,7 @@ FILES = [
     "syntara_hip.dll", "syntara_hip.lib", "syntara_hip.exp", "syntara_hip.pdb",
     "deepseek_v4", "deepseek_v4.exe",
     "deepseek_v41", "deepseek_v41.exe",
+    "llama_dense", "llama_dense.exe",
     "native_quant.o", "native_quant_parallel.o", "native_quant_dual.o",
     "native_quant_batch_avx512.o", "native_quant_fp4_rows16.o",
 ]

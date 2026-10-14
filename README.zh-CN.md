@@ -10,10 +10,10 @@
 **小巧引擎，庞大模型。**在消费级与异构硬件上运行**前沿 MoE 模型——从 744B 到
 2.8T 参数**——以引擎零依赖的纯 C 实现，将存储、RAM 与 VRAM 视为统一的推理层级。
 
-目前可运行九个模型家族：**GLM-5.2/5.3**（744B）、**GLM-5.3-Flash**（321B，含视觉）、
+目前可运行十个模型家族：**GLM-5.2/5.3**（744B）、**GLM-5.3-Flash**（321B，含视觉）、
 **Inkling**（975B）、**Kimi K3**（2.8T）、**DeepSeek V4 Flash**（284B）、**DeepSeek V4.1 Flash**（552B，含视觉）、
-**Qwen3.8-Flash-Next**（125B + 51B n-gram）、**Qwen3.6**（35B-A3B）与 **OLMoE**（7B）
-——各自一个 C 文件，共用同一套 `syntara chat` / `syntara serve` / `syntara web` 前端。[完整列表](README.md#other-supported-models)
+**Qwen3.8-Flash-Next**（125B + 51B n-gram）、**Qwen3.6**（35B-A3B）、**OLMoE**（7B）与
+**Llama**（稠密 GQA）——各自一个 C 文件，共用同一套 `syntara chat` / `syntara serve` / `syntara web` 前端。[完整列表](README.md#other-supported-models)
 
 > **Syntara 既是今天就能运行的推理引擎，也是一个开放的研究平台**。它的首要目标是在
 > 完整的软硬件边界上追求推理侧性能——模型格式、内存层级、存储 I/O、放置、调度、内核、
@@ -292,7 +292,7 @@ SYNTARA_MODEL=/nvme/glm52_i4 ./syntara doctor   # 只读就绪检查
 人们向模型提出的大多数请求是一次选择，而不是一段文字：哪个队列、哪个结论、某个字段应取四个值中的哪一个。
 Brio 模式把允许的选项交给引擎，读出每个选项的概率，而不是生成文本：`completion_tokens` 为 0，
 答案不可能落在你的列表之外，并且每个答案都附带一个熵，"模型没有把握"因此成为一个可以设阈值的数字。
-它在全部九个模型家族上可用，运行在同一个服务器上，且按请求可选：不请求它的聊天，输出逐字节保持不变。
+它在全部十个模型家族上可用，运行在同一个服务器上，且按请求可选：不请求它的聊天，输出逐字节保持不变。
 
 ```bash
 # 在 TUI 中：同一个模型，只是不再让它写
@@ -358,8 +358,8 @@ oracle 说明，请参阅[中文版 DeepSeek V4 文档](docs/deepseek-v4.zh-CN.m
   放置、调度、I/O、CPU/GPU 内核、异构重叠、KV 状态与路由感知推测。目标是降低硬件要求
   和每个有效 token 的成本，所有成果都以端到端测量为准、经审查并公开开发。
 - **支持更多开放模型**。层级算法与模型无关，任何带路由专家的 MoE 都能用相同方式分层。
-  目前已有九个模型家族可用（GLM-5.2、GLM-5.3-Flash、Inkling、Kimi K3、DeepSeek V4 Flash、DeepSeek V4.1 Flash、
-  Qwen3.8-Flash-Next、Qwen3.6、OLMoE）；更多开放权重家族（候选包括 **MiniMax**）将沿用同样的
+  目前已有十个模型家族可用（GLM-5.2、GLM-5.3-Flash、Inkling、Kimi K3、DeepSeek V4 Flash、DeepSeek V4.1 Flash、
+  Qwen3.8-Flash-Next、Qwen3.6、OLMoE、Llama）；更多开放权重家族（候选包括 **MiniMax**）将沿用同样的
   规则获得引擎支持：有人完成端到端实测之后。
 
 ## 支持项目

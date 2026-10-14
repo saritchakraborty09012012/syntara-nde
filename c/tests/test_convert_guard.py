@@ -57,7 +57,9 @@ class ConvertGuardTest(unittest.TestCase):
         self.assertIn("FP8", str(caught.exception))
 
     def test_unknown_and_missing_types_are_refused_not_guessed(self):
-        for config in ({"model_type": "llama"}, {"model_type": ""}, {}):
+        # "llama" is a registered family now; use a token that is not any
+        # family's model_type so the test still exercises the unknown path.
+        for config in ({"model_type": "unobtainium"}, {"model_type": ""}, {}):
             with self.assertRaises(SystemExit):
                 check_model_family(config, "x")
 

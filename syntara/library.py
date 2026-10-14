@@ -1,11 +1,13 @@
-"""Local GGUF model library: discovery, registration and honest metadata.
+"""Local model library: discovery, registration and honest metadata.
 
-The library is the durable, offline catalogue of model files the user chose
-to make available (AGENTS §71/§72): it *references* files in place by
+The library is the durable, offline catalogue of model artifacts the user
+chose to make available (AGENTS §71/§72): GGUF files, checkpoint
+directories, diffusion pipelines and ONNX graphs - each registered from its
+real metadata (:mod:`syntara.model_inspect`), referenced in place by
 default (importing never copies unless asked, and never touches the
-original), derives metadata from :mod:`syntara.gguf_inspect`, and stores a
-small JSON index next to the other per-user data. Model binaries themselves
-are never moved or deleted without an explicit, separate action.
+original), with a small JSON index next to the other per-user data. Model
+binaries themselves are never moved or deleted without an explicit,
+separate action.
 """
 from __future__ import annotations
 
@@ -97,7 +99,7 @@ class ModelLibrary:
                     f"longer exists; re-add it with `syntara library add`")
             return entry
         path = Path(id_or_path).expanduser()
-        if path.is_file():
+        if path.is_file() or path.is_dir():
             return self.add(path)
         known = ", ".join(e["id"] for e in self.list()) or "(none)"
         raise LibraryError(
@@ -117,10 +119,18 @@ class ModelLibrary:
 
     def add(self, path: str | os.PathLike[str], *, copy: bool = False,
             model_id: str | None = None) -> dict[str, Any]:
-        """Register a GGUF file. References in place unless ``copy=True``."""
+        """Register a GGUF file, checkpoint directory, or .onnx graph.
+
+        References in place unless ``copy=True``; the original is never
+        modified or deleted (AGENTS §71).
+        """
         src = Path(path).expanduser().resolve()
-        if not src.is_file():
+        if not src.exists():
             raise LibraryError(f"file not found: {src}")
+        if src.is_file() and src.suffix.lower() == ".gguf":
+            pass  # the classic GGUF path below keeps its exact diagnostics
+        else:
+            return self._add_artifact(src, copy=copy, model_id=model_id)
         try:
             report = inspect_file(src)
         except GgufError as exc:
@@ -186,6 +196,92 @@ class ModelLibrary:
         self._write(entries)
         return self._with_status(entry)
 
+    def _add_artifact(self, src: Path, *, copy: bool = False,
+                      model_id: str | None = None) -> dict[str, Any]:
+        """Register a non-GGUF artifact from real metadata (checkpoint dirs,
+        diffusion pipelines, .onnx graphs) - never from the filename."""
+        from .model_inspect import inspect_path, is_supported_entry
+
+        report = inspect_path(src)
+        if not is_supported_entry(report):
+            reasons = "; ".join(report.get("warnings") or []) or \
+                "unrecognized artifact"
+            raise LibraryError(
+                f"cannot add {src.name}: {reasons}")
+        if report.get("kind") == "gguf-file":
+            # A GGUF found by magic inside the artifact path: register it
+            # through the GGUF branch so its report shape stays canonical.
+            if src.is_file():
+                return self.add(src, copy=copy, model_id=model_id)
+
+        entries = self._read()
+        stored = src
+        if copy:
+            self.models_dir.mkdir(parents=True, exist_ok=True)
+            if src.is_dir():
+                target = self.models_dir / src.name
+                n = 2
+                while target.exists():
+                    target = self.models_dir / f"{src.stem}-{n}"
+                    n += 1
+                shutil.copytree(src, target)
+            else:
+                target = self.models_dir / src.name
+                n = 2
+                while target.exists():
+                    target = self.models_dir / f"{src.stem}-{n}{src.suffix}"
+                    n += 1
+                shutil.copy2(src, target)
+            stored = target.resolve()
+        for entry in entries:
+            if Path(entry["path"]).resolve() == stored.resolve():
+                if model_id is not None and entry["id"] != model_id:
+                    raise LibraryError(
+                        f"file already registered as {entry['id']!r}; "
+                        f"remove that entry first or drop the explicit id")
+                return self._with_status(entry)
+
+        if model_id is not None:
+            if any(e["id"] == model_id for e in entries):
+                raise LibraryError(f"model id {model_id!r} already exists")
+            entry_id = model_id
+        else:
+            entry_id = self._unique_id(src.stem, entries)
+
+        try:
+            st = stored.stat()
+        except OSError as exc:
+            raise LibraryError(f"cannot stat {stored}: {exc}") from exc
+        config = report.get("config") or {}
+        context_length = config.get("context_length") or \
+            config.get("max_position_embeddings")
+        entry = {
+            "id": entry_id,
+            "path": str(stored),
+            "added": _now(),
+            "copied": bool(copy),
+            "origin": str(src) if copy else None,
+            "size": st.st_size,
+            "mtime": int(st.st_mtime),
+            "kind": report.get("kind"),
+            "format": report.get("format"),
+            "model": {
+                "name": config.get("name") or report.get("model_type")
+                or report.get("architecture"),
+                "architecture": report.get("architecture")
+                or report.get("model_type"),
+                "context_length": context_length,
+            },
+            "modalities": report.get("modalities") or [],
+            "quantization": report.get("quantization"),
+            "estimates": report.get("estimates"),
+            "data_complete": report.get("data_complete"),
+            "warnings": (report.get("warnings") or [])[:8],
+        }
+        entries.append(entry)
+        self._write(entries)
+        return self._with_status(entry)
+
     def scan(self, directory: str | os.PathLike[str], *, copy: bool = False,
              limit: int | None = None) -> dict[str, Any]:
         """Discover ``*.gguf`` files under ``directory`` and register them."""
@@ -228,6 +324,12 @@ class ModelLibrary:
             # The stored path came from our own index; still resolve and
             # require it to be a regular file before deleting.
             resolved = path.resolve()
+            if resolved.is_dir():
+                raise LibraryError(
+                    f"refusing to delete {resolved}: it is a directory, not "
+                    "a single file; removing the entry never deletes "
+                    "directories - remove the directory yourself if you "
+                    "really mean to")
             if not resolved.is_file():
                 raise LibraryError(f"file already gone: {resolved}")
             if expect is not None:
