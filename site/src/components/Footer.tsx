@@ -17,6 +17,7 @@ const LINKS: Array<{ label: string; id: string }> = [
 
 const PAGES: Array<{ label: string; href: string }> = [
   { label: "About Syntara", href: "about.html" },
+  { label: "Playground", href: "playground.html" },
   { label: "Privacy Policy", href: "privacy.html" },
   { label: "FAQ", href: "faq.html" },
 ]

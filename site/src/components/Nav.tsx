@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react"
 import { Container } from "./ui"
 
+/* The header row has to fit the 1180 px Container at EVERY viewport —
+   logo + these links + the action buttons exceed it with all nine links,
+   so Open source / FAQ / Roadmap live in the footer only. */
 const LINKS: Array<{ id: string; label: string; page?: string }> = [
   { id: "why", label: "Why" },
   { id: "install", label: "Install" },
@@ -10,9 +13,6 @@ const LINKS: Array<{ id: string; label: string; page?: string }> = [
   // Standalone page rather than a landing-page anchor: same nav works from
   // every page because `home` prefixes it ("./" on subpages, "" at the root).
   { id: "playground", label: "Playground", page: "playground.html" },
-  { id: "open", label: "Open source" },
-  { id: "faq", label: "FAQ" },
-  { id: "roadmap", label: "Roadmap" },
 ]
 
 function readTheme(): "dark" | "light" {
@@ -38,7 +38,7 @@ export function Nav({ home = "" }: { home?: string }) {
 
   return (
     <header className="sticky top-0 z-50 border-b border-line bg-void/80 backdrop-blur-xl">
-      <Container className="flex h-[72px] items-center gap-8">
+      <Container className="flex h-[72px] items-center gap-5">
         <a href={`${home}#top`} className="flex shrink-0 items-center gap-3">
           <img
             src="syntara-logo.png"
@@ -55,19 +55,19 @@ export function Nav({ home = "" }: { home?: string }) {
           </span>
         </a>
 
-        <nav className="hidden flex-1 items-center justify-center gap-6 lg:flex" aria-label="Primary">
+        <nav className="hidden min-w-0 flex-1 items-center justify-center gap-4 lg:flex" aria-label="Primary">
           {LINKS.map((link) => (
             <a
               key={link.id}
               href={link.page ? `${home}${link.page}` : `${home}#${link.id}`}
-              className="nav-link"
+              className="nav-link whitespace-nowrap"
             >
               {link.label}
             </a>
           ))}
         </nav>
 
-        <div className="ml-auto flex items-center gap-2 lg:ml-0">
+        <div className="ml-auto flex shrink-0 items-center gap-2 lg:ml-0">
           <button
             type="button"
             className="hud-btn hud-btn-ghost cut-sm !px-2.5"

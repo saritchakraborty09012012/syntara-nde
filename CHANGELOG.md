@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The site header no longer clips the Download button.** All nine nav
+  links plus the four action buttons overran the fixed 1180 px container,
+  pushing Download half off the right edge. The header now carries six
+  primary links (Open source, FAQ and Roadmap live in the footer, and
+  Playground moved into the footer's Syntara column), the gap between
+  groups is tighter, and the action cluster is `shrink-0` so it can never
+  be squeezed — the row fits with room to spare at every width.
+
 ### Changed
 
 - **The menu sidebar opens as an overlay instead of re-flowing the grid.**
