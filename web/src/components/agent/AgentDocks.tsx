@@ -5,11 +5,12 @@
    riding atop the progress pane and always visible. */
 
 import { useEffect, useMemo, useState } from "react"
-import { Check, ClipboardList, Copy, Eye, HelpCircle, ListChecks, LoaderCircle, Pencil, RefreshCw, ShieldAlert, Terminal, Timer, Users, X } from "lucide-react"
+import { ArrowUpRight, Check, ClipboardList, Copy, Eye, FolderOpen, FolderPlus, HelpCircle, ListChecks, LoaderCircle, Pencil, RefreshCw, ShieldAlert, Terminal, Timer, Users, X } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import type { AgentEvent } from "@/lib/agent/loop"
 import type { PermissionDecision } from "@/lib/agent/permissions"
+import { openSitePage, SITE_DOWNLOAD_URL } from "@/lib/site"
 
 export interface PermissionPrompt { tool: string; args: Record<string, unknown> }
 export interface QuestionPrompt { text: string; options: string[] }
@@ -440,6 +441,82 @@ export function AgentPlanPanel(props: AgentPlanPanelProps) {
           </button>
         </div>
         <p className="panel-note">Review and edit the steps — approving switches to Build mode and runs the plan.</p>
+      </div>
+    </section>
+  )
+}
+
+export interface AgentFolderDockProps {
+  projectName: string | null
+  projects: Array<{ id: string; name: string }>
+  activeId: string | null
+  canPickFolder: boolean
+  onSelect: (id: string) => void
+  onAddNew: () => void
+}
+
+/* Project folder dock: lives atop the progress pane every time it is open,
+   lists the folders already added, and keeps an Add-new button that opens
+   the system folder picker. Until a folder is chosen the note stays — this
+   is the agent's persistent reminder that it works on real files. */
+export function AgentFolderDock(props: AgentFolderDockProps) {
+  const [pickNudge, setPickNudge] = useState(false)
+  useEffect(() => {
+    if (!pickNudge || props.canPickFolder) return
+    const timer = window.setTimeout(() => setPickNudge(false), 6000)
+    return () => window.clearTimeout(timer)
+  }, [pickNudge, props.canPickFolder])
+
+  return (
+    <section className="ag-panel ag-panel-pinned" aria-label="Project folder">
+      <div className="ag-panel-head">
+        <FolderOpen size={13} />
+        <span>Project</span>
+      </div>
+      <div className="ag-panel-body">
+        {props.projectName ? (
+          <div className="ag-dock-project" title={props.projectName}>
+            <FolderOpen size={12} /> <strong>{props.projectName}</strong>
+          </div>
+        ) : (
+          <p className="panel-note">
+            Choose a folder so the agent can read and write real files. This stays here until you pick one.
+          </p>
+        )}
+        {props.projects.length ? (
+          <div className="ag-folder-projects" aria-label="Added folders">
+            {props.projects.map((project) => (
+              <button
+                key={project.id}
+                type="button"
+                className={cn("ag-folder-chip", project.id === props.activeId && "active")}
+                onClick={() => props.onSelect(project.id)}
+                title={`Switch to project ${project.name}`}
+              >
+                <FolderOpen size={12} />
+                <span>{project.name}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+        <div className="pick-folder-wrap">
+          {pickNudge && !props.canPickFolder ? (
+            <div className="desktop-nudge static" role="status">
+              <p>Folder access lives in the Syntara desktop app.</p>
+              <button type="button" className="nudge-cta" onClick={() => openSitePage(SITE_DOWNLOAD_URL)}>
+                Download <ArrowUpRight size={12} aria-hidden="true" />
+              </button>
+            </div>
+          ) : null}
+          <button
+            type="button"
+            className="ag-mini-btn wide"
+            onClick={() => (props.canPickFolder ? props.onAddNew() : setPickNudge((shown) => !shown))}
+            title={props.canPickFolder ? "Add a project folder" : "Folder picking is available inside the Syntara desktop app"}
+          >
+            <FolderPlus size={12} /> {props.projectName ? "Add / change folder…" : "Add folder…"}
+          </button>
+        </div>
       </div>
     </section>
   )

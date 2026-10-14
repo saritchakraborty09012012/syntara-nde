@@ -26,6 +26,8 @@ import {
 
 import type { AgentEvent } from "@/lib/agent/loop"
 import { diffLines, interruptedMessage, previewOutput, summarizeArgs } from "@/lib/agent/ui"
+import { extractArtifacts, stripArtifactBlocks } from "@/lib/artifacts"
+import { ArtifactChips } from "@/components/ArtifactChips"
 import { cn } from "@/lib/utils"
 
 interface AgentEventsProps {
@@ -95,12 +97,16 @@ export function AgentEvents({ events }: AgentEventsProps) {
                 {typeof event.elapsedMs === "number" ? <span className="ev-step-time">· {(event.elapsedMs / 1000).toFixed(1)}s</span> : null}
               </div>
             )
-          case "assistant_text":
+          case "assistant_text": {
+            const files = extractArtifacts(event.text)
+            const body = files.length ? stripArtifactBlocks(event.text) : event.text
             return (
               <div className="ev-text" key={index}>
-                {event.text}
+                {body}
+                {files.length ? <ArtifactChips files={files} /> : null}
               </div>
             )
+          }
           case "plan":
             return (
               <div className="ev-plan" key={index}>
@@ -190,13 +196,17 @@ export function AgentEvents({ events }: AgentEventsProps) {
                 <Info size={13} /> Compacted {event.dropped} older message(s) to fit the context window.
               </div>
             )
-          case "done":
+          case "done": {
+            const files = event.text ? extractArtifacts(event.text) : []
+            const body = files.length && event.text ? stripArtifactBlocks(event.text) : event.text
             return (
               <div className="ev-done" key={index}>
                 <Check size={14} /> Finished in {event.steps} step{event.steps === 1 ? "" : "s"}.
-                {event.text ? <div className="ev-text">{event.text}</div> : null}
+                {body ? <div className="ev-text">{body}</div> : null}
+                {files.length ? <ArtifactChips files={files} /> : null}
               </div>
             )
+          }
           case "interrupted":
             return (
               <div className="ev-interrupted" key={index}>

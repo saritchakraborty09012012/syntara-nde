@@ -105,6 +105,8 @@ import { volumeRows, type VolumeRow } from "@/lib/storage-plan"
 import { badgeLabel, groupComplete, metaFromInspect, pickInspectTarget } from "@/lib/inspect"
 import { mergePickerOptions, type PickerRow } from "@/lib/picker"
 import { APP_MODELS_URL, MODEL_DOWNLOAD_VALUE, openSitePage } from "@/lib/site"
+import { extractArtifacts, FILE_BLOCK_HINT, stripArtifactBlocks } from "@/lib/artifacts"
+import { shouldSuggestOtherMode } from "@/lib/mode-fit"
 import { canContinue, CONTINUE_NUDGE, createDeltaBuffer, retryAfterOf, retryDecision, statusOf } from "@/lib/send"
 import { FirstRunSetup } from "@/components/FirstRunSetup"
 import { ContextMeter } from "@/components/ContextMeter"
@@ -151,6 +153,7 @@ import { AgentSessions } from "@/components/agent/AgentSessions"
 import { AgentStage } from "@/components/agent/AgentStage"
 import { AgentComposer } from "@/components/agent/AgentComposer"
 import {
+  AgentFolderDock,
   AgentPermissionPanel,
   AgentPlanPanel,
   AgentPreviewPanel,
@@ -159,6 +162,8 @@ import {
   type LastRunSummary,
 } from "@/components/agent/AgentDocks"
 import { AgentFolderBar } from "@/components/agent/AgentFolderBar"
+import { ArtifactChips } from "@/components/ArtifactChips"
+import { ModeFitNudge } from "@/components/ModeFitNudge"
 import { cn } from "@/lib/utils"
 
 const message = (role: ChatMessage["role"], content: string, images?: string[]): ChatMessage => {
@@ -335,6 +340,9 @@ export default function App() {
   /* Send with no model → a callout points at the model chip instead of the
      button sitting dead; cleared on pick or after a few seconds. */
   const [chatModelNudge, setChatModelNudge] = useState(false)
+  /* Mode-fit callout: a task that clearly belongs in the other mode asks
+     before running — accept moves it over, stay runs it here. */
+  const [modeSuggestion, setModeSuggestion] = useState<{ from: "chat" | "agent" } | null>(null)
   /* Track 2b - queue while busy: the ref is the synchronous source of
      truth for the flush paths, the state mirrors it for the chips. */
   type QueuedSend = { id: string; text: string; images: string[]; docs: Array<{ name: string; content: string; size?: number }>; conversationId: string | null }
@@ -1295,9 +1303,12 @@ export default function App() {
   }
 
   /* Shared request preambles for both fresh sends and continuations, so
-     the two paths can never drift apart (track 2c). */
-  const systemPreambleFor = (conv: Conversation): ChatMessage[] =>
-    conv.systemPrompt?.trim() ? [message("system", conv.systemPrompt.trim())] : []
+     the two paths can never drift apart (track 2c). The file-block hint
+     rides along so the model knows how to hand back downloadable files. */
+  const systemPreambleFor = (conv: Conversation): ChatMessage[] => [
+    ...(conv.systemPrompt?.trim() ? [message("system", conv.systemPrompt.trim())] : []),
+    message("system", FILE_BLOCK_HINT),
+  ]
   const memoryContextFor = (): ChatMessage[] =>
     state.settings.memoryEnabled && state.memories.length
       ? [message("system", `The following are user-approved local memories. Use them only when relevant and never invent additional memories:\n${state.memories.slice(0, 50).map((item) => `- ${item.content}`).join("\n")}`)]
@@ -1495,7 +1506,46 @@ export default function App() {
       if (loadingModel) setRetryNote("The model is loading — your message is queued.")
       return
     }
+    /* Attachments or an explicit queue skip the mode-fit check — the user
+       already committed to chat for this turn. */
+    if (!pendingImages.length && !pendingDocs.length && shouldSuggestOtherMode(text, "chat")) {
+      setModeSuggestion({ from: "chat" })
+      return
+    }
     void sendAs(text, pendingImages, undefined, pendingDocs)
+  }
+
+  /* Mode-fit answers: Stay runs the task here; accept moves it to the
+     other mode (and runs it there — the user already hit send). */
+  const stayInCurrentMode = () => {
+    const suggestion = modeSuggestion
+    setModeSuggestion(null)
+    if (!suggestion) return
+    if (suggestion.from === "chat") {
+      const text = draft.trim()
+      if (text) void sendAs(text, pendingImages, undefined, pendingDocs)
+    } else {
+      void runAgent()
+    }
+  }
+  const takeSuggestedMode = () => {
+    const suggestion = modeSuggestion
+    setModeSuggestion(null)
+    if (!suggestion) return
+    if (suggestion.from === "chat") {
+      const text = draft.trim()
+      setDraft("")
+      setPendingImages([])
+      setPendingDocs([])
+      setView("agents")
+      if (text) void runAgent({ text })
+    } else {
+      const text = agentPrompt.trim()
+      setAgentPrompt("")
+      setPendingDocs([])
+      setView("chat")
+      if (text) void sendAs(text, [], undefined, [], null)
+    }
   }
 
   const abortGeneration = () => abortRef.current?.abort()
@@ -2026,8 +2076,9 @@ export default function App() {
     const agent = state.agents[0]
     const basePrompt = agent?.systemPrompt || defaultAgent.systemPrompt
     /* Mode × effort: the base agent prompt stays intact and each level adds
-       its own instruction, so every pair gets a distinct composite. */
-    const composedPrompt = `${basePrompt}\n\n${policy.prompt}\n\n${effort.prompt}`
+       its own instruction, so every pair gets a distinct composite. The
+       file-block hint teaches the model how to hand back downloads. */
+    const composedPrompt = `${basePrompt}\n\n${policy.prompt}\n\n${effort.prompt}\n\n${FILE_BLOCK_HINT}`
     /* Tracks whether submit_plan already produced the plan dock content,
        so the plan-mode text fallback only runs when it did not. */
     let planSubmitted = false
@@ -2740,16 +2791,20 @@ export default function App() {
                 </div>
               ) : (
                 <div className="messages">
-                  {activeConversation.messages.map((item, index) => (
+                  {activeConversation.messages.map((item, index) => {
+                    const artifacts = item.role === "assistant" && item.content ? extractArtifacts(item.content) : []
+                    const bodyText = artifacts.length && item.content ? stripArtifactBlocks(item.content) : item.content
+                    return (
                     <article key={item.id} className={cn("message", item.role)}>
                       <div className="message-avatar">{item.role === "assistant" ? <img src="/syntara-logo.png" alt="" /> : "You"}</div>
                       <div className="message-body">
                         <div className="message-role">{item.role === "assistant" ? "Syntara" : "You"}</div>
                         {item.images?.length ? <div className="image-strip">{item.images.map((url) => <img key={url} src={url} alt="Attached" />)}</div> : null}
                         {item.docs?.length ? <div className="pending-strip docs-inline">{item.docs.map((doc) => <span key={doc.name} className="doc-chip"><FileUp size={11} /> {doc.name}{doc.size ? ` · ${formatBytes(doc.size)}` : ""}</span>)}</div> : null}
-                        <div className={cn("message-content", item.role === "assistant" && "md-wrap")}>{item.content
-                          ? item.role === "assistant" ? <Markdown text={item.content} /> : item.content
+                        <div className={cn("message-content", item.role === "assistant" && "md-wrap")}>{bodyText
+                          ? item.role === "assistant" ? <Markdown text={bodyText} /> : bodyText
                           : (loading && item.role === "assistant" ? <span className="typing"><i /><i /><i /></span> : "")}</div>
+                        {artifacts.length ? <ArtifactChips files={artifacts} /> : null}
                         {item.content ? (
                           <div className="message-actions">
                             <button className="icon-btn" onClick={() => copy(item.content, `mc_${item.id}`)} title="Copy message" aria-label="Copy message">{copied === `mc_${item.id}` ? <Check size={13} /> : <Copy size={13} />}</button>
@@ -2760,7 +2815,8 @@ export default function App() {
                         ) : null}
                       </div>
                     </article>
-                  ))}
+                    )
+                  })}
                 </div>
               )}
             </div>
@@ -2769,6 +2825,9 @@ export default function App() {
               {pendingImages.length ? <div className="pending-strip">{pendingImages.map((url) => <div key={url} className="pending-image"><img src={url} alt="" /><button onClick={() => setPendingImages((items) => items.filter((item) => item !== url))}><X size={12} /></button></div>)}</div> : null}
               {pendingDocs.length ? <div className="pending-strip">{pendingDocs.map((doc) => <div key={doc.name} className="pending-doc"><FileUp size={12} /><span>{doc.name}</span>{doc.size ? <small className="doc-size">{formatBytes(doc.size)}</small> : null}<button onClick={() => setPendingDocs((items) => items.filter((item) => item.name !== doc.name))}><X size={12} /></button></div>)}</div> : null}
               {queued.length ? <div className="pending-strip queue-strip">{queued.map((item) => <div key={item.id} className="pending-doc queue-chip" title="Sent automatically when the current reply finishes"><Clock size={12} /><span>{item.text.slice(0, 48)}{item.text.length > 48 ? "…" : ""}{!item.text ? `${item.images.length} image(s)` : ""}</span><button onClick={() => removeFromQueue(item.id)} aria-label="Remove from queue"><X size={12} /></button></div>)}</div> : null}
+              {modeSuggestion?.from === "chat" ? (
+                <ModeFitNudge from="chat" onAccept={takeSuggestedMode} onStay={stayInCurrentMode} onDismiss={() => setModeSuggestion(null)} />
+              ) : null}
               <div className="composer">
                 <textarea ref={messageRef} value={draft} onChange={(event) => setDraft(event.target.value)} placeholder={selectedModel ? (loading || loadingModel ? "Message Syntara… (queued until this finishes)" : "Message Syntara…") : "Choose a model to start"} aria-label="Message" onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void send() } }} />
                 {/* Redesign: attach + model select live at the bottom-left of
@@ -2907,6 +2966,14 @@ export default function App() {
             )}
             {showProgressCol ? (
               <div className="ag-pane ag-pane-progress" aria-label="Progress pane">
+                <AgentFolderDock
+                  projectName={activeProject?.name ?? null}
+                  projects={state.projects.map((project) => ({ id: project.id, name: project.name }))}
+                  activeId={activeProject?.id ?? null}
+                  canPickFolder={qdmAvailable()}
+                  onSelect={(id) => updateSettings({ selectedProjectId: id })}
+                  onAddNew={() => void pickAgentFolder()}
+                />
                 {permissionAsk ? (
                   <AgentPermissionPanel
                     permission={permissionAsk}
@@ -2993,10 +3060,19 @@ export default function App() {
                 copiedKey={copied}
                 onCopy={copy}
               />
+              {modeSuggestion?.from === "agent" ? (
+                <ModeFitNudge from="agent" onAccept={takeSuggestedMode} onStay={stayInCurrentMode} onDismiss={() => setModeSuggestion(null)} />
+              ) : null}
               <AgentComposer
                 value={agentPrompt}
                 onChange={setAgentPrompt}
-                onSend={() => void runAgent()}
+                onSend={() => {
+                  if (shouldSuggestOtherMode(agentPrompt, "agent")) {
+                    setModeSuggestion({ from: "agent" })
+                    return
+                  }
+                  void runAgent()
+                }}
                 onStop={stopAgent}
                 busy={agentBusy}
                 disabled={!selectedModel}

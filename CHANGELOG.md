@@ -33,6 +33,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
   app, with a Download CTA (↗) straight to the download page.
 - **Every model dropdown carries an always-visible "Download models ↗"
   entry** that opens the app's Models view in a new tab.
+- **Desktop-only folder hints now pop up above their button** (and the
+  progress pane's copy is in-flow) so the callout can never be clipped.
+- **A persistent Project dock tops the agent progress pane**: folders
+  already added as chips, an always-visible Add-folder button that opens
+  the system picker, and an honest note that stays until a folder is
+  chosen.
+- **Generated files download straight from the transcript.** The model
+  wraps any file in a fenced `file:name.ext` block; chat messages and
+  agent answers turn those into direct-download chips, plus a
+  "Download all (.zip)" button when there is more than one — a small
+  store-only zip writer ships in the app, no new dependency.
+- **Mode-fit callout.** Submitting a code/project task in chat (or a
+  clearly general task in agent) asks whether to switch modes; Yes moves
+  the task over and runs it there, Stay answers in the current mode.
+  Code and folder questions inside agent mode are never nudged away.
 - **`CONTRIBUTING.md` rewritten** to describe this repository (layout,
   dev setup, the exact checks CI runs, PR expectations) instead of another
   project's guide.
