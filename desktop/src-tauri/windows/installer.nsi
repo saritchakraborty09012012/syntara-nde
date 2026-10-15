@@ -27,6 +27,7 @@ ManifestDPIAwareness PerMonitorV2
 !include "FileAssociation.nsh"
 !include "Win\COM.nsh"
 !include "Win\Propkey.nsh"
+!include "Win\RestartManager.nsh"
 !include "StrFunc.nsh"
 ${StrCase}
 ${StrLoc}
@@ -434,13 +435,21 @@ FunctionEnd
 Page custom OptionsPage OptionsPageLeave
 
 ; 7. Start menu shortcut page
+;
+; Only shown when the options page left "Add a Start menu shortcut" ticked:
+; a desktop-only install must not be asked to name a Start menu folder it
+; will never use. StartMenuPageShow aborts (skips) when the option is off
+; or the run is passive. The "Do not create shortcuts" checkbox on this
+; page clears $AppStartMenuFolder, which the install section honours.
 Var AppStartMenuFolder
+!define MUI_PAGE_CUSTOMFUNCTION_PRE StartMenuPageShow
 !if "${STARTMENUFOLDER}" != ""
-  !define MUI_PAGE_CUSTOMFUNCTION_PRE SkipIfPassive
   !define MUI_STARTMENUPAGE_DEFAULTFOLDER "${STARTMENUFOLDER}"
 !else
-  !define MUI_PAGE_CUSTOMFUNCTION_PRE Skip
+  !define MUI_STARTMENUPAGE_DEFAULTFOLDER "${PRODUCTNAME}"
 !endif
+!define MUI_STARTMENUPAGE_CHECKBOX "1"
+!define MUI_STARTMENUPAGE_CHECKBOX_TEXT "Do not create shortcuts"
 !insertmacro MUI_PAGE_STARTMENU Application $AppStartMenuFolder
 
 ; 8. Installation page
@@ -551,6 +560,15 @@ Function .onInit
     StrCpy $OptDesktop ${BST_UNCHECKED}
     StrCpy $OptStartMenu ${BST_UNCHECKED}
   ${EndIf}
+
+  ; The start menu page may be skipped (option off, passive run), so the
+  ; folder name has to be valid before the page ever runs - the install
+  ; section's MUI_STARTMENU_WRITE_* records it either way.
+  !if "${STARTMENUFOLDER}" != ""
+    StrCpy $AppStartMenuFolder "${STARTMENUFOLDER}"
+  !else
+    StrCpy $AppStartMenuFolder "${PRODUCTNAME}"
+  !endif
 
   !if "${DISPLAYLANGUAGESELECTOR}" == "true"
     !insertmacro MUI_LANGDLL_DISPLAY
@@ -780,11 +798,13 @@ Section Install
     WriteRegStr SHCTX "${UNINSTKEY}" "HelpLink" "${HOMEPAGE}"
   !endif
 
-  ; Create start menu shortcut, unless the options page said not to.
-  ; MUI_STARTMENU_WRITE_* still runs unconditionally: it records the folder
-  ; name the uninstaller needs, whether or not the shortcut was created.
+  ; Create start menu shortcut, unless the options page said not to, or the
+  ; start menu page's "Do not create shortcuts" checkbox cleared the folder
+  ; name (MUI's contract for that checkbox). MUI_STARTMENU_WRITE_* still runs
+  ; unconditionally: it records the folder name the uninstaller needs.
   !insertmacro MUI_STARTMENU_WRITE_BEGIN Application
     ${If} $OptStartMenu = ${BST_CHECKED}
+    ${AndIf} $AppStartMenuFolder != ""
       Call CreateOrUpdateStartMenuShortcut
     ${EndIf}
   !insertmacro MUI_STARTMENU_WRITE_END
@@ -1062,7 +1082,16 @@ Function DirPageLeave
   ${If} $R8 = 1
     StrCpy $R7 "$R7 $BestDrive has $BestFreeGB GB free and is the recommended install location. Install on $BestDrive instead?"
     MessageBox MB_ICONEXCLAMATION|MB_YESNO|MB_DEFBUTTON1 "$R7" IDNO dir_leave_ok
-    StrCpy $INSTDIR "$BestDrive\${PRODUCTNAME}"
+    ; Yes: don't silently swap the folder - open the folder picker rooted at
+    ; the roomiest disk so the user chooses the exact location there. Cancelling
+    ; the picker stays on this page (Abort) instead of advancing to the next.
+    nsDialogs::SelectFolderDialog "Select the install folder on $BestDrive" "$BestDrive\"
+    Pop $R0
+    ${If} $R0 == "error"
+    ${OrIf} $R0 == ""
+      Abort
+    ${EndIf}
+    StrCpy $INSTDIR $R0
     Goto dir_leave_ok
   ${EndIf}
 
@@ -1140,7 +1169,23 @@ Function un.SkipIfPassive
   ${IfThen} $PassiveMode = 1  ${|} Abort ${|}
 FunctionEnd
 
+; Start menu page: skip unless the options page left the Start menu option
+; ticked. Passive runs never see it either (its checkbox state would be
+; silently overwritten by the page defaults).
+Function StartMenuPageShow
+  ${IfThen} $PassiveMode = 1  ${|} Abort ${|}
+  ${If} $OptStartMenu != ${BST_CHECKED}
+    Abort
+  ${EndIf}
+FunctionEnd
+
 Function CreateOrUpdateStartMenuShortcut
+  ; Empty folder name is MUI's signal that "Do not create shortcuts" was
+  ; ticked on the start menu page - create nothing, touch nothing.
+  ${If} $AppStartMenuFolder == ""
+    Return
+  ${EndIf}
+
   ; We used to use product name as MAINBINARYNAME
   ; migrate old shortcuts to target the new MAINBINARYNAME
   StrCpy $R0 0
