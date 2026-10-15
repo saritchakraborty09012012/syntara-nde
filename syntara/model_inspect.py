@@ -422,7 +422,49 @@ def _inspect_hf(directory: Path) -> dict[str, Any]:
     }
     base["config"] = {**interesting, "architectures": archs}
     base["expert_inventory"] = expert_inventory(weights["weight_map"])
+    compression = _littlebit_marker(directory)
+    if compression is not None:
+        base["compression"] = compression
+        base["quantization"] = compression.get("label",
+                                               base.get("quantization"))
     return base
+
+
+def _littlebit_marker(directory: Path) -> dict[str, Any] | None:
+    """Read a LittleBit-style artifact manifest if one marks this directory.
+
+    The manifest file name is fixed (syntara_littlebit.json); its presence
+    is what makes the directory a compressed artifact (see
+    syntara.compress.artifact).  Malformed manifests are reported, never
+    silently ignored.  Metadata-only read - no weights are touched.
+    """
+    path = directory / "syntara_littlebit.json"
+    if not path.is_file():
+        return None
+    doc = _read_json(path)
+    if not isinstance(doc, dict) or doc.get("format") != \
+            "syntara-littlebit-artifact":
+        return {
+            "detected": True, "valid": False,
+            "error": "syntara_littlebit.json exists but is not a valid "
+                     "artifact manifest (wrong format tag or unreadable)",
+        }
+    settings = doc.get("settings") or {}
+    totals = doc.get("totals") or {}
+    method = doc.get("method") or {}
+    return {
+        "detected": True, "valid": True,
+        "format_version": doc.get("format_version"),
+        "algorithm": doc.get("algorithm"),
+        "label": (
+            f"LittleBit {settings.get('target_bpw', '?')} bpw"
+            + (" +residual" if settings.get("residual") else "")),
+        "settings": settings,
+        "totals": totals,
+        "qat": method.get("qat"),
+        "paper": (method.get("paper")
+                  if isinstance(method, dict) else None),
+    }
 
 
 def _inspect_onnx(path: Path) -> dict[str, Any]:

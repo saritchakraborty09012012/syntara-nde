@@ -10,12 +10,13 @@ Deterministic policy (documented order, no heuristics on filenames):
 
 1. GGUF file          -> llama.cpp (the only GGUF-capable runtime);
 2. diffusion pipeline -> diffusers adapter (image generation);
-3. checkpoint whose ``model_type`` the engine registry owns
+3. LittleBit artifact -> the LittleBit factorized runtime (primary);
+4. checkpoint whose ``model_type`` the engine registry owns
                          -> the Syntara C engine suite (primary),
                             Transformers fallback below it;
-4. any other recognized checkpoint -> Transformers fallback;
-5. ONNX graph         -> honest "not executable yet" + conversion path;
-6. anything else      -> actionable error, never a silent guess.
+5. any other recognized checkpoint -> Transformers fallback;
+6. ONNX graph         -> honest "not executable yet" + conversion path;
+7. anything else      -> actionable error, never a silent guess.
 
 ``SYNTARA_RUNTIME`` forces a candidate id (``llama.cpp``,
 ``syntara-engine-suite``, ``transformers``, ``diffusers``) when you want an
@@ -38,6 +39,7 @@ RT_LLAMA = "llama.cpp"
 RT_ENGINE_SUITE = "syntara-engine-suite"
 RT_TRANSFORMERS = "transformers"
 RT_DIFFUSERS = "diffusers"
+RT_LITTLEBIT = "littlebit"
 
 _ENV_FORCE = "SYNTARA_RUNTIME"
 _ENV_SERVER = "SYNTARA_OPENAI_SERVER"
@@ -205,44 +207,81 @@ def rank(report: dict[str, Any]) -> dict[str, Any]:
         if not ok:
             error = reason
     elif kind == KIND_HF:
-        model_type = str(report.get("model_type") or "").lower()
-        registry = load_engine_registry()
-        engine_ok, engine_reason, _ = _engine_suite_availability()
-        family_id = None
-        family_owned = False
-        if registry is not None:
-            family_id = registry["model_types"].get(model_type)
-            family_owned = family_id is not None
-        elif engine_ok:
-            # Server present but registry unreadable: the engine itself will
-            # decide the family; do not claim a match we have not verified.
-            family_owned = False
-            engine_reason = ("engine family check deferred: family_registry "
-                             "could not be loaded next to openai_server.py")
-        tf_ok, tf_reason = transformers_availability()
-        if family_owned:
-            detail = f"engine family: {family_id} (model_type {model_type})"
-            candidates.append(_candidate(
-                RT_ENGINE_SUITE, "Syntara C engine suite", engine_ok,
-                engine_reason, score=100, primary=True, detail=detail))
-            candidates.append(_candidate(
-                RT_TRANSFORMERS, "PyTorch/Transformers fallback", tf_ok,
-                tf_reason, score=60, primary=False))
-            if not engine_ok and not tf_ok:
-                error = f"{engine_reason}; {tf_reason}"
-            elif not engine_ok:
-                error = None  # transformers fallback will run it
+        compression = report.get("compression")
+        if isinstance(compression, dict) and compression.get("detected"):
+            # Factorized artifact: dense weights are not stored, so only the
+            # LittleBit runtime can execute it (AGENTS §16: adapters own
+            # format specifics; the router never guesses a dense loader).
+            if not compression.get("valid"):
+                reason = ("syntara_littlebit.json is present but invalid: "
+                          + str(compression.get("error")
+                                or "unreadable manifest"))
+                candidates.append(_candidate(
+                    RT_LITTLEBIT, "LittleBit factorized runtime", False,
+                    reason, score=100, primary=True))
+                candidates.append(_candidate(
+                    RT_TRANSFORMERS, "PyTorch/Transformers fallback", False,
+                    "cannot load a factorized artifact as dense weights",
+                    score=10, primary=False))
+                error = reason
+            else:
+                lb_ok, lb_reason = transformers_availability()
+                label = compression.get("label") or "LittleBit artifact"
+                candidates.append(_candidate(
+                    RT_LITTLEBIT, f"LittleBit factorized runtime ({label})",
+                    lb_ok, lb_reason or "", score=100, primary=True,
+                    detail=f"manifest valid: {compression.get('algorithm')}"))
+                candidates.append(_candidate(
+                    RT_TRANSFORMERS, "PyTorch/Transformers fallback", False,
+                    "dense weights are not stored in a LittleBit artifact",
+                    score=10, primary=False))
+                candidates.append(_candidate(
+                    RT_ENGINE_SUITE, "Syntara C engine suite", False,
+                    "the C engines read dense safetensors, not factorized "
+                    "artifacts", score=10, primary=False))
+                if not lb_ok:
+                    error = lb_reason
         else:
-            why = (f"model_type {model_type!r} is not owned by any engine "
-                   "family (see c/family_registry.py)")
-            candidates.append(_candidate(
-                RT_ENGINE_SUITE, "Syntara C engine suite", False,
-                why, score=40, primary=False))
-            candidates.append(_candidate(
-                RT_TRANSFORMERS, "PyTorch/Transformers fallback", tf_ok,
-                tf_reason, score=100, primary=True))
-            if not tf_ok:
-                error = f"{why}; {tf_reason}"
+            model_type = str(report.get("model_type") or "").lower()
+            registry = load_engine_registry()
+            engine_ok, engine_reason, _ = _engine_suite_availability()
+            family_id = None
+            family_owned = False
+            if registry is not None:
+                family_id = registry["model_types"].get(model_type)
+                family_owned = family_id is not None
+            elif engine_ok:
+                # Server present but registry unreadable: the engine itself
+                # will decide the family; do not claim an unverified match.
+                family_owned = False
+                engine_reason = (
+                    "engine family check deferred: family_registry could "
+                    "not be loaded next to openai_server.py")
+            tf_ok, tf_reason = transformers_availability()
+            if family_owned:
+                detail = (f"engine family: {family_id} "
+                          f"(model_type {model_type})")
+                candidates.append(_candidate(
+                    RT_ENGINE_SUITE, "Syntara C engine suite", engine_ok,
+                    engine_reason, score=100, primary=True, detail=detail))
+                candidates.append(_candidate(
+                    RT_TRANSFORMERS, "PyTorch/Transformers fallback", tf_ok,
+                    tf_reason, score=60, primary=False))
+                if not engine_ok and not tf_ok:
+                    error = f"{engine_reason}; {tf_reason}"
+                elif not engine_ok:
+                    error = None  # transformers fallback will run it
+            else:
+                why = (f"model_type {model_type!r} is not owned by any "
+                       "engine family (see c/family_registry.py)")
+                candidates.append(_candidate(
+                    RT_ENGINE_SUITE, "Syntara C engine suite", False,
+                    why, score=40, primary=False))
+                candidates.append(_candidate(
+                    RT_TRANSFORMERS, "PyTorch/Transformers fallback", tf_ok,
+                    tf_reason, score=100, primary=True))
+                if not tf_ok:
+                    error = f"{why}; {tf_reason}"
     elif kind == KIND_ONNX:
         error = ("ONNX graphs are recognized but no ONNX execution adapter "
                  "ships yet; convert this model with `syntara convert "
@@ -310,6 +349,10 @@ def build_runtime(path: str | os.PathLike[str], *,
         from .runtime.engine_suite import EngineSuiteRuntime
         return EngineSuiteRuntime(path, context=context, threads=threads,
                                   startup_timeout=startup_timeout)
+    if selected == RT_LITTLEBIT:
+        from .runtime.littlebit_rt import LittleBitRuntime
+        return LittleBitRuntime(path, context=context, threads=threads,
+                                startup_timeout=startup_timeout)
     if selected == RT_TRANSFORMERS:
         from .runtime.transformers_rt import TransformersRuntime
         return TransformersRuntime(path, context=context, threads=threads,

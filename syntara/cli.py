@@ -486,6 +486,121 @@ def _cmd_inspect_gguf(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_compress(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from .compress.pipeline import CompressError, compress
+
+    events: list[dict] = []
+
+    def on_event(ev: dict) -> None:
+        events.append(ev)
+        if args.json:
+            return
+        kind = ev.get("type")
+        if kind == "stage":
+            print(f"[{ev['stage']}]")
+        elif kind == "census":
+            print(f"  {ev['compress']} matrix/matrices to compress, "
+                  f"{ev['passthrough']} passthrough")
+        elif kind == "resume":
+            print(f"  resuming: {ev['already_done']} done, "
+                  f"{ev['remaining']} remaining")
+        elif kind == "tensor":
+            cached = " (cached)" if ev.get("cached") else ""
+            extra = (f" rank={ev['rank']} bpw={ev['bpw']}"
+                     if not ev.get("cached") else "")
+            print(f"  [{ev['index']}/{ev['total']}] {ev['name']}{extra}"
+                  f" {ev.get('seconds', '')}{cached}")
+        elif kind == "qat":
+            print(f"  qat {ev.get('tensor')}: step {ev.get('step')}/"
+                  f"{ev.get('total')} loss={ev.get('loss')}")
+
+    manifest = compress(
+        args.source, args.outdir, bpw=args.bpw,
+        residual=not args.no_residual, kv_factor=args.kv_factor,
+        include_lm_head=args.include_lm_head,
+        min_layer_params=args.min_layer_params, force=args.force,
+        fast_svd=args.fast_svd, seed=args.seed, qat_steps=args.qat_steps,
+        on_event=on_event)
+    totals = manifest["totals"]
+    if args.json:
+        print(json.dumps(manifest, indent=2, default=str,
+                         ensure_ascii=False))
+        return 0
+    src_mb = totals["source_weight_bytes"] / 1e6
+    art_mb = totals["artifact_bytes"] / 1e6
+    ratio = (totals["source_weight_bytes"] / totals["artifact_bytes"]
+             if totals["artifact_bytes"] else 0)
+    print(f"artifact written to {Path(args.outdir).resolve()}")
+    print(f"  compressed {totals['compressed_tensors']} tensors "
+          f"({totals['compressed_params']/1e6:.1f}M params) at "
+          f"{totals['weighted_bpw_compressed']} bpw")
+    print(f"  weights: {src_mb:.1f} MB source -> {art_mb:.1f} MB artifact "
+          f"({ratio:.2f}x)")
+    print(f"  elapsed: {totals['elapsed_seconds']}s")
+    return 0
+
+
+def _cmd_storage(args: argparse.Namespace) -> int:
+    from .compress.storage_report import format_report, storage_report
+
+    report = storage_report(args.paths)
+    if args.json:
+        print(json.dumps(report, indent=2, default=str,
+                         ensure_ascii=False))
+        return 0
+    print(format_report(report))
+    return 0
+
+
+def _cmd_evaluate(args: argparse.Namespace) -> int:
+    from pathlib import Path
+
+    from .compress import artifact as art
+    from .compress.evaluate import evaluate_artifact
+
+    artifact = Path(args.artifact).expanduser().resolve()
+    if args.verify:
+        verdict = art.verify_artifact(
+            artifact, source=Path(args.source) if args.source else None)
+        if not verdict["ok"]:
+            print("syntara: artifact verification FAILED:", file=sys.stderr)
+            for issue in verdict.get("drift", []):
+                print(f"syntara:   - {issue}", file=sys.stderr)
+            return 1
+        if not args.json:
+            print("integrity: OK (checksums + tensor dims verified)"
+                  + ("" if not verdict.get("drift") else
+                     f"; drift notes: {verdict['drift']}"))
+
+    def on_event(ev: dict) -> None:
+        if not args.json and ev.get("type") == "stage":
+            print(f"[{ev['stage']}]")
+
+    report = evaluate_artifact(
+        artifact, source=args.source, dataset=args.dataset,
+        max_tokens=args.max_tokens, rows=args.rows, on_event=on_event)
+    if args.json:
+        print(json.dumps(report, indent=2, default=str,
+                         ensure_ascii=False))
+        return 0
+    comp = report["compressed"]
+    print(f"compressed: perplexity {comp['perplexity']} over "
+          f"{comp['tokens_scored']} tokens")
+    if "source" in report:
+        src = report["source"]
+        print(f"source:     perplexity {src['perplexity']} over "
+              f"{src['tokens_scored']} tokens")
+        print(f"ratio:      {report['perplexity_ratio']}x "
+              "(1.0 = identical quality)")
+    for gen in report.get("generations") or []:
+        print(f"\nprompt: {gen['prompt']!r}")
+        print(f"  source:     {gen['source']!r}")
+        print(f"  compressed: {gen['compressed']!r}")
+    return 0
+
+
 def _cmd_plan(args: argparse.Namespace) -> int:
     """Rank execution plans (diagnostic): inspect + hardware + routing."""
     from pathlib import Path
@@ -886,6 +1001,65 @@ def build_parser() -> argparse.ArgumentParser:
     backup.add_argument("--include", default=None,
                         help="comma-separated sections: chats,memories,projects,settings")
     backup.add_argument("--no-merge", action="store_true", help="(restore) replace instead of merge")
+
+    compress = sub.add_parser(
+        "compress", parents=[common],
+        help="Compress a checkpoint with LittleBit-style latent "
+             "factorization (source never modified; needs torch)")
+    compress.add_argument("source", help="Hugging Face checkpoint directory "
+                                         "(safetensors)")
+    compress.add_argument("--outdir", required=True,
+                          help="fresh output directory for the compressed "
+                               "artifact")
+    compress.add_argument("--bpw", type=float, default=0.55,
+                          help="target bits per weight for compressed "
+                               "matrices (default 0.55)")
+    compress.add_argument("--no-residual", action="store_true",
+                          help="disable the residual compensation path "
+                               "(smaller artifact, lower fidelity)")
+    compress.add_argument("--kv-factor", type=float, default=1.0,
+                          help="rank multiplier for attention K/V "
+                               "projections (GQA protection; default 1.0)")
+    compress.add_argument("--include-lm-head", action="store_true",
+                          help="also compress the LM head (excluded by "
+                               "default, matching the paper setup)")
+    compress.add_argument("--min-layer-params", type=int, default=4096,
+                          help="skip matrices smaller than this many "
+                               "parameters (default 4096)")
+    compress.add_argument("--qat-steps", type=int, default=0,
+                          help="SmoothSign calibration steps per tensor "
+                               "(0 = Dual-SVID init only)")
+    compress.add_argument("--fast-svd", action="store_true",
+                          help="use randomized SVD (faster, slightly lower "
+                               "fidelity; for very large matrices)")
+    compress.add_argument("--force", action="store_true",
+                          help="replace an existing output directory and "
+                               "discard any interrupted workspace")
+    compress.add_argument("--seed", type=int, default=0)
+
+    storage = sub.add_parser(
+        "storage", parents=[common],
+        help="Report disk usage of model directories and compressed "
+             "artifacts (metadata only, loads no weights)")
+    storage.add_argument("paths", nargs="+",
+                         help="checkpoint or artifact directories")
+
+    evaluate = sub.add_parser(
+        "evaluate", parents=[common],
+        help="Measure perplexity and side-by-side generations for a "
+             "compressed artifact vs its source (local, offline)")
+    evaluate.add_argument("artifact", help="LittleBit artifact directory")
+    evaluate.add_argument("--source", default=None,
+                          help="source checkpoint to compare against")
+    evaluate.add_argument("--dataset", default="wikitext",
+                          help="'wikitext' (WikiText-2 test, fetched once "
+                               "and cached) or a local text file path")
+    evaluate.add_argument("--max-tokens", type=int, default=2048)
+    evaluate.add_argument("--rows", type=int, default=64,
+                          help="wikitext paragraphs to score (default 64)")
+    evaluate.add_argument("--verify", action="store_true",
+                          help="also deep-verify artifact integrity "
+                               "(checksum) before evaluating")
     return parser
 
 
@@ -934,6 +1108,12 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_project(client, args)
         if args.command == "backup":
             return _cmd_backup(client, args)
+        if args.command == "compress":
+            return _cmd_compress(args)
+        if args.command == "storage":
+            return _cmd_storage(args)
+        if args.command == "evaluate":
+            return _cmd_evaluate(args)
         return 0
     except (SyntaraError, LibraryError, RuntimeFailure, ValueError, OSError) as exc:
         print(f"syntara: {exc}", file=sys.stderr)

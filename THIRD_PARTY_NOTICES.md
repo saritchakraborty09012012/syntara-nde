@@ -128,3 +128,17 @@ Consulted for chat interface patterns (message grouping, streaming
 re-render, model picker). **RESTRICTIVE:** beyond BSD-3 the project attaches
 branding/non-endorsement conditions, so by policy **zero code was copied** —
 layout and interaction ideas only. Do not vendor anything from it.
+
+### LittleBit (CC BY-NC 4.0 — non-commercial; zero code copied)
+
+https://github.com/SamsungLabs/LittleBit — paper "LittleBit: Ultra-Low-Bit
+Quantization for Hidden Language Structures" (arXiv:2506.13771, NeurIPS 2025).
+Consulted read-only: the mathematics of latent factorization
+`W ≈ (Uₛ · diag(h) · diag(ell) · Vₛᵀ)` with ±1 sign factors, per-channel
+scales, the SmoothSign quantization-aware-training proxy gradient, and the
+bits-per-weight rank budget were re-implemented from the paper in
+`syntara/compress/` (independent implementation, MIT-licensed like the rest
+of Syntara). **RESTRICTIVE:** the official repository is licensed
+CC BY-NC 4.0 (non-commercial), so by policy **zero code was copied** — no
+source file, no vendored dependency, no linked binary. Attribution here and
+in `syntara/compress/__init__.py` / `docs/littlebit-compression.md`.
