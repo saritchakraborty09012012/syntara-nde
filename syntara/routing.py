@@ -343,7 +343,13 @@ def build_runtime(path: str | os.PathLike[str], *,
             f"cannot run {decision['path']}: {decision['error'] or 'no runtime available'}")
     if selected == RT_LLAMA:
         from .runtime.llama_cpp import LlamaCppRuntime
-        return LlamaCppRuntime(path, context=context, threads=threads,
+        # The llama.cpp server needs the model *file*.  inspect_path
+        # resolves containers (a directory holding a single GGUF, or a
+        # magic-detected file) down to the actual file in report["path"];
+        # the caller may have passed the container itself - e.g. a library
+        # entry registered from a folder - so prefer the resolved path.
+        return LlamaCppRuntime(report.get("path") or path, context=context,
+                               threads=threads,
                                startup_timeout=startup_timeout)
     if selected == RT_ENGINE_SUITE:
         from .runtime.engine_suite import EngineSuiteRuntime

@@ -170,6 +170,21 @@ class BuildRuntimeTest(unittest.TestCase):
         with self.assertRaises(RuntimeFailure):
             build_runtime(Path(self.tmp.name) / "ghost")
 
+    def test_gguf_directory_resolves_to_model_file(self):
+        # A library entry registered from a folder must still give the
+        # llama.cpp runtime the actual .gguf file, not the directory.
+        from syntara.runtime.llama_cpp import LlamaCppRuntime
+        folder = Path(self.tmp.name) / "qwen-gguf"
+        folder.mkdir()
+        gguf = folder / "model-q4.gguf"
+        build_tiny_llama_gguf(gguf)
+        dummy = Path(self.tmp.name) / "llama-server.exe"
+        dummy.write_bytes(b"stub")
+        with mock.patch.dict(os.environ, {"SYNTARA_LLAMA_BIN": str(dummy)}):
+            rt = build_runtime(folder)
+        self.assertIsInstance(rt, LlamaCppRuntime)
+        self.assertEqual(Path(rt.model_path).resolve(), gguf.resolve())
+
 
 if __name__ == "__main__":
     unittest.main()

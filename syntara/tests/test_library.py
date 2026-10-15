@@ -64,6 +64,29 @@ class LibraryTest(unittest.TestCase):
             self.lib.add(self.root / "nope.gguf")
         self.assertIn("file not found", str(ctx.exception))
 
+    def test_add_directory_holding_gguf_registers_the_file(self):
+        # The user picks a folder that contains a single GGUF: the entry
+        # must point at the .gguf file (what runtimes need), not the folder.
+        folder = self.root / "qwen-gguf"
+        folder.mkdir()
+        inner = folder / "Model.gguf"
+        make_valid_gguf(inner)
+        entry = self.lib.add(folder)
+        self.assertEqual(Path(entry["path"]).resolve(), inner.resolve())
+        self.assertEqual(entry["id"], "model")
+        self.assertEqual(entry["status"], "ok")
+        self.assertEqual(entry["model"]["architecture"], "llama")
+
+    def test_add_magic_gguf_without_suffix_does_not_recurse(self):
+        # A GGUF detected by magic bytes without the .gguf suffix used to
+        # re-dispatch add() on the suffix check and loop forever.
+        mystery = self.root / "mystery"
+        make_valid_gguf(mystery)
+        entry = self.lib.add(mystery)
+        self.assertEqual(Path(entry["path"]).resolve(), mystery.resolve())
+        self.assertEqual(entry["status"], "ok")
+        self.assertEqual(entry["model"]["architecture"], "llama")
+
     def test_add_corrupt_file_is_rejected(self):
         bad = self.root / "bad.gguf"
         bad.write_bytes(b"not a gguf file at all")

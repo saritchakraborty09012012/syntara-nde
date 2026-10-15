@@ -128,9 +128,17 @@ class ModelLibrary:
         if not src.exists():
             raise LibraryError(f"file not found: {src}")
         if src.is_file() and src.suffix.lower() == ".gguf":
-            pass  # the classic GGUF path below keeps its exact diagnostics
-        else:
-            return self._add_artifact(src, copy=copy, model_id=model_id)
+            return self._add_gguf(src, copy=copy, model_id=model_id)
+        return self._add_artifact(src, copy=copy, model_id=model_id)
+
+    def _add_gguf(self, src: Path, *, copy: bool = False,
+                  model_id: str | None = None) -> dict[str, Any]:
+        """Register a GGUF model file (the classic GGUF path).
+
+        Split out of :meth:`add` so container paths (a directory holding a
+        GGUF, or a magic-detected file without the suffix) can reach the
+        same canonical registration without recursing on the suffix check.
+        """
         try:
             report = inspect_file(src)
         except GgufError as exc:
@@ -211,8 +219,14 @@ class ModelLibrary:
         if report.get("kind") == "gguf-file":
             # A GGUF found by magic inside the artifact path: register it
             # through the GGUF branch so its report shape stays canonical.
-            if src.is_file():
-                return self.add(src, copy=copy, model_id=model_id)
+            # Dispatch on the *resolved* file (report["path"]) rather than
+            # src: src may be a directory holding the GGUF, and re-running
+            # add(src) for a magic-detected file without the .gguf suffix
+            # would loop forever on the suffix check.
+            gguf = Path(report["path"])
+            if gguf.is_file():
+                return self._add_gguf(gguf.resolve(), copy=copy,
+                                      model_id=model_id)
 
         entries = self._read()
         stored = src

@@ -95,7 +95,9 @@ class LlamaCppRuntime:
                  threads: int | None = None,
                  startup_timeout: float = 120.0) -> None:
         self.model_path = str(model_path)
-        self.context = int(context)
+        # build_runtime passes context=None through; fall back to the
+        # same default the constructor documents.
+        self.context = int(context) if context else 4096
         self.threads = threads
         self.startup_timeout = float(startup_timeout)
         self._binary = Path(binary).expanduser() if binary else discover_binary()
