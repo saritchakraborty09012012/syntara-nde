@@ -99,6 +99,7 @@ import {
   type SyntaraState,
 } from "@/lib/syntara-state"
 import { ALL_VIEW_IDS, MODE_VIEWS, MODEL_TABS, parseHash, VIEW_LABELS, type ModelTab, type View } from "@/lib/routes"
+import { listen } from "@tauri-apps/api/event"
 import { hostBaseFromStatus, hostLogs, hostStart, hostStatus, dialogSelectModelFile, libraryImport, libraryInspect, storageListVolumes, waitHostReady, type HostLogTail, type ImportResult } from "@/lib/host-bridge"
 import { CONSENT_VERSION, setupRequired, writeSetupRecord } from "@/lib/setup"
 import { volumeRows, type VolumeRow } from "@/lib/storage-plan"
@@ -755,6 +756,25 @@ export default function App() {
   }
 
   const connect = async () => {
+    /* When a selected model has a real file on disk, the runtime the user
+       wants is that model's host: bring it up through the same load path
+       the Models view uses (phases, inspection, honest errors) instead of
+       probing a socket that nothing is listening on. */
+    const selected = state.models.find(
+      (item) =>
+        item.status === "installed" &&
+        item.localPath &&
+        (item.id === state.settings.model || (item.libraryId != null && item.libraryId === state.settings.model)),
+    )
+    if (!connected && qdmAvailable() && selected) {
+      setConnecting(true)
+      try {
+        await loadModel(selected)
+      } finally {
+        setConnecting(false)
+      }
+      return
+    }
     await connectTo(state.settings.baseUrl)
   }
 
@@ -799,6 +819,16 @@ export default function App() {
     if (loadingModel || !qdmAvailable()) return
     if (!model.localPath) {
       setRuntimeError("This entry has no local file path to load. Import the file from disk again.")
+      return
+    }
+    /* A bare file name (no folder) was imported without the file's real
+       on-disk path, so neither inspection nor the host can ever find it:
+       say so with a recovery step instead of dying in the host log. */
+    if (!/[\\/]/.test(model.localPath)) {
+      setRuntimeError(
+        `"${model.localPath}" was imported without its folder, so Syntara cannot find the file on disk. ` +
+        "Re-import it from the Models hub with \"Connect existing model\" to record the file's full path.",
+      )
       return
     }
     const localPath = model.localPath
@@ -1322,6 +1352,14 @@ export default function App() {
     return item.images?.length ? { id: item.id, role: item.role, content, images: item.images } : { id: item.id, role: item.role, content }
   }
 
+  /* A failure with no HTTP status means the request never reached the
+     gateway (process not running, socket refused). Surface how to start
+     the runtime instead of the browser's raw "Failed to fetch". */
+  const unreachableRuntimeMessage = () =>
+    qdmAvailable()
+      ? "The local runtime isn't running. Click \"Connect runtime\" in the header (or Load a model from the Models hub), then send again."
+      : `No local server is responding at ${state.settings.baseUrl}. Run "syntara serve" (or open the desktop app) and try again.`
+
   const sendAs = async (text: string, images: string[], base?: Conversation, docs: Array<{ name: string; content: string; size?: number }> = pendingDocs, conversationId?: string | null) => {
     if (loading) return
     const current = base
@@ -1435,11 +1473,15 @@ export default function App() {
         const decision = retryDecision(statusOf(error), retryAfterOf(error), attempt, assistantText.length > 0)
         if (!decision.retry) {
           setRetryNote("")
-          setRuntimeError(error instanceof Error ? error.message : "Request failed")
+          const unreachable = statusOf(error) === null
+          const message = unreachable
+            ? unreachableRuntimeMessage()
+            : error instanceof Error ? error.message : "Request failed"
+          setRuntimeError(message)
           if (!assistantText) {
             saveConversation({
               ...initial,
-              messages: initial.messages.map((item) => item.id === assistantMessage.id ? { ...item, content: "I couldn't reach the local runtime. Check Developer → Runtime or Settings." } : item),
+              messages: initial.messages.map((item) => item.id === assistantMessage.id ? { ...item, content: unreachable ? unreachableRuntimeMessage() : "I couldn't reach the local runtime. Check Developer → Runtime or Settings." } : item),
               updatedAt: Date.now(),
             })
           }
@@ -1673,7 +1715,11 @@ export default function App() {
       setMetrics({ kind: "chat", tokensPerSec, firstTokenMs: firstTokenAt !== null ? firstTokenAt - started : 0, totalMs, tokens: tokenCount })
     } catch (error) {
       if (!controller.signal.aborted) {
-        setRuntimeError(error instanceof Error ? error.message : "The continuation could not reach the local runtime.")
+        setRuntimeError(
+          statusOf(error) === null
+            ? unreachableRuntimeMessage()
+            : error instanceof Error ? error.message : "The continuation could not reach the local runtime.",
+        )
       }
     } finally {
       buffer.flush()
@@ -2505,15 +2551,48 @@ export default function App() {
     } catch { /* dialog dismissed or engine unavailable */ }
   }
 
+  /* Desktop drag-drop: inside the shell, OLE drops are intercepted before
+     the page ever sees them, so the Models view's HTML5 handlers never
+     fire there - real paths only arrive through these window events. A
+     dropped model file stages the same copy/move confirmation the native
+     dialog opens, so nothing is copied or moved without the user. */
+  useEffect(() => {
+    if (!qdmAvailable()) return
+    let dispose = () => {}
+    const modelFile = /\.(gguf|safetensors|ggml|bin|pt|pth|ckpt|onnx)$/i
+    void Promise.all([
+      listen("tauri://drag-enter", () => setDragging(true)),
+      listen("tauri://drag-leave", () => setDragging(false)),
+      listen<{ paths: string[] }>("tauri://drag-drop", (event) => {
+        setDragging(false)
+        const path = event.payload.paths.find((candidate) => modelFile.test(candidate))
+        if (!path) return
+        setConnectError("")
+        setConnectResult(null)
+        setConnectMode("copy")
+        setConnectPick(path)
+      }),
+    ])
+      .then((unlisten) => { dispose = () => unlisten.forEach((fn) => fn()) })
+      .catch(() => { /* shell without the event bridge - HTML5 handlers still cover the browser */ })
+    return () => dispose()
+  }, [])
+
   const installImportedModel = (files: FileList | null) => {
     const file = files?.[0]
     if (!file) return
+    /* The desktop shell's HTML file picker never exposes the on-disk path
+       on the File object, and a bare file name can be neither inspected
+       nor loaded - open the native dialog instead so the import lands with
+       its real path (the same flow as "Connect existing model"). A plain
+       browser keeps the bare-name row; it is display-only there. */
+    const nativePath = (file as File & { path?: string }).path
+    if (qdmAvailable() && !nativePath) {
+      void pickExistingModel()
+      return
+    }
     const now = Date.now()
     const id = createId("import")
-    /* The desktop shell can expose the real on-disk path on the File
-       object; a plain browser cannot, so it keeps the bare name and the
-       auto-inspect effect deliberately skips it (no path, no verdict). */
-    const nativePath = (file as File & { path?: string }).path
     const model: ModelMeta = {
       id,
       name: file.name,
@@ -3190,7 +3269,7 @@ export default function App() {
         })()}
 
         {view === "models" && familyId && <ModelFamilyPage family={state.models.find((item) => item.id === familyId)} familyId={familyId} onBack={() => setView("models")} onDownload={(file) => { void guardRedownload(familyId, state.models.find((item) => item.id === familyId)?.name || file.name).then((approved) => { if (approved) void startUrlDownload(familyId, file.name, file.url, file.filename) }) }} activeTasks={familyActiveTasks} onPause={() => familyActiveTasks.forEach((task) => pauseDownload(task.id))} onResume={() => familyActiveTasks.forEach((task) => resumeDownload(task.id))} onCancel={() => familyActiveTasks.forEach((task) => cancelDownload(task.id))} />}
-        {view === "models" && !route.family && <section className={cn("view scroll-view", dragging && "drop-zone-active")} onDragOver={(e) => { e.preventDefault(); setDragging(true) }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); installImportedModel(event.dataTransfer.files) }}><div className="section-head tabbed"><div><span className="section-kicker">MODEL HUB</span><h2>Discover, import, install, manage.</h2><div className="model-tabs">{MODEL_TABS.map((tab) => <button key={tab.id} type="button" className={cn("model-tab", modelTab === tab.id && "active")} aria-current={modelTab === tab.id ? "page" : undefined} onClick={() => openModelTab(tab.id)}>{tab.label}</button>)}</div><p>Formats, architectures, backends and hardware are evaluated independently.</p></div><div className="head-actions"><button className="ghost-btn" onClick={() => void pickExistingModel()} disabled={!qdmAvailable()} title={qdmAvailable() ? "Point Syntara at a model file you already have, then choose to copy or move it" : "Available in the desktop app"}><Link2 size={15} /> Connect existing model</button><button className="ghost-btn" onClick={() => modelImportRef.current?.click()}><Upload size={15} /> Import local model</button><input ref={modelImportRef} hidden type="file" onChange={(event) => installImportedModel(event.target.files)} /></div></div>{modelTab === "all" && (<><div className="search-row"><div className="search-box"><Search size={15} /><input value={modelSearch} onChange={(e) => setModelSearch(e.target.value)} placeholder="Search models, providers, capabilities…" /></div><div className="hardware-pill"><Cpu size={14} /> {hardware.cpu} · {hardware.ramGb ? `${hardware.ramGb} GB RAM` : "hardware scan"}</div></div><div className="model-grid">{filteredModels.map((model) => { const score = scoreModel(model, hardware); const catalogCount = modelCatalog[model.id]?.length ?? 0; const installableCount = downloadableCheckpoints(model.id).length; const tasks = activeTasksFor(state.downloads.filter((task) => task.modelId === model.id)); return <article key={model.id} className="model-card"><div className="model-card-top"><div className="model-icon"><Package size={18} /></div><div><div className="model-title">{model.name}</div><div className="model-provider">{model.provider} · {model.architecture}</div></div><span className={cn("compat-pill", score >= 75 ? "good" : score >= 55 ? "mid" : "heavy")}>{recommendationLabel(score)}</span></div><div className="model-specs"><span><MemoryStick size={13} /> {model.recommendedRam}</span><span><HardDrive size={13} /> {model.disk}</span><span><Zap size={13} /> {model.parameters}</span><span><Database size={13} /> Context: {model.context}</span></div><div className="chip-row">{(model.badges ?? []).slice(0, 6).map((badge) => <span key={badge.id} className={cn("inspect-badge", badge.level)} title={badge.message}>{badgeLabel(badge)}</span>)}{model.quantizations.map((tag) => <span key={tag} className="quant-tag">{tag}</span>)}{model.formats.map((tag) => <span key={tag}>{tag}</span>)}{model.capabilities.slice(0, 4).map((tag) => <span key={tag}>{tag.replace("*", "")}</span>)}</div>{tasks.length ? <DownloadProgress tasks={tasks} onPause={() => tasks.forEach((task) => pauseDownload(task.id))} onResume={() => tasks.forEach((task) => resumeDownload(task.id))} onCancel={() => tasks.forEach((task) => cancelDownload(task.id))} /> : null}<div className="model-footer"><a href={model.sourceUrl} target="_blank" rel="noreferrer"><Link2 size={13} /> Source</a>{catalogCount > 0 && <span className="model-count">{catalogCount} checkpoints</span>}{state.downloadedModels[model.id] && model.status === "available" && !tasks.length ? <span className="downloaded-flag">Downloaded before</span> : null}<div className="row-actions">{model.status === "installed" && <><button className="primary-btn small" onClick={() => void loadModel(model)} disabled={loadingModel?.id === model.id} title={loadingModel?.id === model.id ? loadingModel.phase : `Load ${model.name} into the local runtime`}>{loadingModel?.id === model.id ? <><LoaderCircle className="spin" size={13} /> {loadingModel.phase}</> : <><Play size={13} /> Load</>}</button><span className="installed-label"><Check size={13} /> Installed</span><button className="icon-btn" title="Detach model" onClick={() => detachModel(model.id)}><Link2 size={13} /></button><button className="icon-btn danger" title="Delete model metadata" onClick={() => deleteModel(model.id)}><Trash2 size={13} /></button></>}{model.status === "partial" && <><span className="partial-label" title={(model.badges ?? []).find((badge) => badge.level === "error")?.message ?? "The file on disk is truncated or still downloading."}>Incomplete</span><button className="icon-btn danger" title="Delete model metadata" onClick={() => deleteModel(model.id)}><Trash2 size={13} /></button></>}{model.status === "detached" && <button className="ghost-btn small" onClick={() => setState((current) => ({ ...current, models: current.models.map((item) => item.id === model.id ? { ...item, status: "available" } : item) }))}>Attach</button>}{model.status === "available" && !tasks.length && (!catalogCount || installableCount === 1) && <button className="primary-btn small" onClick={() => void startDownload(model)}><Download size={13} /> Install</button>}{catalogCount > 0 && <button className="primary-btn small" onClick={() => openFamily(model.id)}><Boxes size={13} /> Browse models</button>}</div></div></article> })}</div></>)}{modelTab === "installing" && <InstallingTab groups={installingList} onInstall={() => openModelTab("all")} onPause={(group) => group.tasks.forEach((task) => pauseDownload(task.id))} onResume={(group) => group.tasks.forEach((task) => resumeDownload(task.id))} onCancel={(group) => group.tasks.forEach((task) => cancelDownload(task.id))} />}{modelTab === "installed" && <InstalledTab entries={installedList} loading={qdmAvailable() && storageFiles === null} storageDir={storageDir} onInstall={() => openModelTab("all")} onLoad={(entry) => { const target = state.models.find((item) => item.id === entry.modelId); if (target) void loadModel(target) }} loadableIds={installedLoadable} loadingModelId={loadingModel?.id ?? null} />}</section>}
+        {view === "models" && !route.family && <section className={cn("view scroll-view", dragging && "drop-zone-active")} onDragOver={(e) => { e.preventDefault(); setDragging(true) }} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); installImportedModel(event.dataTransfer.files) }}><div className="section-head tabbed"><div><span className="section-kicker">MODEL HUB</span><h2>Discover, import, install, manage.</h2><div className="model-tabs">{MODEL_TABS.map((tab) => <button key={tab.id} type="button" className={cn("model-tab", modelTab === tab.id && "active")} aria-current={modelTab === tab.id ? "page" : undefined} onClick={() => openModelTab(tab.id)}>{tab.label}</button>)}</div><p>Formats, architectures, backends and hardware are evaluated independently.</p></div><div className="head-actions"><button className="ghost-btn" onClick={() => void pickExistingModel()} disabled={!qdmAvailable()} title={qdmAvailable() ? "Point Syntara at a model file you already have, then choose to copy or move it" : "Available in the desktop app"}><Link2 size={15} /> Connect existing model</button><button className="ghost-btn" onClick={() => (qdmAvailable() ? void pickExistingModel() : modelImportRef.current?.click())}><Upload size={15} /> Import local model</button><input ref={modelImportRef} hidden type="file" onChange={(event) => installImportedModel(event.target.files)} /></div></div>{modelTab === "all" && (<><div className="search-row"><div className="search-box"><Search size={15} /><input value={modelSearch} onChange={(e) => setModelSearch(e.target.value)} placeholder="Search models, providers, capabilities…" /></div><div className="hardware-pill"><Cpu size={14} /> {hardware.cpu} · {hardware.ramGb ? `${hardware.ramGb} GB RAM` : "hardware scan"}</div></div><div className="model-grid">{filteredModels.map((model) => { const score = scoreModel(model, hardware); const catalogCount = modelCatalog[model.id]?.length ?? 0; const installableCount = downloadableCheckpoints(model.id).length; const tasks = activeTasksFor(state.downloads.filter((task) => task.modelId === model.id)); return <article key={model.id} className="model-card"><div className="model-card-top"><div className="model-icon"><Package size={18} /></div><div><div className="model-title">{model.name}</div><div className="model-provider">{model.provider} · {model.architecture}</div></div><span className={cn("compat-pill", score >= 75 ? "good" : score >= 55 ? "mid" : "heavy")}>{recommendationLabel(score)}</span></div><div className="model-specs"><span><MemoryStick size={13} /> {model.recommendedRam}</span><span><HardDrive size={13} /> {model.disk}</span><span><Zap size={13} /> {model.parameters}</span><span><Database size={13} /> Context: {model.context}</span></div><div className="chip-row">{(model.badges ?? []).slice(0, 6).map((badge) => <span key={badge.id} className={cn("inspect-badge", badge.level)} title={badge.message}>{badgeLabel(badge)}</span>)}{model.quantizations.map((tag) => <span key={tag} className="quant-tag">{tag}</span>)}{model.formats.map((tag) => <span key={tag}>{tag}</span>)}{model.capabilities.slice(0, 4).map((tag) => <span key={tag}>{tag.replace("*", "")}</span>)}</div>{tasks.length ? <DownloadProgress tasks={tasks} onPause={() => tasks.forEach((task) => pauseDownload(task.id))} onResume={() => tasks.forEach((task) => resumeDownload(task.id))} onCancel={() => tasks.forEach((task) => cancelDownload(task.id))} /> : null}<div className="model-footer"><a href={model.sourceUrl} target="_blank" rel="noreferrer"><Link2 size={13} /> Source</a>{catalogCount > 0 && <span className="model-count">{catalogCount} checkpoints</span>}{state.downloadedModels[model.id] && model.status === "available" && !tasks.length ? <span className="downloaded-flag">Downloaded before</span> : null}<div className="row-actions">{model.status === "installed" && <><button className="primary-btn small" onClick={() => void loadModel(model)} disabled={loadingModel?.id === model.id} title={loadingModel?.id === model.id ? loadingModel.phase : `Load ${model.name} into the local runtime`}>{loadingModel?.id === model.id ? <><LoaderCircle className="spin" size={13} /> {loadingModel.phase}</> : <><Play size={13} /> Load</>}</button><span className="installed-label"><Check size={13} /> Installed</span><button className="icon-btn" title="Detach model" onClick={() => detachModel(model.id)}><Link2 size={13} /></button><button className="icon-btn danger" title="Delete model metadata" onClick={() => deleteModel(model.id)}><Trash2 size={13} /></button></>}{model.status === "partial" && <><span className="partial-label" title={(model.badges ?? []).find((badge) => badge.level === "error")?.message ?? "The file on disk is truncated or still downloading."}>Incomplete</span><button className="icon-btn danger" title="Delete model metadata" onClick={() => deleteModel(model.id)}><Trash2 size={13} /></button></>}{model.status === "detached" && <button className="ghost-btn small" onClick={() => setState((current) => ({ ...current, models: current.models.map((item) => item.id === model.id ? { ...item, status: "available" } : item) }))}>Attach</button>}{model.status === "available" && !tasks.length && (!catalogCount || installableCount === 1) && <button className="primary-btn small" onClick={() => void startDownload(model)}><Download size={13} /> Install</button>}{catalogCount > 0 && <button className="primary-btn small" onClick={() => openFamily(model.id)}><Boxes size={13} /> Browse models</button>}</div></div></article> })}</div></>)}{modelTab === "installing" && <InstallingTab groups={installingList} onInstall={() => openModelTab("all")} onPause={(group) => group.tasks.forEach((task) => pauseDownload(task.id))} onResume={(group) => group.tasks.forEach((task) => resumeDownload(task.id))} onCancel={(group) => group.tasks.forEach((task) => cancelDownload(task.id))} />}{modelTab === "installed" && <InstalledTab entries={installedList} loading={qdmAvailable() && storageFiles === null} storageDir={storageDir} onInstall={() => openModelTab("all")} onLoad={(entry) => { const target = state.models.find((item) => item.id === entry.modelId); if (target) void loadModel(target) }} loadableIds={installedLoadable} loadingModelId={loadingModel?.id ?? null} />}</section>}
 
         {view === "downloads" && <section className="view scroll-view"><div className="section-head"><div><span className="section-kicker">DOWNLOADS</span><h2>Model installation without friction.</h2><p>{qdmAvailable() ? "Seamless and hassle-free downloads through Quantum Download Manager — no stuck transfers, no unnecessary restarts. Transfers run natively with multiple parallel connections, resume after a restart and stay cancellable." : <>Files stream to a location you choose, with progress, pause, resume and cancel. {supportsSavePicker() ? "Direct-to-disk streaming is active in this browser." : "This browser buffers in memory; Chromium-based browsers can stream straight to disk."}</>}</p>{qdmAvailable() ? <p className="panel-note">Model storage: {storageDir || "…"} <button className="ghost-btn" onClick={() => void changeStorageDir()}><FolderOpen size={14} /> Change folder</button></p> : null}</div><div className="head-actions">{activeDownloadRows.length || pausedDownloadRows.length ? <button className="ghost-btn" onClick={activeDownloadRows.length ? pauseAllDownloads : resumeAllDownloads} title={activeDownloadRows.length ? `Pause ${activeDownloadRows.length} running transfer${activeDownloadRows.length > 1 ? "s" : ""}` : `Resume ${pausedDownloadRows.length} paused transfer${pausedDownloadRows.length > 1 ? "s" : ""}`}>{activeDownloadRows.length ? <><Pause size={15} /> Pause all</> : <><Play size={15} /> Resume all</>}</button> : null}<button className="ghost-btn" onClick={cancelAllDownloads} disabled={!cancellableDownloadRows.length} title={cancellableDownloadRows.length ? "Stop every running or paused transfer; rows stay in the list" : "Nothing is running to cancel"}><X size={15} /> Cancel all</button><button className="ghost-btn" onClick={deleteAllDownloads} disabled={!state.downloads.length} title="Remove every row from the list; files already saved to disk are kept"><Trash2 size={15} /> Delete all</button></div></div><div className="download-list">{state.downloads.length ? state.downloads.map((task) => <div className={cn("download-row", task.state, task.fileMissing && "file-missing")} key={task.id}><div className="download-icon"><Download size={16} /></div><div className="download-main"><strong>{task.name}</strong><span>{task.url}</span><div className="progress-track"><span style={{ width: `${Math.min(100, task.progress)}%` }} /></div></div><div className="download-status"><span className={cn("download-state", task.state, task.fileMissing && "file-missing")}>{task.fileMissing ? "file missing" : task.state}{!task.fileMissing && task.state === "complete" ? " ✓" : ""}</span><span>{task.totalBytes ? `${formatBytes(task.receivedBytes)} / ${formatBytes(task.totalBytes)}` : task.receivedBytes ? formatBytes(task.receivedBytes) : ""}</span>{task.state === "downloading" && task.speedBps ? <span className="download-meta">{formatBytes(task.speedBps)}/s{task.etaMs ? ` · ${formatEta(task.etaMs)} left` : ""}</span> : null}{task.error ? <span className="download-error">{task.error}</span> : null}</div><div className="row-actions">{task.state === "downloading" || task.state === "queued" ? <button className="icon-btn" onClick={() => pauseDownload(task.id)} title="Pause download"><Pause size={14} /></button> : null}{task.state === "paused" ? <button className="icon-btn" onClick={() => resumeDownload(task.id)} title="Resume download"><Play size={14} /></button> : null}{task.state === "downloading" || task.state === "queued" || task.state === "paused" ? <button className="icon-btn" onClick={() => cancelDownload(task.id)} title="Cancel download (keeps it in the list)"><X size={14} /></button> : null}<button className="icon-btn danger" onClick={() => dropDownload(task.id)} title={task.state === "downloading" || task.state === "queued" || task.state === "paused" ? "Cancel and remove from list" : "Remove from list"}><Trash2 size={14} /></button></div></div>) : <div className="empty-state-card"><Download size={22} /><strong>No downloads yet</strong><p>Install a model from Model Hub to populate the queue.</p></div>}</div></section>}
 
