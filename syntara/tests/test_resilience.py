@@ -1,7 +1,7 @@
-"""Track 1h resilience tests: memory guard, idle unload, crash isolation.
+"""Track 1h resilience tests: memory posture, idle unload, crash isolation.
 
 Uses the fake runtime from test_gateway - no backend, no real memory
-pressure; the guard test only needs an estimate larger than any machine.
+pressure; the posture test only needs an estimate larger than any machine.
 """
 from __future__ import annotations
 
@@ -53,33 +53,52 @@ def _post(gw, path, body):
         return exc.code, dict(exc.headers), exc.read()
 
 
-class MemoryGuardTest(unittest.TestCase):
-    def test_impossible_load_is_refused_before_spawn(self):
+class MemoryPostureTest(unittest.TestCase):
+    """Vision: any model, any device - memory pressure adapts, never refuses."""
+
+    def test_oversized_model_loads_in_constrained_mode(self):
         entry = _entry()
         entry["estimates"] = {"ram_gb_min": 99999.0}
         gw = HostGateway(entry, port=0, runtime_factory=FakeRuntime)
-        with self.assertRaises(RuntimeError) as ctx:
-            gw.start()
-        message = str(ctx.exception)
-        self.assertIn("99999.0 GB", message)
-        self.assertIn("free", message)
-        self.assertIn("smaller model/quantization", message)
-        self.assertEqual(gw.state, "failed")
-        self.assertFalse(gw.runtime.loaded, "guard must fire before load()")
+        gw.start()
+        self.addCleanup(gw.stop)
+        self.assertEqual(gw.state, "ready",
+                         "an oversized model must load (streamed from disk), "
+                         "not be refused before the backend can try")
+        self.assertTrue(gw.runtime.loaded)
+        self.assertEqual(gw.memory["mode"], "constrained")
+        self.assertIn("constrained mode", gw.memory["advisory"])
+        self.assertIn("99999.0 GB", gw.memory["advisory"])
 
-    def test_a_possible_load_proceeds(self):
+    def test_constrained_mode_caps_context_and_reports_in_health(self):
+        entry = _entry()
+        entry["estimates"] = {"ram_gb_min": 99999.0}
+        gw = HostGateway(entry, port=0, runtime_factory=FakeRuntime,
+                         context=4096)
+        gw.start()
+        self.addCleanup(gw.stop)
+        self.assertEqual(gw.context, 2048,
+                         "constrained mode shrinks the KV cache, not the model")
+        body = gw.health_body()
+        self.assertEqual(body["memory"]["mode"], "constrained")
+        self.assertEqual(body["memory"]["context_cap"], 2048)
+
+    def test_a_fitting_load_stays_normal(self):
         entry = _entry()
         entry["estimates"] = {"ram_gb_min": 0.01}
         gw = HostGateway(entry, port=0, runtime_factory=FakeRuntime)
         gw.start()
         self.addCleanup(gw.stop)
         self.assertEqual(gw.state, "ready")
+        self.assertEqual(gw.memory["mode"], "normal")
+        self.assertEqual(gw.health_body()["memory"]["mode"], "normal")
 
-    def test_entries_without_estimates_keep_the_old_behaviour(self):
+    def test_entries_without_estimates_stay_normal(self):
         gw = HostGateway(_entry(), port=0, runtime_factory=FakeRuntime)
-        gw.start()  # no estimates at all: no guard, exactly as before
+        gw.start()  # no estimates at all: normal posture, exactly as before
         self.addCleanup(gw.stop)
         self.assertEqual(gw.state, "ready")
+        self.assertEqual(gw.memory["mode"], "normal")
 
 
 class IdleUnloadTest(unittest.TestCase):

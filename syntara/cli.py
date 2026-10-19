@@ -263,6 +263,8 @@ def _cmd_serve(client: Syntara, args: argparse.Namespace) -> int:
         context=args.context, api_key=default_api_key())
     print(f"loading {entry['id']} from {entry['path']} ...", flush=True)
     gateway.start()
+    if gateway.memory.get("mode") == "constrained":
+        print(f"note: {gateway.memory['advisory']}", flush=True)
     print(f"serving model={entry['id']} at {gateway.url} "
           f"(OpenAI base {gateway.base_url}) - Ctrl-C to stop", flush=True)
     try:

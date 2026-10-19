@@ -45,12 +45,21 @@ export interface HwinfoHealth {
   gpu: string
 }
 
+export interface MemoryHealth {
+  mode?: string
+  needed_gb?: number
+  free_gb?: number
+  context_cap?: number
+  advisory?: string
+}
+
 export interface HealthResponse {
   status: string
   scheduler?: SchedulerHealth
   kv_slots?: number
   tiers?: TiersHealth
   hwinfo?: HwinfoHealth
+  memory?: MemoryHealth
 }
 
 export interface ProfileTurn {

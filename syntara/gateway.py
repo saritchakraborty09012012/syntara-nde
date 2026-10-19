@@ -13,6 +13,7 @@ Endpoints not implemented by this host yet answer honestly (HTTP 501 with
 from __future__ import annotations
 
 import json
+import logging
 import os
 import platform
 import re
@@ -271,6 +272,10 @@ class HostGateway:
         self._last_used = time.monotonic()
         self._load_lock = threading.Lock()
         self._calib_thread: threading.Thread | None = None
+        # Memory posture (AGENTS §14): assessed before every load by
+        # _assess_memory; never a hard refusal - constrained machines
+        # stream from disk instead of being told "no" (product vision).
+        self.memory: dict[str, Any] = {"mode": "normal"}
 
     @property
     def state(self) -> str:
@@ -312,33 +317,51 @@ class HostGateway:
             self.entry["path"], context=self.context, threads=self._threads,
             startup_timeout=self._startup_timeout)
 
-    def _memory_guard(self) -> None:
-        """Refuse an impossible load *before* spawning (track 1h, pre-OOM).
+    def _assess_memory(self) -> None:
+        """Assess free RAM before a load; adapt, never refuse.
 
-        Uses the library's stored weight estimate (``ram_gb_min`` =
-        weights x 1.25 from gguf_inspect). When the estimate alone exceeds
-        free RAM, no OOM ladder can save us - the model cannot fit - so
-        fail fast with numbers the user can act on instead of minutes of
-        loading followed by an opaque allocation error (AGENTS §14).
-        Entries without an estimate are loaded as before: an unknown is
-        not an impossible.
+        Product vision: any model, on any device, with any hardware. The
+        library's stored weight estimate (``ram_gb_min`` = weights x 1.25
+        from gguf_inspect) is compared against free RAM only to pick a
+        *posture*:
+
+        - fits      -> ``normal``: load exactly as requested.
+        - tight     -> ``constrained``: the GGUF backend streams weights
+          from disk (mmap is on by default), so an oversized model still
+          runs - slower, honestly reported. Syntara caps the context to
+          keep the KV cache small and extends the startup window for the
+          paging load; the adapter's OOM ladder (halving context down to
+          512) remains the second line of defence.
+
+        Never raises: a real allocation failure surfaces from the backend
+        with its own actionable message (AGENTS §14/§28).
         """
         estimates = self.entry.get("estimates")
         need = estimates.get("ram_gb_min") if isinstance(estimates, dict) else None
-        if need is None:
-            return
         try:
-            need_gb = float(need)
+            need_gb = float(need) if need is not None else None
         except (TypeError, ValueError):
-            return
+            need_gb = None
         avail_gb = _default_ram_gb()
-        if avail_gb is None or avail_gb >= need_gb:
+        if need_gb is None or avail_gb is None or avail_gb >= need_gb:
+            self.memory = {"mode": "normal"}
             return
-        raise RuntimeError(
-            f"not enough free memory to load `{self.served_model_id}`: it "
-            f"needs about {need_gb:.1f} GB (weights plus headroom) but only "
-            f"{avail_gb:.1f} GB is free; close other applications or use a "
-            f"smaller model/quantization")
+        if self.context > 2048:
+            self.context = 2048
+        self._startup_timeout = max(float(self._startup_timeout), 600.0)
+        advisory = (
+            f"`{self.served_model_id}` needs about {need_gb:.1f} GB "
+            f"(weights plus headroom) but only {avail_gb:.1f} GB is free - "
+            "running in constrained mode: weights stream from disk, so it "
+            "works but is slower; close other applications for more speed")
+        self.memory = {
+            "mode": "constrained",
+            "needed_gb": round(need_gb, 1),
+            "free_gb": avail_gb,
+            "context_cap": self.context,
+            "advisory": advisory,
+        }
+        logging.getLogger(__name__).warning("memory: %s", advisory)
 
     def _start_calibration(self) -> None:
         """Kick the first-run micro-bench once the real runtime is serving."""
@@ -359,8 +382,8 @@ class HostGateway:
         with self._state_lock:
             self._state = "starting"
         try:
+            self._assess_memory()
             self.runtime = self._build_runtime()
-            self._memory_guard()
             self.runtime.load()  # raises with an actionable message on failure
             handler = _make_handler(self)
             try:
@@ -484,7 +507,7 @@ class HostGateway:
 
         Only an *intentional* idle unload is handled here; a real backend
         death stays supervision's job. Raises the loader's actionable
-        error (including the memory guard) so callers can report 503.
+        error so callers can report 503.
         """
         with self._load_lock:
             if self.runtime is None:
@@ -498,7 +521,7 @@ class HostGateway:
             with self._state_lock:
                 self._state = "starting"
             try:
-                self._memory_guard()
+                self._assess_memory()
                 self.runtime.load()
             except Exception as exc:
                 with self._state_lock:
@@ -583,6 +606,7 @@ class HostGateway:
             "model": self.served_model_id,
             "scheduler": self.scheduler.snapshot(),
             "hwinfo": _hwinfo(),
+            "memory": dict(self.memory),
         }
         if self.runtime is not None:
             body["runtime"] = self.runtime.health()
@@ -647,8 +671,8 @@ class HostGateway:
         with self._state_lock:
             self._state = "starting"
         try:
+            self._assess_memory()
             self.runtime = self._build_runtime()
-            self._memory_guard()
             self.runtime.load()
         except Exception as exc:
             with self._state_lock:
